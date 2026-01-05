@@ -113,7 +113,27 @@
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
+| `default` | object | 见下 | 全局默认做市参数。 |
+| `low_price` | object | 见下 | 低价彩头单参数（低于阈值时下少量）。 |
 | `topics` | object | `{}` | 主题级别的参数覆盖。 |
+
+### maker_strategy_defaults.default
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `min_edge` | number | `0.02` | 最小边际/收益阈值。 |
+| `max_position_per_market` | number | `10.0` | 单市场最大仓位。 |
+| `order_size` | number | `10.0` | 默认下单数量。 |
+| `spread_target` | number | `0.01` | 目标价差比例。 |
+| `refresh_interval_seconds` | number | `30` | 刷新间隔（秒）。 |
+| `max_open_orders` | number | `20` | 最大挂单数。 |
+
+### maker_strategy_defaults.low_price
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `price_threshold` | number | `0.15` | 低价阈值（低于该价格触发低价彩头单）。 |
+| `order_size` | number | `5.0` | 低价彩头单下单数量。 |
 
 ## logging
 
