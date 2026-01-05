@@ -90,13 +90,20 @@ class PositionManager:
                         current_size = fetched
                     last_position_fetch = now
 
-                open_orders = self._fetch_open_orders(token_id)
+                open_orders, orders_ok = self._fetch_open_orders(token_id)
+                if not orders_ok:
+                    time.sleep(exit_poll_sec)
+                    continue
                 if current_size <= 0 and not open_orders:
                     self._maker_engine.update_open_size(token_id, 0.0)
                     self._log("info", f"[position] 清仓完成 token_id={token_id}")
                     break
 
                 orderbook = get_orderbook(self._client, token_id)
+                if orderbook.get("best_bid") is None and orderbook.get("best_ask") is None:
+                    self._log("warning", f"[position] orderbook 缺失，暂缓清仓 token_id={token_id}")
+                    time.sleep(exit_poll_sec)
+                    continue
                 actions = reconcile_one(
                     token_id=token_id,
                     desired_shares=0.0,
@@ -157,15 +164,19 @@ class PositionManager:
             "retry_shrink_factor": float(self._config.get("exit_retry_shrink_factor") or 0.5),
         }
 
-    def _fetch_open_orders(self, token_id: str) -> list[dict]:
+    def _fetch_open_orders(self, token_id: str) -> tuple[list[dict], bool]:
         orders, ok, err = fetch_open_orders_norm(self._client)
         if not ok:
             self._log("warning", f"[position] 获取挂单失败 token_id={token_id}: {err}")
-            return []
-        return [order for order in orders if str(order.get("token_id")) == str(token_id)]
+            return [], False
+        filtered = [order for order in orders if str(order.get("token_id")) == str(token_id)]
+        return filtered, True
 
     def _cancel_open_orders(self, token_id: str) -> None:
-        open_orders = self._fetch_open_orders(token_id)
+        open_orders, ok = self._fetch_open_orders(token_id)
+        if not ok:
+            self._log("warning", f"[position] 无法获取挂单，跳过撤单 token_id={token_id}")
+            return
         if not open_orders:
             return
         for order in open_orders:
