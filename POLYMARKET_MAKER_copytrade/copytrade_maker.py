@@ -420,7 +420,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
             if avg_price_val > 0:
                 value_val = size_val * avg_price_val
             else:
-                value_val = size_val
+                value_val = -1.0
             if token_key:
                 by_key[str(token_key)] = value_val
             token_id = pos.get("token_id") or pos.get("tokenId") or pos.get("asset")
@@ -477,7 +477,18 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 price=None,
             )
             value_val = _lookup_position_value(topic, by_key, by_id)
-            if value_val is None or value_val <= 0:
+            if value_val is None:
+                to_remove.append((key, "position_closed"))
+                continue
+            if value_val < 0:
+                with state_lock:
+                    watchlist = state.get("watchlist", {})
+                    if isinstance(watchlist, dict) and key in watchlist:
+                        watchlist[key]["size"] = 0.0
+                        watchlist[key]["threshold"] = float(watch_min_position_usdc)
+                        watchlist[key]["last_seen"] = int(now_ts)
+                continue
+            if value_val <= 0:
                 to_remove.append((key, "position_closed"))
                 continue
             threshold = float(watch_min_position_usdc)
@@ -655,8 +666,37 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                         continue
                     by_key, by_id = account_positions
                     size_val = _lookup_position_value(topic, by_key, by_id)
-                    if size_val is None or size_val < watch_min_position_usdc:
-                        size_for_watch = size_val if size_val is not None else 0.0
+                    if size_val is None:
+                        size_for_watch = 0.0
+                        _add_watchlist(
+                            event.source_account,
+                            topic,
+                            size_for_watch,
+                            watch_min_position_usdc,
+                        )
+                        logger.info(
+                            "[signal] BUY 待观察(未找到仓位) token_id=%s token_key=%s threshold=%.6f",
+                            topic.token_id,
+                            topic.token_key,
+                            watch_min_position_usdc,
+                        )
+                        continue
+                    if size_val < 0:
+                        _add_watchlist(
+                            event.source_account,
+                            topic,
+                            0.0,
+                            watch_min_position_usdc,
+                        )
+                        logger.info(
+                            "[signal] BUY 待观察(价格缺失) token_id=%s token_key=%s threshold=%.6f",
+                            topic.token_id,
+                            topic.token_key,
+                            watch_min_position_usdc,
+                        )
+                        continue
+                    if size_val < watch_min_position_usdc:
+                        size_for_watch = size_val
                         _add_watchlist(
                             event.source_account,
                             topic,
