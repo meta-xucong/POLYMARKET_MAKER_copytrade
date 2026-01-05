@@ -3,10 +3,7 @@
     "rpc_url": "",
     "chain_id": 137
   },
-  "accounts": {
-    "maker_private_key": "",
-    "target_accounts": ["0x..."]
-  },
+  "target_addresses": [],
   "signal_tracking": {
     "poll_interval_sec": 5
   },
