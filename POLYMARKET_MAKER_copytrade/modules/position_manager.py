@@ -11,6 +11,7 @@ from copytrade_v3_muti.ct_exec import (
     get_orderbook,
     reconcile_one,
 )
+from copytrade_v3_muti.ct_resolver import resolve_token_id
 from copytrade_v3_muti.ct_utils import safe_float
 
 from .topic_selector import Topic
@@ -66,6 +67,47 @@ class PositionManager:
                     daemon=True,
                 )
                 thread.start()
+
+    def fetch_positions_snapshot(self) -> list[dict]:
+        positions = self._fetch_positions()
+        if not positions:
+            return []
+        token_cache: dict[str, str] = {}
+        snapshot: list[dict] = []
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            size_raw = (
+                pos.get("size")
+                or pos.get("shares")
+                or pos.get("position")
+                or pos.get("amount")
+            )
+            size = safe_float(size_raw)
+            if size is None or size <= 0:
+                continue
+            token_id = pos.get("token_id") or pos.get("tokenId") or pos.get("asset") or pos.get("token")
+            token_key = pos.get("token_key")
+            condition_id = pos.get("condition_id") or pos.get("conditionId") or pos.get("marketId")
+            outcome_index = pos.get("outcome_index") or pos.get("outcomeIndex")
+            if not token_key and condition_id is not None and outcome_index is not None:
+                try:
+                    token_key = f"{condition_id}:{int(outcome_index)}"
+                except (TypeError, ValueError):
+                    token_key = None
+            if not token_id and token_key:
+                try:
+                    token_id = resolve_token_id(str(token_key), pos, token_cache)
+                except Exception:
+                    token_id = None
+            snapshot.append(
+                {
+                    "token_id": str(token_id) if token_id else None,
+                    "token_key": str(token_key) if token_key else None,
+                    "size": float(size),
+                }
+            )
+        return snapshot
 
     def _close_one(self, token_id: str, position_size: float) -> None:
         poll_sec = float(self._config.get("poll_interval_sec", 10))
