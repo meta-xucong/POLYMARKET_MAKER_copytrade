@@ -19,7 +19,7 @@ MAKER_ROOT = REPO_ROOT / "POLYMARKET_MAKER_AUTO" / "POLYMARKET_MAKER"
 if str(MAKER_ROOT) not in sys.path:
     sys.path.insert(0, str(MAKER_ROOT))
 
-from smartmoney_query.poly_martmoney_query.api_client import DataApiClient
+from smartmoney_query.api_client import DataApiClient
 
 from copytrade_v3_muti.ct_data import fetch_positions_norm
 from copytrade_v3_muti.ct_resolver import resolve_token_id
