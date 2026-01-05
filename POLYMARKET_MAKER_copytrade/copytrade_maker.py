@@ -346,7 +346,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
             cooldown_map[token_id] = until_ts
 
     def _watchlist_key(account: str, topic: Topic) -> str:
-        token_part = topic.token_key or topic.token_id or "unknown"
+        token_part = topic.token_id or topic.token_key or "unknown"
         return f"{account}:{token_part}"
 
     def _add_watchlist(account: str, topic: Topic, size_val: float, threshold: float) -> None:
@@ -408,12 +408,21 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 continue
             token_key = pos.get("token_key")
             size = pos.get("size")
+            avg_price = pos.get("avg_price")
             try:
                 size_val = float(size or 0.0)
             except (TypeError, ValueError):
                 continue
+            try:
+                avg_price_val = float(avg_price) if avg_price is not None else 0.0
+            except (TypeError, ValueError):
+                avg_price_val = 0.0
+            if avg_price_val > 0:
+                value_val = size_val * avg_price_val
+            else:
+                value_val = size_val
             if token_key:
-                by_key[str(token_key)] = size_val
+                by_key[str(token_key)] = value_val
             token_id = pos.get("token_id") or pos.get("tokenId") or pos.get("asset")
             if not token_id and token_key:
                 try:
@@ -421,10 +430,10 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 except Exception:
                     token_id = None
             if token_id:
-                by_id[str(token_id)] = size_val
+                by_id[str(token_id)] = value_val
         return by_key, by_id
 
-    def _lookup_position_size(
+    def _lookup_position_value(
         topic: Topic,
         by_key: dict[str, float],
         by_id: dict[str, float],
@@ -467,18 +476,19 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 outcome_index=meta.get("outcome_index"),
                 price=None,
             )
-            size_val = _lookup_position_size(topic, by_key, by_id)
-            if size_val is None or size_val <= 0:
+            value_val = _lookup_position_value(topic, by_key, by_id)
+            if value_val is None or value_val <= 0:
                 to_remove.append((key, "position_closed"))
                 continue
-            threshold = float(meta.get("threshold") or watch_min_position_usdc)
-            if size_val >= threshold:
-                to_start.append((key, topic, size_val))
+            threshold = float(watch_min_position_usdc)
+            if value_val >= threshold:
+                to_start.append((key, topic, value_val))
             else:
                 with state_lock:
                     watchlist = state.get("watchlist", {})
                     if isinstance(watchlist, dict) and key in watchlist:
-                        watchlist[key]["size"] = size_val
+                        watchlist[key]["size"] = value_val
+                        watchlist[key]["threshold"] = threshold
                         watchlist[key]["last_seen"] = int(now_ts)
 
         if to_remove:
@@ -629,24 +639,38 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                             "[signal] BUY 忽略 token_id=%s reason=%s", token_id, reason or "cooldown"
                         )
                         continue
-                    if account_positions is not None:
-                        by_key, by_id = account_positions
-                        size_val = _lookup_position_size(topic, by_key, by_id)
-                        if size_val is not None and size_val < watch_min_position_usdc:
-                            _add_watchlist(
-                                event.source_account,
-                                topic,
-                                size_val,
-                                watch_min_position_usdc,
-                            )
-                            logger.info(
-                                "[signal] BUY 待观察 token_id=%s token_key=%s size=%.6f threshold=%.6f",
-                                topic.token_id,
-                                topic.token_key,
-                                size_val,
-                                watch_min_position_usdc,
-                            )
-                            continue
+                    if account_positions is None:
+                        _add_watchlist(
+                            event.source_account,
+                            topic,
+                            0.0,
+                            watch_min_position_usdc,
+                        )
+                        logger.info(
+                            "[signal] BUY 待观察(仓位未获取) token_id=%s token_key=%s threshold=%.6f",
+                            topic.token_id,
+                            topic.token_key,
+                            watch_min_position_usdc,
+                        )
+                        continue
+                    by_key, by_id = account_positions
+                    size_val = _lookup_position_value(topic, by_key, by_id)
+                    if size_val is None or size_val < watch_min_position_usdc:
+                        size_for_watch = size_val if size_val is not None else 0.0
+                        _add_watchlist(
+                            event.source_account,
+                            topic,
+                            size_for_watch,
+                            watch_min_position_usdc,
+                        )
+                        logger.info(
+                            "[signal] BUY 待观察 token_id=%s token_key=%s size=%.6f threshold=%.6f",
+                            topic.token_id,
+                            topic.token_key,
+                            size_for_watch,
+                            watch_min_position_usdc,
+                        )
+                        continue
                     allowed_topics.append(topic)
                 if allowed_topics:
                     for topic in allowed_topics:
@@ -665,6 +689,8 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 )
                 maker_engine.stop_topics(event.topics)
                 position_manager.close_positions(event.topics)
+                for topic in event.topics:
+                    _remove_watchlist(_watchlist_key(event.source_account, topic), "sell_signal")
                 cooldown_sec = float(cooldown_cfg.get("cooldown_sec_per_token") or 0)
                 if cooldown_sec > 0 and bool(cooldown_cfg.get("exit_ignore_cooldown", True)):
                     for topic in event.topics:
