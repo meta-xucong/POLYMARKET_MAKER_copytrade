@@ -369,6 +369,14 @@ class MakerEngine:
             time.sleep(refresh_interval)
 
     def _resolve_strategy_config(self, topic: Topic) -> Dict[str, Any]:
+        def _float_or_none(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
         base = dict(self._config)
         defaults = self._strategy_defaults or {}
         default_cfg = defaults.get("default") if isinstance(defaults, dict) else None
@@ -380,6 +388,16 @@ class MakerEngine:
                 if key and key in topics_cfg and isinstance(topics_cfg[key], dict):
                     base.update(topics_cfg[key])
                     break
+        low_price_cfg = defaults.get("low_price") if isinstance(defaults, dict) else None
+        if isinstance(low_price_cfg, dict):
+            price_threshold = _float_or_none(low_price_cfg.get("price_threshold"))
+            if price_threshold is None:
+                price_threshold = 0.15
+            low_order_size = _float_or_none(low_price_cfg.get("order_size"))
+            if low_order_size is None:
+                low_order_size = 5.0
+            if topic.price is not None and topic.price < price_threshold:
+                base["order_size"] = low_order_size
         return base
 
     def _build_strategy(self, token_id: str, cfg: Dict[str, Any]) -> VolArbStrategy:
