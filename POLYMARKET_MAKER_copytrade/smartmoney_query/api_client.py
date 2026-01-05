@@ -3,7 +3,40 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Dict, Iterable, List, Tuple
 
-import requests
+try:
+    import requests
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+    import json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    class _SimpleResponse:
+        def __init__(self, status_code: int, payload: bytes) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise RuntimeError(f"http_status_{self.status_code}")
+
+        def json(self) -> object:
+            return json.loads(self._payload.decode("utf-8"))
+
+    class _SimpleSession:
+        def get(self, url: str, params: dict | None = None, timeout: float = 15.0) -> _SimpleResponse:
+            if params:
+                query = urllib.parse.urlencode(params)
+                url = f"{url}?{query}"
+            try:
+                with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310
+                    payload = resp.read()
+                    return _SimpleResponse(resp.status, payload)
+            except urllib.error.HTTPError as exc:
+                return _SimpleResponse(exc.code, exc.read())
+
+    class requests:  # type: ignore[override]
+        Session = _SimpleSession
 
 from .models import Position, Trade
 
