@@ -21,10 +21,13 @@ if str(MAKER_ROOT) not in sys.path:
 
 from smartmoney_query.poly_martmoney_query.api_client import DataApiClient
 
+from copytrade_v3_muti.ct_data import fetch_positions_norm
+from copytrade_v3_muti.ct_resolver import resolve_token_id
 from modules.maker_engine import MakerEngine
 from modules.position_manager import PositionManager
 from modules.signal_tracker import SignalTracker
 from modules.state_store import load_state, save_state
+from modules.topic_selector import Topic
 
 
 def _load_config(path: Path) -> Dict[str, Any]:
@@ -156,7 +159,114 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
         logger=logger,
     )
 
+    def _fetch_target_positions() -> tuple[dict[str, float], dict[str, float]]:
+        by_key: dict[str, float] = {}
+        by_id: dict[str, float] = {}
+        token_cache: dict[str, str] = {}
+        for account in target_addresses:
+            try:
+                positions, _ = fetch_positions_norm(
+                    data_client,
+                    account,
+                    float(signal_cfg.get("position_size_threshold", 0.0)),
+                    refresh_sec=signal_cfg.get("positions_refresh_sec"),
+                    cache_bust_mode=str(signal_cfg.get("positions_cache_bust_mode", "sec")),
+                )
+            except Exception as exc:
+                logger.warning("[bootstrap] fetch target positions failed account=%s: %s", account, exc)
+                continue
+            for pos in positions:
+                if not isinstance(pos, dict):
+                    continue
+                token_key = pos.get("token_key")
+                size = pos.get("size")
+                try:
+                    size_val = float(size or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if size_val <= 0:
+                    continue
+                if token_key:
+                    by_key[str(token_key)] = size_val
+                token_id = pos.get("token_id") or pos.get("tokenId") or pos.get("asset")
+                if not token_id and token_key:
+                    try:
+                        token_id = resolve_token_id(str(token_key), pos, token_cache)
+                    except Exception:
+                        token_id = None
+                if token_id:
+                    by_id[str(token_id)] = size_val
+        return by_key, by_id
+
+    def _bootstrap_existing_positions() -> None:
+        snapshot = position_manager.fetch_positions_snapshot()
+        if not snapshot:
+            logger.info("[bootstrap] 未检测到历史仓位")
+            return
+        target_by_key, target_by_id = _fetch_target_positions()
+        token_cache: dict[str, str] = {}
+        logger.info(
+            "[bootstrap] 检测到历史仓位=%s 目标仓位(token_key)=%s",
+            len(snapshot),
+            len(target_by_key),
+        )
+        for pos in snapshot:
+            token_id = pos.get("token_id")
+            token_key = pos.get("token_key")
+            size = pos.get("size")
+            condition_id = pos.get("condition_id")
+            outcome_index = pos.get("outcome_index")
+            slug = pos.get("slug")
+            raw = pos.get("raw")
+            try:
+                size_val = float(size or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if size_val <= 0:
+                continue
+            hold_until_sell = False
+            if token_key and token_key in target_by_key:
+                hold_until_sell = True
+            if token_id and token_id in target_by_id:
+                hold_until_sell = True
+            if not token_id and token_key:
+                try:
+                    token_id = resolve_token_id(
+                        str(token_key),
+                        {
+                            "token_key": token_key,
+                            "condition_id": condition_id,
+                            "outcome_index": outcome_index,
+                            "slug": slug,
+                            "raw": raw if isinstance(raw, dict) else {},
+                        },
+                        token_cache,
+                    )
+                except Exception as exc:
+                    logger.warning("[bootstrap] 无法解析 token_id token_key=%s: %s", token_key, exc)
+                    continue
+            topic = Topic(
+                token_id=str(token_id) if token_id else None,
+                token_key=str(token_key) if token_key else None,
+                condition_id=None,
+                outcome_index=None,
+            )
+            maker_engine.start_existing_position(
+                topic,
+                size_val,
+                hold_until_sell_signal=hold_until_sell,
+            )
+            logger.info(
+                "[bootstrap] 接管 token_id=%s token_key=%s size=%.6f hold_until_sell=%s",
+                token_id,
+                token_key,
+                size_val,
+                hold_until_sell,
+            )
+
     logger.info("[init] copytrade_maker 启动成功")
+
+    _bootstrap_existing_positions()
 
     last_config_reload = time.time()
     last_state_save = time.time()
