@@ -142,16 +142,29 @@ class MakerEngine:
 
     def stop_topics(self, topics: Iterable[Topic]) -> None:
         for topic in topics:
-            token_id = topic.token_id
-            if not token_id:
+            token_ids = self.match_token_ids(topic)
+            if not token_ids:
                 continue
-            with self._lock:
-                session = self._sessions.get(token_id)
-                if not session:
-                    continue
-                session.exit_requested = True
-                session.stop_event.set()
-                self._log("info", f"[maker] 停止 maker 波段线程 token_id={token_id}")
+            for token_id in token_ids:
+                with self._lock:
+                    session = self._sessions.get(token_id)
+                    if not session:
+                        continue
+                    session.exit_requested = True
+                    session.stop_event.set()
+                    self._log("info", f"[maker] 停止 maker 波段线程 token_id={token_id}")
+
+    def match_token_ids(self, topic: Topic) -> list[str]:
+        if topic.token_id:
+            return [topic.token_id]
+        if not topic.token_key:
+            return []
+        matched = []
+        with self._lock:
+            for token_id, session in self._sessions.items():
+                if session.token_key and session.token_key == topic.token_key:
+                    matched.append(token_id)
+        return matched
 
     def tick(self) -> None:
         with self._lock:
@@ -166,6 +179,13 @@ class MakerEngine:
     def open_positions(self) -> Dict[str, float]:
         with self._lock:
             return {token_id: session.open_size for token_id, session in self._sessions.items()}
+
+    def update_open_size(self, token_id: str, open_size: float) -> None:
+        with self._lock:
+            session = self._sessions.get(token_id)
+            if not session:
+                return
+            session.open_size = max(float(open_size), 0.0)
 
     def _run_session(self, token_id: str, stop_event: threading.Event) -> None:
         try:
