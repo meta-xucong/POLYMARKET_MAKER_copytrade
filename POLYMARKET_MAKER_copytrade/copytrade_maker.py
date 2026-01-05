@@ -11,13 +11,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-
-MAKER_ROOT = REPO_ROOT / "POLYMARKET_MAKER_AUTO" / "POLYMARKET_MAKER"
-if str(MAKER_ROOT) not in sys.path:
-    sys.path.insert(0, str(MAKER_ROOT))
 
 from smartmoney_query.api_client import DataApiClient
 
