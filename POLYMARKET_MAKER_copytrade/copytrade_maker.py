@@ -632,18 +632,19 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                     if account_positions is not None:
                         by_key, by_id = account_positions
                         size_val = _lookup_position_size(topic, by_key, by_id)
-                        if size_val is not None and size_val < watch_min_position_usdc:
+                        if size_val is None or size_val < watch_min_position_usdc:
+                            size_for_watch = size_val if size_val is not None else 0.0
                             _add_watchlist(
                                 event.source_account,
                                 topic,
-                                size_val,
+                                size_for_watch,
                                 watch_min_position_usdc,
                             )
                             logger.info(
                                 "[signal] BUY 待观察 token_id=%s token_key=%s size=%.6f threshold=%.6f",
                                 topic.token_id,
                                 topic.token_key,
-                                size_val,
+                                size_for_watch,
                                 watch_min_position_usdc,
                             )
                             continue
@@ -665,6 +666,8 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 )
                 maker_engine.stop_topics(event.topics)
                 position_manager.close_positions(event.topics)
+                for topic in event.topics:
+                    _remove_watchlist(_watchlist_key(event.source_account, topic), "sell_signal")
                 cooldown_sec = float(cooldown_cfg.get("cooldown_sec_per_token") or 0)
                 if cooldown_sec > 0 and bool(cooldown_cfg.get("exit_ignore_cooldown", True)):
                     for topic in event.topics:
