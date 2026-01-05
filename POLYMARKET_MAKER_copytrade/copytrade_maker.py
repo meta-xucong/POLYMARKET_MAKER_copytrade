@@ -4,6 +4,7 @@ import argparse
 import importlib
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -43,10 +44,13 @@ def _get_maker_client():
     return module.get_client()
 
 
-def _setup_logging(cfg: Dict[str, Any]) -> logging.Logger:
+def _setup_logging(cfg: Dict[str, Any], base_dir: Path) -> logging.Logger:
     log_cfg = cfg.get("logging", {}) if isinstance(cfg.get("logging"), dict) else {}
-    level = str(log_cfg.get("level", "INFO")).upper()
-    log_path = log_cfg.get("path", "logs/app.log")
+    level_name = str(log_cfg.get("level", "INFO")).upper()
+    level = logging.INFO
+    if level_name in logging._nameToLevel:
+        level = logging._nameToLevel[level_name]
+    log_path = log_cfg.get("path")
 
     logger = logging.getLogger("copytrade_maker")
     logger.setLevel(level)
@@ -54,25 +58,35 @@ def _setup_logging(cfg: Dict[str, Any]) -> logging.Logger:
 
     formatter = logging.Formatter("[%(asctime)s][%(levelname)s] %(message)s")
 
-    if not logger.handlers:
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(formatter)
-        logger.addHandler(stream_handler)
+    logger.handlers.clear()
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
 
-        if log_path:
-            log_file = Path(log_path)
-            if not log_file.is_absolute():
-                log_file = Path(__file__).resolve().parent / log_file
-            log_file.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(log_file, encoding="utf-8")
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+    if not log_path:
+        log_dir_value = cfg.get("log_dir") or log_cfg.get("dir") or "logs"
+        log_dir = Path(log_dir_value)
+        if not log_dir.is_absolute():
+            log_dir = base_dir / log_dir
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        pid = os.getpid()
+        log_file = log_dir / f"copytrade_maker_{timestamp}_pid{pid}.log"
+    else:
+        log_file = Path(log_path)
+        if not log_file.is_absolute():
+            log_file = base_dir / log_file
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
     return logger
 
 
-def run_loop(cfg: Dict[str, Any]) -> None:
-    logger = _setup_logging(cfg)
+def run_loop(cfg: Dict[str, Any], base_dir: Path) -> None:
+    logger = _setup_logging(cfg, base_dir)
 
     target_addresses = cfg.get("target_addresses")
     if target_addresses is None:
@@ -135,7 +149,7 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = _load_config(Path(args.config))
-    run_loop(cfg)
+    run_loop(cfg, Path(args.config).parent)
 
 
 if __name__ == "__main__":
