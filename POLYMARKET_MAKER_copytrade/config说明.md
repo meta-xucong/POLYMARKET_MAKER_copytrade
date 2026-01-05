@@ -8,7 +8,7 @@
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `target_addresses` | array | `[]` | 跟踪/复制的目标地址列表。为空表示不限定或由外部输入。 |
+| `target_addresses` | array | `["0x79add3f87e377b0899b935472c07d2c3816ba9f1"]` | 跟踪/复制的目标地址列表。为空表示不限定或由外部输入。 |
 | `signal_tracking` | object | 见下 | 信号跟踪相关配置。 |
 | `maker_strategy` | object | 见下 | 做市策略参数。 |
 | `run_params` | object | 见下 | 单次运行覆盖参数。 |
@@ -25,32 +25,32 @@
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `poll_interval_sec` | number | `5` | 拉取/扫描信号的轮询间隔（秒）。 |
+| `poll_interval_sec` | number | `30` | 拉取/扫描信号的轮询间隔（秒）。 |
 
 ## maker_strategy
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `order_size` | number | `10` | 默认下单数量。 |
-| `price_spread_bps` | number | `50` | 做市价差（基点），1bp=0.01%。 |
+| `price_spread_bps` | number | `100` | 做市价差（基点），1bp=0.01%。 |
 | `min_order_size` | number | `5` | 最小下单数量。 |
 | `min_quote_amount` | number | `1` | 最小报价金额。 |
-| `poll_interval_sec` | number | `10` | 做市策略轮询间隔（秒）。 |
-| `refresh_interval_sec` | number | `5` | 订单刷新间隔（秒）。 |
-| `sell_mode` | string | `conservative` | 卖出模式（如 conservative / aggressive）。 |
+| `poll_interval_sec` | number | `30` | 做市策略轮询间隔（秒）。 |
+| `refresh_interval_sec` | number | `30` | 订单刷新间隔（秒）。 |
+| `sell_mode` | string | `aggressive` | 卖出模式（如 conservative / aggressive）。 |
 | `aggressive_step` | number | `0.01` | 激进模式调整步长。 |
 | `aggressive_timeout` | number | `300` | 激进模式超时（秒）。 |
 | `buy_price_threshold` | number/null | `null` | 触发买入的价格阈值（留空表示不限定）。 |
 | `drop_window_minutes` | number | `60` | 跌幅统计窗口（分钟）。 |
-| `drop_pct` | number | `0.001` | 跌幅阈值比例（小数表示百分比，例如 `0.001` = `0.1%`）。 |
-| `profit_pct` | number | `0.005` | 盈利目标比例（小数表示百分比，例如 `0.005` = `0.5%`）。 |
+| `drop_pct` | number | `0.01` | 跌幅阈值比例（小数表示百分比，例如 `0.01` = `1%`）。 |
+| `profit_pct` | number | `0.02` | 盈利目标比例（小数表示百分比，例如 `0.02` = `2%`）。 |
 | `enable_incremental_drop_pct` | boolean | `true` | 是否启用递增跌幅阈值。 |
-| `incremental_drop_pct_step` | number | `0.0002` | 递增跌幅步长（小数表示百分比，例如 `0.0002` = `0.02%` = `2bps`）。 |
-| `incremental_drop_pct_cap` | number | `0.2` | 递增跌幅上限（小数表示百分比，例如 `0.2` = `20%`）。 |
+| `incremental_drop_pct_step` | number | `0.002` | 递增跌幅步长（小数表示百分比，例如 `0.002` = `0.2%` = `20bps`）。 |
+| `incremental_drop_pct_cap` | number | `0.1` | 递增跌幅上限（小数表示百分比，例如 `0.1` = `10%`）。 |
 | `disable_duplicate_signal` | boolean | `true` | 是否去重信号。 |
 | `disable_sell_signals` | boolean | `false` | 是否禁用卖出信号。 |
-| `min_price` | number | `0.0` | 允许的最小价格。 |
-| `max_price` | number | `1.0` | 允许的最大价格。 |
+| `min_price` | number | `0.01` | 允许的最小价格。 |
+| `max_price` | number | `0.99` | 允许的最大价格。 |
 | `min_market_order_size` | number/null | `null` | 市价单最小数量。 |
 | `countdown` | object | 见下 | 倒计时/临近截止配置。 |
 
@@ -73,10 +73,10 @@
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `max_concurrent_jobs` | number | `2` | 最大并发任务数。 |
-| `max_concurrent_exit_jobs` | number | `2` | 最大并发退出任务数。 |
-| `topic_start_cooldown_sec` | number | `3` | 主题启动冷却时间（秒）。 |
-| `poll_interval_seconds` | number | `5` | 调度轮询间隔（秒）。 |
+| `max_concurrent_jobs` | number | `4` | 最大并发任务数。 |
+| `max_concurrent_exit_jobs` | number | `4` | 最大并发退出任务数。 |
+| `topic_start_cooldown_sec` | number | `30` | 主题启动冷却时间（秒）。 |
+| `poll_interval_seconds` | number | `30` | 调度轮询间隔（秒）。 |
 
 ## risk
 
@@ -112,15 +112,8 @@
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `low_price` | object | 见下 | 低价彩头单参数（低于阈值时下少量）。 |
 | `topics` | object | `{}` | 主题级别的参数覆盖。 |
-
-### maker_strategy_defaults.low_price
-
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `price_threshold` | number | `0.15` | 低价阈值（低于该价格触发低价彩头单）。 |
-| `order_size` | number | `5.0` | 低价彩头单下单数量。 |
+| `low_price` | object | 见下 | 低价彩头单参数（低于阈值时下少量）。 |
 
 ### maker_strategy_defaults.low_price
 
