@@ -102,6 +102,10 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
 
     signal_cfg = cfg.get("signal_tracking", {}) if isinstance(cfg.get("signal_tracking"), dict) else {}
     poll_interval = float(signal_cfg.get("poll_interval_sec", 5))
+    watch_min_position_usdc = float(signal_cfg.get("watch_position_min_usdc", 10.0))
+    watch_poll_interval = float(
+        signal_cfg.get("watchlist_poll_interval_sec", signal_cfg.get("position_poll_interval_sec", 20))
+    )
     scheduler_cfg = cfg.get("scheduler", {}) if isinstance(cfg.get("scheduler"), dict) else {}
     risk_cfg = cfg.get("risk", {}) if isinstance(cfg.get("risk"), dict) else {}
     cooldown_cfg = cfg.get("cooldown", {}) if isinstance(cfg.get("cooldown"), dict) else {}
@@ -341,6 +345,188 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 state["cooldown_until"] = cooldown_map
             cooldown_map[token_id] = until_ts
 
+    def _watchlist_key(account: str, topic: Topic) -> str:
+        token_part = topic.token_key or topic.token_id or "unknown"
+        return f"{account}:{token_part}"
+
+    def _add_watchlist(account: str, topic: Topic, size_val: float, threshold: float) -> None:
+        key = _watchlist_key(account, topic)
+        meta = {
+            "account": account,
+            "token_id": topic.token_id,
+            "token_key": topic.token_key,
+            "condition_id": topic.condition_id,
+            "outcome_index": topic.outcome_index,
+            "size": size_val,
+            "threshold": threshold,
+            "first_seen": int(time.time()),
+            "last_seen": int(time.time()),
+        }
+        with state_lock:
+            watchlist = state.setdefault("watchlist", {})
+            if not isinstance(watchlist, dict):
+                watchlist = {}
+                state["watchlist"] = watchlist
+            watchlist[key] = meta
+        logger.info(
+            "[watchlist] add account=%s token_id=%s token_key=%s size=%.6f threshold=%.6f",
+            account,
+            topic.token_id,
+            topic.token_key,
+            size_val,
+            threshold,
+        )
+
+    def _remove_watchlist(key: str, reason: str) -> None:
+        with state_lock:
+            watchlist = state.get("watchlist", {})
+            if not isinstance(watchlist, dict):
+                return
+            meta = watchlist.pop(key, None)
+        if meta:
+            logger.info(
+                "[watchlist] remove key=%s reason=%s token_id=%s token_key=%s",
+                key,
+                reason,
+                meta.get("token_id"),
+                meta.get("token_key"),
+            )
+
+    def _fetch_positions_map(account: str) -> tuple[dict[str, float], dict[str, float]]:
+        by_key: dict[str, float] = {}
+        by_id: dict[str, float] = {}
+        token_cache: dict[str, str] = {}
+        positions, _ = fetch_positions_norm(
+            data_client,
+            account,
+            0.0,
+            refresh_sec=signal_cfg.get("positions_refresh_sec"),
+            cache_bust_mode=str(signal_cfg.get("positions_cache_bust_mode", "sec")),
+        )
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            token_key = pos.get("token_key")
+            size = pos.get("size")
+            try:
+                size_val = float(size or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if token_key:
+                by_key[str(token_key)] = size_val
+            token_id = pos.get("token_id") or pos.get("tokenId") or pos.get("asset")
+            if not token_id and token_key:
+                try:
+                    token_id = resolve_token_id(str(token_key), pos, token_cache)
+                except Exception:
+                    token_id = None
+            if token_id:
+                by_id[str(token_id)] = size_val
+        return by_key, by_id
+
+    def _lookup_position_size(
+        topic: Topic,
+        by_key: dict[str, float],
+        by_id: dict[str, float],
+    ) -> Optional[float]:
+        if topic.token_id and topic.token_id in by_id:
+            return by_id.get(topic.token_id)
+        if topic.token_key and topic.token_key in by_key:
+            return by_key.get(topic.token_key)
+        return None
+
+    def _refresh_watchlist(now_ts: float) -> None:
+        with state_lock:
+            watchlist = state.get("watchlist", {})
+            if not isinstance(watchlist, dict) or not watchlist:
+                return
+            entries = dict(watchlist)
+
+        account_map: dict[str, tuple[dict[str, float], dict[str, float]]] = {}
+        to_start: list[tuple[str, Topic, float]] = []
+        to_remove: list[tuple[str, str]] = []
+
+        for key, meta in entries.items():
+            account = str(meta.get("account") or "")
+            if not account:
+                to_remove.append((key, "invalid_account"))
+                continue
+            if account not in account_map:
+                try:
+                    account_map[account] = _fetch_positions_map(account)
+                except Exception as exc:
+                    logger.warning("[watchlist] fetch positions failed account=%s: %s", account, exc)
+                    continue
+            by_key, by_id = account_map[account]
+            token_id = meta.get("token_id")
+            token_key = meta.get("token_key")
+            topic = Topic(
+                token_id=str(token_id) if token_id else None,
+                token_key=str(token_key) if token_key else None,
+                condition_id=meta.get("condition_id"),
+                outcome_index=meta.get("outcome_index"),
+                price=None,
+            )
+            size_val = _lookup_position_size(topic, by_key, by_id)
+            if size_val is None or size_val <= 0:
+                to_remove.append((key, "position_closed"))
+                continue
+            threshold = float(meta.get("threshold") or watch_min_position_usdc)
+            if size_val >= threshold:
+                to_start.append((key, topic, size_val))
+            else:
+                with state_lock:
+                    watchlist = state.get("watchlist", {})
+                    if isinstance(watchlist, dict) and key in watchlist:
+                        watchlist[key]["size"] = size_val
+                        watchlist[key]["last_seen"] = int(now_ts)
+
+        if to_remove:
+            for key, reason in to_remove:
+                _remove_watchlist(key, reason)
+
+        if not to_start:
+            return
+
+        allowed_topics: list[Topic] = []
+        for key, topic, size_val in to_start:
+            token_id = topic.token_id
+            if not token_id:
+                _remove_watchlist(key, "missing_token_id")
+                continue
+            cooldown_until = _cooldown_until(token_id)
+            if cooldown_until and now_ts < cooldown_until:
+                logger.info(
+                    "[watchlist] cooldown token_id=%s until=%s",
+                    token_id,
+                    int(cooldown_until),
+                )
+                continue
+            ignored, reason = _is_ignored(token_id, now_ts)
+            if ignored:
+                logger.info(
+                    "[watchlist] ignored token_id=%s reason=%s",
+                    token_id,
+                    reason or "cooldown",
+                )
+                continue
+            allowed_topics.append(topic)
+            _remove_watchlist(key, "threshold_reached")
+            logger.info(
+                "[watchlist] promote token_id=%s token_key=%s size=%.6f",
+                topic.token_id,
+                topic.token_key,
+                size_val,
+            )
+
+        if allowed_topics:
+            maker_engine.start_topics(allowed_topics)
+            cooldown_sec = float(cooldown_cfg.get("cooldown_sec_per_token") or 0)
+            if cooldown_sec > 0:
+                for topic in allowed_topics:
+                    if topic.token_id:
+                        _set_cooldown(topic.token_id, cooldown_sec)
+
     while True:
         now_ts = time.time()
         if config_reload_sec > 0 and now_ts - last_config_reload >= config_reload_sec:
@@ -397,6 +583,13 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 max_concurrent_exits=int(scheduler_cfg.get("max_concurrent_exit_jobs") or 0),
             )
             config_reload_sec = float(cfg.get("config_reload_sec") or config_reload_sec)
+            watch_min_position_usdc = float(signal_cfg.get("watch_position_min_usdc", watch_min_position_usdc))
+            watch_poll_interval = float(
+                signal_cfg.get(
+                    "watchlist_poll_interval_sec",
+                    signal_cfg.get("position_poll_interval_sec", watch_poll_interval),
+                )
+            )
 
         _cleanup_ignored(now_ts)
         events = signal_tracker.poll()
@@ -408,6 +601,16 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                     ",".join([t.identifier for t in event.topics]),
                 )
                 allowed_topics = []
+                account_positions = None
+                if watch_min_position_usdc > 0:
+                    try:
+                        account_positions = _fetch_positions_map(event.source_account)
+                    except Exception as exc:
+                        logger.warning(
+                            "[signal] fetch positions failed account=%s: %s",
+                            event.source_account,
+                            exc,
+                        )
                 for topic in event.topics:
                     token_id = topic.token_id
                     if not token_id:
@@ -426,7 +629,29 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                             "[signal] BUY 忽略 token_id=%s reason=%s", token_id, reason or "cooldown"
                         )
                         continue
+                    if account_positions is not None:
+                        by_key, by_id = account_positions
+                        size_val = _lookup_position_size(topic, by_key, by_id)
+                        if size_val is None or size_val < watch_min_position_usdc:
+                            size_for_watch = size_val if size_val is not None else 0.0
+                            _add_watchlist(
+                                event.source_account,
+                                topic,
+                                size_for_watch,
+                                watch_min_position_usdc,
+                            )
+                            logger.info(
+                                "[signal] BUY 待观察 token_id=%s token_key=%s size=%.6f threshold=%.6f",
+                                topic.token_id,
+                                topic.token_key,
+                                size_for_watch,
+                                watch_min_position_usdc,
+                            )
+                            continue
                     allowed_topics.append(topic)
+                if allowed_topics:
+                    for topic in allowed_topics:
+                        _remove_watchlist(_watchlist_key(event.source_account, topic), "order_started")
                 maker_engine.start_topics(allowed_topics)
                 cooldown_sec = float(cooldown_cfg.get("cooldown_sec_per_token") or 0)
                 if cooldown_sec > 0:
@@ -441,12 +666,25 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 )
                 maker_engine.stop_topics(event.topics)
                 position_manager.close_positions(event.topics)
+                for topic in event.topics:
+                    _remove_watchlist(_watchlist_key(event.source_account, topic), "sell_signal")
                 cooldown_sec = float(cooldown_cfg.get("cooldown_sec_per_token") or 0)
                 if cooldown_sec > 0 and bool(cooldown_cfg.get("exit_ignore_cooldown", True)):
                     for topic in event.topics:
                         if topic.token_id:
                             _mark_ignored(topic.token_id, cooldown_sec, "exit_cooldown")
         maker_engine.tick()
+        if watch_poll_interval > 0:
+            with state_lock:
+                last_watch = state.get("last_watchlist_poll", 0.0) if isinstance(state, dict) else 0.0
+            try:
+                last_watch_ts = float(last_watch or 0.0)
+            except (TypeError, ValueError):
+                last_watch_ts = 0.0
+            if now_ts - last_watch_ts >= watch_poll_interval:
+                _refresh_watchlist(now_ts)
+                with state_lock:
+                    state["last_watchlist_poll"] = now_ts
         if state_save_interval > 0 and now_ts - last_state_save >= state_save_interval:
             with state_lock:
                 save_state(str(state_file), state)
