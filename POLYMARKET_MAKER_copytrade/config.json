@@ -1,8 +1,4 @@
 {
-  "network": {
-    "rpc_url": "",
-    "chain_id": 137
-  },
   "target_addresses": [],
   "signal_tracking": {
     "poll_interval_sec": 5
@@ -19,10 +15,6 @@
     "aggressive_timeout": 300,
     "exit_floor_price": 0,
     "exit_sell_mode": "aggressive"
-  },
-  "risk": {
-    "max_position_per_topic": 100,
-    "stop_loss_bps": 200
   },
   "logging": {
     "level": "INFO",
