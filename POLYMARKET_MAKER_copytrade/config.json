@@ -1,0 +1,34 @@
+{
+  "network": {
+    "rpc_url": "",
+    "chain_id": 137
+  },
+  "accounts": {
+    "maker_private_key": "",
+    "target_accounts": ["0x..."]
+  },
+  "signal_tracking": {
+    "poll_interval_sec": 5
+  },
+  "maker_strategy": {
+    "order_size": 10,
+    "price_spread_bps": 50,
+    "min_order_size": 5,
+    "min_quote_amount": 1,
+    "poll_interval_sec": 10,
+    "refresh_interval_sec": 5,
+    "sell_mode": "conservative",
+    "aggressive_step": 0.01,
+    "aggressive_timeout": 300,
+    "exit_floor_price": 0,
+    "exit_sell_mode": "aggressive"
+  },
+  "risk": {
+    "max_position_per_topic": 100,
+    "stop_loss_bps": 200
+  },
+  "logging": {
+    "level": "INFO",
+    "path": "logs/app.log"
+  }
+}
