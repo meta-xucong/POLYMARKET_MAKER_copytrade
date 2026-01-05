@@ -122,6 +122,13 @@
 | `price_threshold` | number | `0.15` | 低价阈值（低于该价格触发低价彩头单）。 |
 | `order_size` | number | `5.0` | 低价彩头单下单数量。 |
 
+### maker_strategy_defaults.low_price
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `price_threshold` | number | `0.15` | 低价阈值（低于该价格触发低价彩头单）。 |
+| `order_size` | number | `5.0` | 低价彩头单下单数量。 |
+
 ## logging
 
 | 字段 | 类型 | 默认值 | 说明 |
