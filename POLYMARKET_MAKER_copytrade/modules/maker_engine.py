@@ -140,6 +140,62 @@ class MakerEngine:
                 thread.start()
                 self._log("info", f"[maker] 启动 maker 波段线程 token_id={token_id}")
 
+    def start_existing_position(
+        self,
+        topic: Topic,
+        position_size: float,
+        *,
+        hold_until_sell_signal: bool = False,
+    ) -> None:
+        token_id = topic.token_id
+        if not token_id:
+            self._log("warning", f"[maker] 跳过无法解析 token_id 的历史仓位: {topic.identifier}")
+            return
+        if self._session_semaphore and not self._session_semaphore.acquire(blocking=False):
+            self._log("warning", f"[maker] 并发已满，跳过历史仓位 token_id={token_id}")
+            return
+        now = time.time()
+        with self._lock:
+            session = self._sessions.get(token_id)
+            if session and session.thread.is_alive():
+                session.open_size = max(float(position_size), 0.0)
+                session.strategy.sync_position(session.open_size)
+                if hold_until_sell_signal:
+                    session.strategy.stop("await target sell")
+                else:
+                    session.strategy.resume()
+                if self._session_semaphore:
+                    self._session_semaphore.release()
+                return
+            stop_event = threading.Event()
+            session_config = self._resolve_strategy_config(topic)
+            strategy = self._build_strategy(token_id, session_config)
+            strategy.sync_position(max(float(position_size), 0.0))
+            if hold_until_sell_signal:
+                strategy.stop("await target sell")
+            thread = threading.Thread(
+                target=self._run_session,
+                name=f"maker-{token_id}",
+                args=(token_id, stop_event),
+                daemon=True,
+            )
+            session = MakerSession(
+                token_id=token_id,
+                token_key=topic.token_key,
+                stop_event=stop_event,
+                thread=thread,
+                strategy=strategy,
+                open_size=max(float(position_size), 0.0),
+                last_status="BOOT",
+            )
+            self._sessions[token_id] = session
+            self._start_cooldowns[token_id] = now
+            thread.start()
+            self._log(
+                "info",
+                f"[maker] 接管历史仓位 token_id={token_id} size={position_size}",
+            )
+
     def stop_topics(self, topics: Iterable[Topic]) -> None:
         for topic in topics:
             token_ids = self.match_token_ids(topic)
