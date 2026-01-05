@@ -45,25 +45,27 @@ class PositionManager:
 
     def close_positions(self, topics: Iterable[Topic]) -> None:
         for topic in topics:
-            token_id = topic.token_id
-            if not token_id:
+            token_ids = self._maker_engine.match_token_ids(topic)
+            if not token_ids:
+                self._log("warning", f"[position] 未找到匹配会话 token={topic.identifier}")
                 continue
-            position_size = self._maker_engine.open_positions().get(token_id, 0.0)
-            if position_size <= 0:
-                self._log("info", f"[position] 无仓位，撤销挂单 token_id={token_id}")
-                self._cancel_open_orders(token_id)
-                self._maker_engine.update_open_size(token_id, 0.0)
-                continue
-            if self._exit_semaphore and not self._exit_semaphore.acquire(blocking=False):
-                self._log("warning", f"[position] 清仓并发已满，跳过 token_id={token_id}")
-                continue
-            thread = threading.Thread(
-                target=self._close_one,
-                args=(token_id, position_size),
-                name=f"close-{token_id}",
-                daemon=True,
-            )
-            thread.start()
+            for token_id in token_ids:
+                position_size = self._maker_engine.open_positions().get(token_id, 0.0)
+                if position_size <= 0:
+                    self._log("info", f"[position] 无仓位，撤销挂单 token_id={token_id}")
+                    self._cancel_open_orders(token_id)
+                    self._maker_engine.update_open_size(token_id, 0.0)
+                    continue
+                if self._exit_semaphore and not self._exit_semaphore.acquire(blocking=False):
+                    self._log("warning", f"[position] 清仓并发已满，跳过 token_id={token_id}")
+                    continue
+                thread = threading.Thread(
+                    target=self._close_one,
+                    args=(token_id, position_size),
+                    name=f"close-{token_id}",
+                    daemon=True,
+                )
+                thread.start()
 
     def _close_one(self, token_id: str, position_size: float) -> None:
         poll_sec = float(self._config.get("poll_interval_sec", 10))
