@@ -36,6 +36,7 @@ def _normalize_position(raw: Dict[str, Any]) -> Dict[str, Any]:
     token_id = _pick_first(raw, ("token_id", "tokenId", "asset", "token", "clobTokenId"))
     token_key = _pick_first(raw, ("token_key", "tokenKey")) or _to_token_key(raw)
     size = _pick_first(raw, ("size", "shares", "positionSize", "position", "amount"))
+    avg_price = _pick_first(raw, ("avg_price", "avgPrice", "averagePrice"))
     condition_id = _pick_first(raw, ("condition_id", "conditionId", "marketId"))
     outcome_index = _pick_first(raw, ("outcome_index", "outcomeIndex"))
     slug = _pick_first(raw, ("slug", "marketSlug"))
@@ -43,6 +44,7 @@ def _normalize_position(raw: Dict[str, Any]) -> Dict[str, Any]:
         "token_id": str(token_id) if token_id is not None else None,
         "token_key": str(token_key) if token_key is not None else None,
         "size": float(size) if size is not None else 0.0,
+        "avg_price": float(avg_price) if avg_price is not None else None,
         "condition_id": str(condition_id) if condition_id is not None else None,
         "outcome_index": int(outcome_index) if outcome_index is not None else None,
         "slug": str(slug) if slug is not None else None,
@@ -79,6 +81,7 @@ def fetch_positions_norm(
         raw.setdefault("condition_id", getattr(pos, "condition_id", None))
         raw.setdefault("outcome_index", getattr(pos, "outcome_index", None))
         raw.setdefault("size", getattr(pos, "size", None))
+        raw.setdefault("avg_price", getattr(pos, "avg_price", None))
         raw.setdefault("slug", getattr(pos, "slug", None))
         normalized.append(_normalize_position(raw))
 
@@ -152,4 +155,3 @@ def fetch_target_actions_since(
     info = dict(info)
     info["latest_ms"] = latest_ms
     return actions, info
-
