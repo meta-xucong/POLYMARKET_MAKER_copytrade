@@ -140,30 +140,51 @@ class PositionManager:
             or self._config.get("taker_spread_threshold")
             or 0.01
         )
+        min_order_shares = float(
+            self._config.get("exit_min_order_shares")
+            or self._config.get("min_order_shares")
+            or self._config.get("min_order_size")
+            or 0.0
+        )
         return {
             "tick_size": tick_size,
             "taker_enabled": bool(self._config.get("exit_taker_enabled", True)),
             "taker_spread_threshold": taker_threshold,
+            "taker_order_type": self._config.get("exit_taker_order_type")
+            or self._config.get("taker_order_type"),
             "exit_full_sell": True,
             "maker_only": bool(self._config.get("exit_maker_only", False)),
             "allow_short": bool(self._config.get("allow_short", False)),
-            "min_order_shares": float(
-                self._config.get("exit_min_order_shares")
-                or self._config.get("min_order_size")
-                or 0.0
+            "order_size_mode": self._config.get("order_size_mode", "fixed_shares"),
+            "slice_min": float(self._config.get("slice_min") or 0.0),
+            "slice_max": float(self._config.get("slice_max") or 0.0),
+            "min_order_usd": float(
+                self._config.get("exit_min_order_usd") or self._config.get("min_order_usd") or 0.0
             ),
-            "deadband_shares": float(self._config.get("exit_deadband_shares") or 0.0),
+            "max_order_usd": float(self._config.get("max_order_usd") or 0.0),
+            "min_order_shares": min_order_shares,
+            "deadband_shares": float(
+                self._config.get("exit_deadband_shares") or self._config.get("deadband_shares") or 0.0
+            ),
             "enable_reprice": bool(self._config.get("exit_enable_reprice", True)),
-            "reprice_ticks": int(self._config.get("exit_reprice_ticks") or 1),
-            "reprice_cooldown_sec": int(self._config.get("exit_reprice_cooldown_sec") or 0),
+            "reprice_ticks": int(self._config.get("exit_reprice_ticks") or self._config.get("reprice_ticks") or 1),
+            "reprice_cooldown_sec": int(
+                self._config.get("exit_reprice_cooldown_sec")
+                or self._config.get("reprice_cooldown_sec")
+                or 0
+            ),
             "dedupe_place": bool(self._config.get("exit_dedupe_place", True)),
             "allow_partial": bool(self._config.get("exit_allow_partial", True)),
-            "taker_order_type": self._config.get("exit_taker_order_type"),
-            "min_order_usd": float(self._config.get("exit_min_order_usd") or 0.0),
             "retry_on_insufficient_balance": bool(
                 self._config.get("exit_retry_on_insufficient_balance", True)
             ),
             "retry_shrink_factor": float(self._config.get("exit_retry_shrink_factor") or 0.5),
+            "place_fail_backoff_base_sec": float(
+                self._config.get("place_fail_backoff_base_sec") or 2.0
+            ),
+            "place_fail_backoff_cap_sec": float(
+                self._config.get("place_fail_backoff_cap_sec") or 60.0
+            ),
         }
 
     def _fetch_open_orders(self, token_id: str) -> tuple[list[dict], bool]:
