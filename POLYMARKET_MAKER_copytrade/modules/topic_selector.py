@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Dict
+from typing import Iterable, List, Optional, Dict, Set
 
 
 @dataclass(frozen=True)
@@ -45,12 +45,27 @@ def from_action(action: Dict[str, object]) -> Optional[Topic]:
     )
 
 
-def select_topics(actions: Iterable[Dict[str, object]]) -> List[Topic]:
+def select_topics(
+    actions: Iterable[Dict[str, object]],
+    *,
+    blacklist_token_keys: Optional[Iterable[str]] = None,
+    blacklist_token_ids: Optional[Iterable[str]] = None,
+) -> List[Topic]:
     topics: List[Topic] = []
     seen: set[str] = set()
+    blacklist_keys: Set[str] = {
+        str(key).strip() for key in (blacklist_token_keys or []) if str(key).strip()
+    }
+    blacklist_ids: Set[str] = {
+        str(key).strip() for key in (blacklist_token_ids or []) if str(key).strip()
+    }
     for action in actions:
         topic = from_action(action)
         if topic is None:
+            continue
+        if topic.token_key and topic.token_key in blacklist_keys:
+            continue
+        if topic.token_id and topic.token_id in blacklist_ids:
             continue
         key = topic.identifier
         if key in seen:

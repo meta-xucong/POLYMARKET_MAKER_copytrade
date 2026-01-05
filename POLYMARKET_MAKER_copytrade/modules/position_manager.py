@@ -9,11 +9,31 @@ from .topic_selector import Topic
 
 
 class PositionManager:
-    def __init__(self, client, config: dict, maker_engine, logger=None) -> None:
+    def __init__(
+        self,
+        client,
+        config: dict,
+        maker_engine,
+        *,
+        max_concurrent_exits: int = 0,
+        logger=None,
+    ) -> None:
         self._client = client
         self._config = config
         self._maker_engine = maker_engine
         self._logger = logger
+        self._exit_semaphore: Optional[threading.Semaphore] = None
+        if max_concurrent_exits and max_concurrent_exits > 0:
+            self._exit_semaphore = threading.Semaphore(int(max_concurrent_exits))
+
+    def update_config(self, config: dict, *, max_concurrent_exits: Optional[int] = None) -> None:
+        self._config = config
+        if max_concurrent_exits is None:
+            return
+        if max_concurrent_exits and max_concurrent_exits > 0:
+            self._exit_semaphore = threading.Semaphore(int(max_concurrent_exits))
+        else:
+            self._exit_semaphore = None
 
     def close_positions(self, topics: Iterable[Topic]) -> None:
         for topic in topics:
@@ -22,6 +42,9 @@ class PositionManager:
                 continue
             position_size = self._maker_engine.open_positions().get(token_id, 0.0)
             if position_size <= 0:
+                continue
+            if self._exit_semaphore and not self._exit_semaphore.acquire(blocking=False):
+                self._log("warning", f"[position] 清仓并发已满，跳过 token_id={token_id}")
                 continue
             thread = threading.Thread(
                 target=self._close_one,
@@ -54,6 +77,9 @@ class PositionManager:
             self._log("info", f"[position] 已触发清仓 token_id={token_id}")
         except Exception as exc:
             self._log("error", f"[position] 清仓失败 token_id={token_id}: {exc}")
+        finally:
+            if self._exit_semaphore:
+                self._exit_semaphore.release()
 
     def _log(self, level: str, message: str) -> None:
         if self._logger is None:

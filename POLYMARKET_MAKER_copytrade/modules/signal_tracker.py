@@ -26,17 +26,47 @@ class SignalTracker:
         poll_interval_sec: float = 5.0,
         logger=None,
         initial_cursor_ms: Optional[int] = None,
+        blacklist_token_keys: Optional[Iterable[str]] = None,
+        blacklist_token_ids: Optional[Iterable[str]] = None,
     ) -> None:
         self._client = client
         self._target_accounts = [str(addr).strip() for addr in target_accounts if str(addr).strip()]
         self._poll_interval_sec = max(float(poll_interval_sec), 0.1)
         self._logger = logger
+        self._blacklist_token_keys = [
+            str(key).strip() for key in (blacklist_token_keys or []) if str(key).strip()
+        ]
+        self._blacklist_token_ids = [
+            str(key).strip() for key in (blacklist_token_ids or []) if str(key).strip()
+        ]
         cursor_seed = int(initial_cursor_ms) if initial_cursor_ms is not None else int(time.time() * 1000)
         self._cursor_ms: Dict[str, int] = {addr: cursor_seed for addr in self._target_accounts}
 
     @property
     def poll_interval_sec(self) -> float:
         return self._poll_interval_sec
+
+    def update_config(
+        self,
+        *,
+        poll_interval_sec: Optional[float] = None,
+        blacklist_token_keys: Optional[Iterable[str]] = None,
+        blacklist_token_ids: Optional[Iterable[str]] = None,
+    ) -> None:
+        if poll_interval_sec is not None:
+            self._poll_interval_sec = max(float(poll_interval_sec), 0.1)
+        if blacklist_token_keys is not None:
+            self._blacklist_token_keys = [
+                str(key).strip()
+                for key in (blacklist_token_keys or [])
+                if str(key).strip()
+            ]
+        if blacklist_token_ids is not None:
+            self._blacklist_token_ids = [
+                str(key).strip()
+                for key in (blacklist_token_ids or [])
+                if str(key).strip()
+            ]
 
     def poll(self) -> List[SignalEvent]:
         events: List[SignalEvent] = []
@@ -64,7 +94,11 @@ class SignalTracker:
             for side, side_actions in grouped.items():
                 if not side_actions:
                     continue
-                topics = select_topics(side_actions)
+                topics = select_topics(
+                    side_actions,
+                    blacklist_token_keys=self._blacklist_token_keys,
+                    blacklist_token_ids=self._blacklist_token_ids,
+                )
                 if not topics:
                     continue
                 latest_ts = 0
