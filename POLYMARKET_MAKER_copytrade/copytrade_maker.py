@@ -125,6 +125,14 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
         data_client,
         target_addresses,
         poll_interval_sec=poll_interval,
+        position_poll_interval_sec=float(signal_cfg.get("position_poll_interval_sec", 20)),
+        position_size_threshold=float(signal_cfg.get("position_size_threshold", 0.0)),
+        positions_refresh_sec=signal_cfg.get("positions_refresh_sec"),
+        positions_cache_bust_mode=str(signal_cfg.get("positions_cache_bust_mode", "sec")),
+        sell_confirm_max=int(signal_cfg.get("sell_confirm_max", 5)),
+        sell_confirm_window_sec=int(signal_cfg.get("sell_confirm_window_sec", 300)),
+        sell_confirm_force_ratio=float(signal_cfg.get("sell_confirm_force_ratio", 0.5)),
+        sell_confirm_force_shares=float(signal_cfg.get("sell_confirm_force_shares", 0.0)),
         blacklist_token_keys=risk_cfg.get("blacklist_token_keys") or [],
         logger=logger,
     )
@@ -255,6 +263,14 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
             state_save_interval = float(state_cfg.get("save_interval_sec") or state_save_interval)
             signal_tracker.update_config(
                 poll_interval_sec=poll_interval,
+                position_poll_interval_sec=signal_cfg.get("position_poll_interval_sec"),
+                position_size_threshold=signal_cfg.get("position_size_threshold"),
+                positions_refresh_sec=signal_cfg.get("positions_refresh_sec"),
+                positions_cache_bust_mode=signal_cfg.get("positions_cache_bust_mode"),
+                sell_confirm_max=signal_cfg.get("sell_confirm_max"),
+                sell_confirm_window_sec=signal_cfg.get("sell_confirm_window_sec"),
+                sell_confirm_force_ratio=signal_cfg.get("sell_confirm_force_ratio"),
+                sell_confirm_force_shares=signal_cfg.get("sell_confirm_force_shares"),
                 blacklist_token_keys=risk_cfg.get("blacklist_token_keys") or [],
             )
             maker_engine.update_config(
