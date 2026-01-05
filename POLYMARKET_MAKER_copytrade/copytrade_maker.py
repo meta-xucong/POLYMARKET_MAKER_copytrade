@@ -74,10 +74,12 @@ def _setup_logging(cfg: Dict[str, Any]) -> logging.Logger:
 def run_loop(cfg: Dict[str, Any]) -> None:
     logger = _setup_logging(cfg)
 
-    accounts_cfg = cfg.get("accounts", {}) if isinstance(cfg.get("accounts"), dict) else {}
-    target_accounts = accounts_cfg.get("target_accounts", [])
-    if not target_accounts:
-        raise ValueError("未配置 target_accounts")
+    target_addresses = cfg.get("target_addresses")
+    if target_addresses is None:
+        accounts_cfg = cfg.get("accounts", {}) if isinstance(cfg.get("accounts"), dict) else {}
+        target_addresses = accounts_cfg.get("target_accounts", [])
+    if not target_addresses:
+        raise ValueError("未配置 target_addresses")
 
     signal_cfg = cfg.get("signal_tracking", {}) if isinstance(cfg.get("signal_tracking"), dict) else {}
     poll_interval = float(signal_cfg.get("poll_interval_sec", 5))
@@ -87,7 +89,7 @@ def run_loop(cfg: Dict[str, Any]) -> None:
 
     signal_tracker = SignalTracker(
         data_client,
-        target_accounts,
+        target_addresses,
         poll_interval_sec=poll_interval,
         logger=logger,
     )
