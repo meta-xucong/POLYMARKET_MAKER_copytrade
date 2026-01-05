@@ -1,31 +1,31 @@
 {
-  "target_addresses": [],
+  "target_addresses": ["0x79add3f87e377b0899b935472c07d2c3816ba9f1"],
   "signal_tracking": {
-    "poll_interval_sec": 5
+    "poll_interval_sec": 30
   },
   "maker_strategy": {
     "order_size": 10,
-    "price_spread_bps": 50,
+    "price_spread_bps": 100,
     "min_order_size": 5,
     "min_quote_amount": 1,
-    "poll_interval_sec": 10,
-    "refresh_interval_sec": 5,
-    "sell_mode": "conservative",
+    "poll_interval_sec": 30,
+    "refresh_interval_sec": 30,
+    "sell_mode": "aggressive",
     "aggressive_step": 0.01,
     "aggressive_timeout": 300,
     "exit_floor_price": 0,
     "exit_sell_mode": "aggressive",
     "buy_price_threshold": null,
     "drop_window_minutes": 60,
-    "drop_pct": 0.001,
-    "profit_pct": 0.005,
+    "drop_pct": 0.01,
+    "profit_pct": 0.02,
     "enable_incremental_drop_pct": true,
-    "incremental_drop_pct_step": 0.0002,
-    "incremental_drop_pct_cap": 0.2,
+    "incremental_drop_pct_step": 0.002,
+    "incremental_drop_pct_cap": 0.1,
     "disable_duplicate_signal": true,
     "disable_sell_signals": false,
-    "min_price": 0.0,
-    "max_price": 1.0,
+    "min_price": 0.01,
+    "max_price": 0.99,
     "min_market_order_size": null,
     "countdown": {
       "minutes_before_end": 300,
@@ -53,10 +53,10 @@
     "sell_mode": "aggressive"
   },
   "scheduler": {
-    "max_concurrent_jobs": 2,
-    "max_concurrent_exit_jobs": 2,
-    "topic_start_cooldown_sec": 3,
-    "poll_interval_seconds": 5
+    "max_concurrent_jobs": 4,
+    "max_concurrent_exit_jobs": 4,
+    "topic_start_cooldown_sec": 30,
+    "poll_interval_seconds": 30
   },
   "risk": {
     "blacklist_token_keys": [],
@@ -81,8 +81,8 @@
     "retry_attempts": 8,
     "price_tolerance_step": 0.0075,
     "wait_seconds": 6.0,
-    "poll_interval_seconds": 1.0,
-    "order_interval_seconds": 0.5,
+    "poll_interval_seconds": 5.0,
+    "order_interval_seconds": 5.0,
     "min_quote_amount": 1.0,
     "min_market_order_size": 0.0
   },
