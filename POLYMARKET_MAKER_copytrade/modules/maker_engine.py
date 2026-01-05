@@ -167,6 +167,13 @@ class MakerEngine:
         with self._lock:
             return {token_id: session.open_size for token_id, session in self._sessions.items()}
 
+    def update_open_size(self, token_id: str, open_size: float) -> None:
+        with self._lock:
+            session = self._sessions.get(token_id)
+            if not session:
+                return
+            session.open_size = max(float(open_size), 0.0)
+
     def _run_session(self, token_id: str, stop_event: threading.Event) -> None:
         try:
             self._run_session_loop(token_id, stop_event)
