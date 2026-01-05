@@ -47,11 +47,11 @@
 | `exit_sell_mode` | string | `aggressive` | 退出时的卖出模式。 |
 | `buy_price_threshold` | number/null | `null` | 触发买入的价格阈值（留空表示不限定）。 |
 | `drop_window_minutes` | number | `60` | 跌幅统计窗口（分钟）。 |
-| `drop_pct` | number | `0.001` | 跌幅阈值比例。 |
-| `profit_pct` | number | `0.005` | 盈利目标比例。 |
+| `drop_pct` | number | `0.001` | 跌幅阈值比例（小数表示百分比，例如 `0.001` = `0.1%`）。 |
+| `profit_pct` | number | `0.005` | 盈利目标比例（小数表示百分比，例如 `0.005` = `0.5%`）。 |
 | `enable_incremental_drop_pct` | boolean | `true` | 是否启用递增跌幅阈值。 |
-| `incremental_drop_pct_step` | number | `0.0002` | 递增跌幅步长。 |
-| `incremental_drop_pct_cap` | number | `0.2` | 递增跌幅上限。 |
+| `incremental_drop_pct_step` | number | `0.0002` | 递增跌幅步长（小数表示百分比，例如 `0.0002` = `0.02%` = `2bps`）。 |
+| `incremental_drop_pct_cap` | number | `0.2` | 递增跌幅上限（小数表示百分比，例如 `0.2` = `20%`）。 |
 | `disable_duplicate_signal` | boolean | `true` | 是否去重信号。 |
 | `disable_sell_signals` | boolean | `false` | 是否禁用卖出信号。 |
 | `min_price` | number | `0.0` | 允许的最小价格。 |
