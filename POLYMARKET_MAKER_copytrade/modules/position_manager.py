@@ -90,6 +90,8 @@ class PositionManager:
             token_key = pos.get("token_key")
             condition_id = pos.get("condition_id") or pos.get("conditionId") or pos.get("marketId")
             outcome_index = pos.get("outcome_index") or pos.get("outcomeIndex")
+            slug = pos.get("slug") or pos.get("marketSlug")
+            raw = pos.get("raw")
             if not token_key and condition_id is not None and outcome_index is not None:
                 try:
                     token_key = f"{condition_id}:{int(outcome_index)}"
@@ -105,6 +107,10 @@ class PositionManager:
                     "token_id": str(token_id) if token_id else None,
                     "token_key": str(token_key) if token_key else None,
                     "size": float(size),
+                    "condition_id": str(condition_id) if condition_id is not None else None,
+                    "outcome_index": int(outcome_index) if outcome_index is not None else None,
+                    "slug": str(slug) if slug is not None else None,
+                    "raw": raw if isinstance(raw, dict) else None,
                 }
             )
         return snapshot

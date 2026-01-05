@@ -214,6 +214,10 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
             token_id = pos.get("token_id")
             token_key = pos.get("token_key")
             size = pos.get("size")
+            condition_id = pos.get("condition_id")
+            outcome_index = pos.get("outcome_index")
+            slug = pos.get("slug")
+            raw = pos.get("raw")
             try:
                 size_val = float(size or 0.0)
             except (TypeError, ValueError):
@@ -227,7 +231,17 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 hold_until_sell = True
             if not token_id and token_key:
                 try:
-                    token_id = resolve_token_id(str(token_key), {}, token_cache)
+                    token_id = resolve_token_id(
+                        str(token_key),
+                        {
+                            "token_key": token_key,
+                            "condition_id": condition_id,
+                            "outcome_index": outcome_index,
+                            "slug": slug,
+                            "raw": raw if isinstance(raw, dict) else {},
+                        },
+                        token_cache,
+                    )
                 except Exception as exc:
                     logger.warning("[bootstrap] 无法解析 token_id token_key=%s: %s", token_key, exc)
                     continue
