@@ -329,6 +329,7 @@ class SignalTracker:
             token_key=token_key,
             condition_id=condition_id,
             outcome_index=outcome_index,
+            price=None,
         )
 
     def _log(self, level: str, message: str) -> None:

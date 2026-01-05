@@ -10,6 +10,7 @@ class Topic:
     token_key: Optional[str]
     condition_id: Optional[str]
     outcome_index: Optional[int]
+    price: Optional[float] = None
 
     @property
     def identifier(self) -> str:
@@ -37,11 +38,18 @@ def from_action(action: Dict[str, object]) -> Optional[Topic]:
     if not token_id and not token_key:
         return None
 
+    price = action.get("price")
+    try:
+        price_val = float(price) if price is not None else None
+    except (TypeError, ValueError):
+        price_val = None
+
     return Topic(
         token_id=token_id,
         token_key=token_key,
         condition_id=condition_id,
         outcome_index=outcome_index,
+        price=price_val,
     )
 
 

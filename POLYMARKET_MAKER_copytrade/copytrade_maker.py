@@ -250,6 +250,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 token_key=str(token_key) if token_key else None,
                 condition_id=None,
                 outcome_index=None,
+                price=None,
             )
             maker_engine.start_existing_position(
                 topic,
