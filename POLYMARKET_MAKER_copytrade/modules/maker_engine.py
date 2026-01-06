@@ -292,7 +292,12 @@ class MakerEngine:
             )
 
             if action.action == ActionType.BUY:
-                if not self._risk_allows_buy(session, order_size, best_bid):
+                capped_order_size = self._cap_buy_order_size(session, order_size, best_bid)
+                if capped_order_size <= 0:
+                    session.strategy.on_reject("risk_blocked")
+                    time.sleep(refresh_interval)
+                    continue
+                if not self._risk_allows_buy(session, capped_order_size, best_bid):
                     session.strategy.on_reject("risk_blocked")
                     time.sleep(refresh_interval)
                     continue
@@ -300,11 +305,12 @@ class MakerEngine:
                     buy_result = maker_buy_follow_bid(
                         self._client,
                         token_id,
-                        order_size,
+                        capped_order_size,
                         poll_sec=poll_sec,
                         min_quote_amt=min_quote_amount,
                         min_order_size=min_order_size,
                         stop_check=_stop,
+                        logger=self._logger,
                     )
                 except Exception as exc:
                     self._record_error(token_id, f"BUY 执行异常: {exc}")
@@ -352,6 +358,7 @@ class MakerEngine:
                         sell_mode=sell_mode,
                         aggressive_step=aggressive_step,
                         aggressive_timeout=aggressive_timeout,
+                        logger=self._logger,
                     )
                 except Exception as exc:
                     self._record_error(token_id, f"SELL 执行异常: {exc}")
@@ -573,6 +580,43 @@ class MakerEngine:
                 session.errors.append(message)
         self._log("error", f"[maker] token_id={token_id} {message}")
 
+    def _cap_buy_order_size(
+        self,
+        session: MakerSession,
+        order_size: float,
+        ref_price: float,
+    ) -> float:
+        if ref_price <= 0:
+            return order_size
+        max_per_token = _float_or_none(self._risk_config.get("max_notional_per_token"))
+        max_total = _float_or_none(self._risk_config.get("max_notional_total"))
+        with self._state_lock:
+            total_usd = float(self._state.get("cumulative_buy_usd_total") or 0.0)
+            token_usd_map = self._state.get("cumulative_buy_usd_by_token") or {}
+            token_key = session.token_key or session.token_id
+            token_usd = float(token_usd_map.get(token_key) or 0.0)
+
+        caps: list[float] = []
+        if max_per_token is not None:
+            remaining = max_per_token - token_usd
+            caps.append(max(remaining / ref_price, 0.0))
+        if max_total is not None:
+            remaining = max_total - total_usd
+            caps.append(max(remaining / ref_price, 0.0))
+        if not caps:
+            return order_size
+        capped = min([order_size, *caps])
+        if capped < order_size:
+            self._log(
+                "info",
+                (
+                    "[risk] BUY 限额裁剪 token_id=%s original=%.6f capped=%.6f "
+                    "ref_price=%.6f"
+                )
+                % (session.token_id, order_size, capped, ref_price),
+            )
+        return capped
+
     def _log(self, level: str, message: str) -> None:
         if self._logger is None:
             print(message)
@@ -619,3 +663,12 @@ def _parse_timestamp(value: Any, tz_hint: Optional[str]) -> Optional[float]:
         else:
             dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
