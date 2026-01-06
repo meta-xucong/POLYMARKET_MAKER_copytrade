@@ -27,19 +27,13 @@ fill statistics so that the strategy layer can update its internal state.
 from __future__ import annotations
 
 import math
-import os
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-import requests
-
-try:
-    from trading.execution import ClobPolymarketAPI
-except Exception:  # pragma: no cover - optional dependency
-    ClobPolymarketAPI = None
+from trading.execution import ClobPolymarketAPI
 
 
 BUY_PRICE_DP = 2
@@ -48,133 +42,6 @@ SELL_PRICE_DP = 4
 SELL_SIZE_DP = 2
 _MIN_FILL_EPS = 1e-9
 DEFAULT_MIN_ORDER_SIZE = 5.0
-DEFAULT_REST_BOOKS_TIMEOUT = 10.0
-_POLY_HOST = os.environ.get("POLY_HOST", "https://clob.polymarket.com").rstrip("/")
-
-
-def _emit(logger, message: str) -> None:
-    if logger is None:
-        print(message)
-        return
-    log_fn = getattr(logger, "info", None)
-    if callable(log_fn):
-        log_fn(message)
-    else:
-        logger.info(message)
-
-
-class _OrderAdapter:
-    def __init__(self, client: Any, *, logger=None) -> None:
-        self._client = client
-        self._logger = logger
-
-    def create_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        method_names = (
-            "create_order",
-            "place_order",
-            "submit_order",
-            "order",
-            "createOrder",
-            "placeOrder",
-            "submitOrder",
-        )
-        payload_alt = dict(payload)
-        if "token_id" in payload_alt and "tokenId" not in payload_alt:
-            payload_alt["tokenId"] = payload_alt["token_id"]
-        if "tokenId" in payload_alt and "token_id" not in payload_alt:
-            payload_alt["token_id"] = payload_alt["tokenId"]
-        for obj in _iter_client_targets(self._client):
-            for name in method_names:
-                method = getattr(obj, name, None)
-                if not callable(method):
-                    continue
-                try:
-                    resp = method(**payload)
-                    return _normalize_response(resp)
-                except TypeError:
-                    try:
-                        resp = method(**payload_alt)
-                        return _normalize_response(resp)
-                    except Exception:
-                        pass
-                    try:
-                        resp = method(payload)
-                        return _normalize_response(resp)
-                    except Exception:
-                        pass
-                    try:
-                        resp = method(
-                            payload_alt.get("token_id"),
-                            payload_alt.get("side"),
-                            payload_alt.get("price"),
-                            payload_alt.get("size"),
-                        )
-                        return _normalize_response(resp)
-                    except Exception:
-                        continue
-                except Exception:
-                    continue
-        message = "[MAKER] 下单失败：未匹配到可用的下单方法"
-        _emit(self._logger, message)
-        raise RuntimeError(message)
-
-    def get_order_status(self, order_id: str) -> Dict[str, Any]:
-        method_names = (
-            "get_order_status",
-            "getOrderStatus",
-            "fetch_order_status",
-            "order_status",
-            "get_order",
-            "getOrder",
-            "get_order_by_id",
-            "fetch_order",
-            "order",
-        )
-        for obj in _iter_client_targets(self._client):
-            for name in method_names:
-                method = getattr(obj, name, None)
-                if not callable(method):
-                    continue
-                try:
-                    resp = method(order_id)
-                    return _normalize_response(resp)
-                except TypeError:
-                    try:
-                        resp = method(id=order_id)
-                        return _normalize_response(resp)
-                    except Exception:
-                        continue
-                except Exception:
-                    continue
-        message = "[MAKER] 查询订单状态失败：未匹配到可用的查询方法"
-        _emit(self._logger, message)
-        raise RuntimeError(message)
-
-
-def _iter_client_targets(client: Any) -> Iterable[Any]:
-    targets: deque[Any] = deque([client])
-    visited: set[int] = set()
-    while targets:
-        obj = targets.popleft()
-        if obj is None:
-            continue
-        obj_id = id(obj)
-        if obj_id in visited:
-            continue
-        visited.add(obj_id)
-        yield obj
-        for attr in ("client", "api", "private"):
-            nested = getattr(obj, attr, None)
-            if nested is not None:
-                targets.append(nested)
-
-
-def _normalize_response(resp: Any) -> Dict[str, Any]:
-    if isinstance(resp, dict):
-        return resp
-    if isinstance(resp, tuple) and len(resp) == 2 and isinstance(resp[1], dict):
-        return resp[1]
-    return {"data": resp}
 
 
 def _round_up_to_dp(value: float, dp: int) -> float:
@@ -313,58 +180,6 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
     return None
 
 
-def _best_from_levels(levels: Any, is_bid: bool) -> Optional[float]:
-    if not isinstance(levels, list) or not levels:
-        return None
-    prices: List[float] = []
-    for level in levels:
-        if isinstance(level, dict):
-            price = level.get("price")
-        elif isinstance(level, (list, tuple)) and level:
-            price = level[0]
-        else:
-            price = None
-        price_val = _coerce_float(price)
-        if price_val is not None:
-            prices.append(price_val)
-    if not prices:
-        return None
-    return max(prices) if is_bid else min(prices)
-
-
-def fetch_orderbooks_rest(
-    token_ids: Iterable[str],
-    *,
-    timeout: float = DEFAULT_REST_BOOKS_TIMEOUT,
-) -> Dict[str, Dict[str, Any]]:
-    ids = [str(token_id) for token_id in token_ids if token_id]
-    if not ids:
-        return {}
-    url = f"{_POLY_HOST}/books"
-    body = [{"token_id": token_id} for token_id in ids]
-    resp = requests.post(url, json=body, timeout=timeout)
-    resp.raise_for_status()
-    payload = resp.json()
-    if not isinstance(payload, list):
-        return {}
-    output: Dict[str, Dict[str, Any]] = {}
-    for ob in payload:
-        if not isinstance(ob, dict):
-            continue
-        token_id = str(ob.get("asset_id") or ob.get("token_id") or "")
-        if not token_id:
-            continue
-        bids = ob.get("bids") or []
-        asks = ob.get("asks") or []
-        output[token_id] = {
-            "bids": bids if isinstance(bids, list) else [],
-            "asks": asks if isinstance(asks, list) else [],
-            "best_bid": _best_from_levels(bids, is_bid=True),
-            "best_ask": _best_from_levels(asks, is_bid=False),
-        }
-    return output
-
-
 def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSample]:
     method_candidates = (
         ("get_market_orderbook", {"market": token_id}),
@@ -402,16 +217,6 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         best = _extract_best_price(payload, side)
         if best is not None:
             return PriceSample(float(best.price), best.decimals)
-    try:
-        rest_books = fetch_orderbooks_rest([token_id])
-    except Exception:
-        return None
-    rest_ob = rest_books.get(str(token_id))
-    if rest_ob:
-        key = "best_bid" if side == "bid" else "best_ask"
-        price = rest_ob.get(key)
-        if price is not None:
-            return PriceSample(float(price), _infer_price_decimals(price))
     return None
 
 
@@ -625,7 +430,6 @@ def maker_buy_follow_bid(
     progress_probe_interval: float = 60.0,
     price_dp: Optional[int] = None,
     external_fill_probe: Optional[Callable[[], Optional[float]]] = None,
-    logger=None,
 ) -> Dict[str, Any]:
     """Continuously maintain a maker buy order following the market bid."""
 
@@ -643,9 +447,7 @@ def maker_buy_follow_bid(
             "orders": [],
         }
 
-    adapter = (
-        ClobPolymarketAPI(client) if ClobPolymarketAPI is not None else _OrderAdapter(client, logger=logger)
-    )
+    adapter = ClobPolymarketAPI(client)
     orders: List[Dict[str, Any]] = []
     records: Dict[str, Dict[str, Any]] = {}
     accounted: Dict[str, float] = {}
@@ -680,7 +482,7 @@ def maker_buy_follow_bid(
         if desired != price_dp_active:
             price_dp_active = desired
             tick = _order_tick(price_dp_active)
-            _emit(logger, f"[MAKER][BUY] 检测到市场价格精度 -> decimals={price_dp_active}")
+            print(f"[MAKER][BUY] 检测到市场价格精度 -> decimals={price_dp_active}")
 
     def _is_insufficient_balance(value: object) -> bool:
         def _text_has_shortage(text: str) -> bool:
@@ -727,12 +529,12 @@ def maker_buy_follow_bid(
             shortage_retry_count = 0
             min_shrink_interval = base_min_shrink_interval
             last_shrink_time = time.monotonic()
-            _emit(logger, note)
+            print(note)
 
     def _handle_balance_shortage(reason: str, min_viable: float) -> bool:
         nonlocal goal_size, remaining, active_order, active_price, final_status, shortage_retry_count, size_tick, last_shrink_time, min_shrink_interval
 
-        _emit(logger, reason)
+        print(reason)
         min_shrink_interval = max(min_shrink_interval, base_min_shrink_interval)
         if active_order:
             _cancel_order(client, active_order)
@@ -748,7 +550,7 @@ def maker_buy_follow_bid(
         shortage_retry_count += 1
         if shortage_retry_count > 100 and size_tick < 0.1:
             size_tick = 0.1
-            _emit(logger, "[MAKER][BUY] 余额不足重试超过 100 次，提升缩减步长至 0.1。")
+            print("[MAKER][BUY] 余额不足重试超过 100 次，提升缩减步长至 0.1。")
 
         now = time.monotonic()
         elapsed = now - last_shrink_time
@@ -764,14 +566,14 @@ def maker_buy_follow_bid(
         if shrink_candidate > _MIN_FILL_EPS and (
             not min_viable or shrink_candidate + _MIN_FILL_EPS >= min_viable
         ):
-            _emit(logger, 
+            print(
                 "[MAKER][BUY] 重新调整买入目标 -> "
                 f"old={current_remaining:.{BUY_SIZE_DP}f} new={shrink_candidate:.{BUY_SIZE_DP}f}"
             )
             goal_size = filled_total + shrink_candidate
             remaining = max(goal_size - filled_total, 0.0)
             return False
-        _emit(logger, "[MAKER][BUY] 无法在满足最小下单量的前提下继续缩减，终止买入。")
+        print("[MAKER][BUY] 无法在满足最小下单量的前提下继续缩减，终止买入。")
         final_status = "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
         return True
 
@@ -854,9 +656,9 @@ def maker_buy_follow_bid(
                 try:
                     progress_probe()
                 except Exception as probe_exc:
-                    _emit(logger, f"[MAKER][BUY] 进度探针执行异常：{probe_exc}")
+                    print(f"[MAKER][BUY] 进度探针执行异常：{probe_exc}")
                 next_probe_at = time.time() + interval
-            _emit(logger, 
+            print(
                 f"[MAKER][BUY] 挂单 -> price={px:.{price_dp_active}f} qty={eff_qty:.{BUY_SIZE_DP}f} remaining={remaining:.{BUY_SIZE_DP}f}"
             )
             continue
@@ -871,13 +673,13 @@ def maker_buy_follow_bid(
             try:
                 progress_probe()
             except Exception as probe_exc:
-                _emit(logger, f"[MAKER][BUY] 进度探针执行异常：{probe_exc}")
+                print(f"[MAKER][BUY] 进度探针执行异常：{probe_exc}")
             interval = max(progress_probe_interval, poll_sec, 1e-6)
             next_probe_at = time.time() + interval
         try:
             status_payload = adapter.get_order_status(active_order)
         except Exception as exc:
-            _emit(logger, f"[MAKER][BUY] 查询订单状态异常：{exc}")
+            print(f"[MAKER][BUY] 查询订单状态异常：{exc}")
             status_payload = {"status": "UNKNOWN", "filledAmount": accounted.get(active_order, 0.0)}
 
         record = records.get(active_order)
@@ -909,12 +711,12 @@ def maker_buy_follow_bid(
             try:
                 external_filled = external_fill_probe()
             except Exception as probe_exc:
-                _emit(logger, f"[MAKER][BUY] 外部持仓校对异常：{probe_exc}")
+                print(f"[MAKER][BUY] 外部持仓校对异常：{probe_exc}")
                 external_filled = None
             if external_filled is not None and external_filled > filled_total + _MIN_FILL_EPS:
                 filled_total = external_filled
                 remaining = max(goal_size - filled_total, 0.0)
-                _emit(logger, 
+                print(
                     f"[MAKER][BUY] 校对持仓后更新累计成交 -> filled={filled_total:.{BUY_SIZE_DP}f} "
                     f"remaining={remaining:.{BUY_SIZE_DP}f}"
                 )
@@ -925,18 +727,18 @@ def maker_buy_follow_bid(
         else:
             no_fill_poll_count = 0
         if shortage_retry_count > 0 and no_fill_poll_count >= 30:
-            _emit(logger, 
+            print(
                 "[MAKER][BUY] 挂单连续 30 次未检测到新增成交，强制校对仓位/余额后重挂。"
             )
             if external_fill_probe is not None:
                 try:
                     external_filled = external_fill_probe()
                 except Exception as probe_exc:
-                    _emit(logger, f"[MAKER][BUY] 外部持仓校对异常：{probe_exc}")
+                    print(f"[MAKER][BUY] 外部持仓校对异常：{probe_exc}")
                     external_filled = None
                 if external_filled is not None and external_filled > filled_total + _MIN_FILL_EPS:
                     filled_total = external_filled
-                    _emit(logger, 
+                    print(
                         f"[MAKER][BUY] 二次校对后更新累计成交 -> filled={filled_total:.{BUY_SIZE_DP}f}"
                     )
             remaining = max(goal_size - filled_total, 0.0)
@@ -959,7 +761,7 @@ def maker_buy_follow_bid(
             total_size = float(record.get("size", 0.0) or 0.0)
             remaining_slice = max(total_size - filled_amount, 0.0)
             if price_display is not None:
-                _emit(logger, 
+                print(
                     f"[MAKER][BUY] 挂单状态 -> price={float(price_display):.{price_dp_active}f} "
                     f"filled={filled_amount:.{BUY_SIZE_DP}f} remaining={remaining_slice:.{BUY_SIZE_DP}f} "
                     f"status={status_text_upper}"
@@ -989,7 +791,7 @@ def maker_buy_follow_bid(
             break
 
         if current_bid is not None and active_price is not None and current_bid >= active_price + tick - 1e-12:
-            _emit(logger, 
+            print(
                 f"[MAKER][BUY] 买一上行 -> 撤单重挂 | old={active_price:.{price_dp_active}f} new={current_bid:.{price_dp_active}f}"
             )
             _cancel_order(client, active_order)
@@ -1055,7 +857,6 @@ def maker_sell_follow_ask_with_floor_wait(
     position_refresh_interval: float = 30.0,
     ask_validation_interval: float = 60.0,
     price_decimals: Optional[int] = None,
-    logger=None,
 ) -> Dict[str, Any]:
     """Maintain a maker sell order while respecting a profit floor."""
 
@@ -1085,9 +886,7 @@ def maker_sell_follow_ask_with_floor_wait(
     price_dp = _normalize_price_dp(price_decimals)
     tick = _order_tick(price_dp)
 
-    adapter = (
-        ClobPolymarketAPI(client) if ClobPolymarketAPI is not None else _OrderAdapter(client, logger=logger)
-    )
+    adapter = ClobPolymarketAPI(client)
     orders: List[Dict[str, Any]] = []
     records: Dict[str, Dict[str, Any]] = {}
     accounted: Dict[str, float] = {}
@@ -1184,7 +983,7 @@ def maker_sell_follow_ask_with_floor_wait(
             try:
                 live_position = position_fetcher()
             except Exception as exc:
-                _emit(logger, f"[MAKER][SELL] 仓位刷新失败：{exc}")
+                print(f"[MAKER][SELL] 仓位刷新失败：{exc}")
                 live_position = None
             if live_position is not None:
                 try:
@@ -1205,7 +1004,7 @@ def maker_sell_follow_ask_with_floor_wait(
                         prev_goal = goal_size
                         goal_size = new_goal
                         remaining = max(goal_size - filled_total, 0.0)
-                        _emit(logger, 
+                        print(
                             "[MAKER][SELL] 仓位更新 -> "
                             f"{change}目标至 {goal_size:.{SELL_SIZE_DP}f}"
                         )
@@ -1220,7 +1019,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             final_status = "FILLED"
                             break
                         if new_goal < prev_goal - _MIN_FILL_EPS and active_order:
-                            _emit(logger, "[MAKER][SELL] 仓位降低，撤销当前挂单以调整数量")
+                            print("[MAKER][SELL] 仓位降低，撤销当前挂单以调整数量")
                             _cancel_order(client, active_order)
                             rec = records.get(active_order)
                             if rec is not None:
@@ -1263,11 +1062,11 @@ def maker_sell_follow_ask_with_floor_wait(
                     ask = validated_price
                     direction = "下行" if prev is not None and validated_price < prev else "上行"
                     if prev is None:
-                        _emit(logger, 
+                        print(
                             f"[MAKER][SELL] 卖一校验覆盖：无本地价，采用最新卖一 {ask:.{price_dp}f}"
                         )
                     else:
-                        _emit(logger, 
+                        print(
                             "[MAKER][SELL] 卖一校验覆盖（" + direction + ") -> "
                             f"old={prev:.{price_dp}f} new={ask:.{price_dp}f}"
                         )
@@ -1289,7 +1088,7 @@ def maker_sell_follow_ask_with_floor_wait(
                 continue
             if ask < floor_float - 1e-12:
                 if not waiting_for_floor:
-                    _emit(logger, 
+                    print(
                         f"[MAKER][SELL] 卖一跌破地板，撤单等待 | ask={ask:.{price_dp}f} floor={floor_float:.{price_dp}f}"
                     )
                 waiting_for_floor = True
@@ -1351,7 +1150,7 @@ def maker_sell_follow_ask_with_floor_wait(
                 capped_px = _round_down_to_dp(price_cap, price_dp)
                 if capped_px < price_cap - 1e-12:
                     capped_px = price_cap
-                _emit(logger, 
+                print(
                     f"[MAKER][SELL] 价格超过上限，按 {capped_px:.{price_dp}f} 挂单 (原始 {px_candidate:.{price_dp}f})"
                 )
                 px = capped_px
@@ -1382,7 +1181,7 @@ def maker_sell_follow_ask_with_floor_wait(
                 )
                 if insufficient:
                     shortage_retry_count += 1
-                    _emit(logger, "[MAKER][SELL] 下单失败，疑似仓位不足，等待60s后刷新仓位。")
+                    print("[MAKER][SELL] 下单失败，疑似仓位不足，等待60s后刷新仓位。")
                     sleep_fn(60)
                     refreshed_goal: Optional[float] = None
                     refreshed_remaining: Optional[float] = None
@@ -1391,7 +1190,7 @@ def maker_sell_follow_ask_with_floor_wait(
                         try:
                             live_position = position_fetcher()
                         except Exception as fetch_exc:
-                            _emit(logger, f"[MAKER][SELL] 仓位刷新失败：{fetch_exc}")
+                            print(f"[MAKER][SELL] 仓位刷新失败：{fetch_exc}")
                             live_position = None
                         if live_position is not None:
                             try:
@@ -1404,9 +1203,9 @@ def maker_sell_follow_ask_with_floor_wait(
                         missing_position_retry += 1
                         if missing_position_retry >= 5:
                             final_status = "FAILED"
-                            _emit(logger, "[MAKER][SELL] 无法获取最新仓位，退出卖出流程。")
+                            print("[MAKER][SELL] 无法获取最新仓位，退出卖出流程。")
                             break
-                        _emit(logger, 
+                        print(
                             "[MAKER][SELL] 无法获取最新仓位，等待60s后重试同步。 "
                             f"(attempt {missing_position_retry}/5)"
                         )
@@ -1422,14 +1221,14 @@ def maker_sell_follow_ask_with_floor_wait(
                             "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
                         )
                         remaining = max(goal_size - filled_total, 0.0)
-                        _emit(logger, "[MAKER][SELL] 仓位已为0或仅剩尘埃，结束卖出流程。")
+                        print("[MAKER][SELL] 仓位已为0或仅剩尘埃，结束卖出流程。")
                         break
 
                     refreshed_goal = _apply_goal_cap(max(filled_total + live_target, filled_total))
                     refreshed_remaining = max(refreshed_goal - filled_total, 0.0)
                     goal_size = refreshed_goal
                     remaining = refreshed_remaining
-                    _emit(logger, 
+                    print(
                         "[MAKER][SELL] 刷新仓位后按最新可用数量重试 -> "
                         f"goal={goal_size:.{SELL_SIZE_DP}f} remain={remaining:.{SELL_SIZE_DP}f}"
                     )
@@ -1441,7 +1240,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
                         )
                         remaining = max(goal_size - filled_total, 0.0)
-                        _emit(logger, "[MAKER][SELL] 刷新后可卖数量不足最小挂单量，结束卖出流程。")
+                        print("[MAKER][SELL] 刷新后可卖数量不足最小挂单量，结束卖出流程。")
                         break
 
                     consecutive_insufficient_with_position += 1
@@ -1455,17 +1254,17 @@ def maker_sell_follow_ask_with_floor_wait(
                             goal_size = filled_total + shrink_candidate
                             remaining = max(goal_size - filled_total, 0.0)
                             consecutive_insufficient_with_position = 5
-                            _emit(logger, 
+                            print(
                                 "[MAKER][SELL] 连续仓位不足，缩减卖出目标后重试 -> "
                                 f"old={refreshed_remaining:.{SELL_SIZE_DP}f} new={remaining:.{SELL_SIZE_DP}f}"
                             )
                         elif consecutive_insufficient_with_position > 10:
                             final_status = "FAILED"
-                            _emit(logger, "[MAKER][SELL] 仓位数据接口返回数据错误，退出卖出流程。")
+                            print("[MAKER][SELL] 仓位数据接口返回数据错误，退出卖出流程。")
                             break
                     elif consecutive_insufficient_with_position > 10:
                         final_status = "FAILED"
-                        _emit(logger, "[MAKER][SELL] 仓位数据接口返回数据错误，退出卖出流程。")
+                        print("[MAKER][SELL] 仓位数据接口返回数据错误，退出卖出流程。")
                         break
                     continue
                 raise
@@ -1497,7 +1296,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_floor_locked = False
                     aggressive_timer_start = time.time()
                     aggressive_timer_anchor_fill = 0.0
-            _emit(logger, 
+            print(
                 f"[MAKER][SELL] 挂单 -> price={px:.{price_dp}f} qty={qty:.{SELL_SIZE_DP}f} remaining={remaining:.{SELL_SIZE_DP}f}"
             )
             if progress_probe:
@@ -1505,7 +1304,7 @@ def maker_sell_follow_ask_with_floor_wait(
                 try:
                     progress_probe()
                 except Exception as probe_exc:
-                    _emit(logger, f"[MAKER][SELL] 进度探针执行异常：{probe_exc}")
+                    print(f"[MAKER][SELL] 进度探针执行异常：{probe_exc}")
                 next_probe_at = time.time() + interval
             continue
 
@@ -1519,13 +1318,13 @@ def maker_sell_follow_ask_with_floor_wait(
             try:
                 progress_probe()
             except Exception as probe_exc:
-                _emit(logger, f"[MAKER][SELL] 进度探针执行异常：{probe_exc}")
+                print(f"[MAKER][SELL] 进度探针执行异常：{probe_exc}")
             interval = max(progress_probe_interval, poll_sec, 1e-6)
             next_probe_at = time.time() + interval
         try:
             status_payload = adapter.get_order_status(active_order)
         except Exception as exc:
-            _emit(logger, f"[MAKER][SELL] 查询订单状态异常：{exc}")
+            print(f"[MAKER][SELL] 查询订单状态异常：{exc}")
             status_payload = {"status": "UNKNOWN", "filledAmount": accounted.get(active_order, 0.0)}
 
         record = records.get(active_order)
@@ -1562,7 +1361,7 @@ def maker_sell_follow_ask_with_floor_wait(
             total_size = float(record.get("size", 0.0) or 0.0)
             remaining_slice = max(total_size - filled_amount, 0.0)
             if price_display is not None:
-                _emit(logger, 
+                print(
                     f"[MAKER][SELL] 挂单状态 -> price={float(price_display):.{price_dp}f} "
                     f"sold={filled_amount:.{SELL_SIZE_DP}f} remaining={remaining_slice:.{SELL_SIZE_DP}f} "
                     f"status={status_text_upper}"
@@ -1609,7 +1408,7 @@ def maker_sell_follow_ask_with_floor_wait(
             if ask is None:
                 continue
             if ask < floor_float - 1e-12:
-                _emit(logger, 
+                print(
                     f"[MAKER][SELL] 卖一再次跌破地板，撤单等待 | ask={ask:.{price_dp}f} floor={floor_float:.{price_dp}f}"
                 )
                 _cancel_order(client, active_order)
@@ -1654,7 +1453,7 @@ def maker_sell_follow_ask_with_floor_wait(
                         aggressive_timer_start = None
                         aggressive_timer_anchor_fill = current_filled
                         if active_price > floor_float + 1e-12:
-                            _emit(logger, 
+                            print(
                                 "[MAKER][SELL][激进] 触及地板价，保持地板挂单"
                             )
                             _cancel_order(client, active_order)
@@ -1671,7 +1470,7 @@ def maker_sell_follow_ask_with_floor_wait(
                         floor_float,
                     )
                     if next_px < active_price - 1e-12:
-                        _emit(logger, 
+                        print(
                             "[MAKER][SELL][激进] 挂单超时未成交，下调挂价 -> "
                             f"old={active_price:.{price_dp}f} new={next_px:.{price_dp}f}"
                         )
@@ -1696,7 +1495,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_locked_price = floor_float
                     if active_price <= floor_float + 1e-12:
                         continue
-                    _emit(logger, 
+                    print(
                         "[MAKER][SELL][激进] 卖一跌至地板价，保持地板挂单"
                     )
                     _cancel_order(client, active_order)
@@ -1710,7 +1509,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_next_price_override = floor_float
                     next_price_override = floor_float
                     continue
-            _emit(logger, 
+            print(
                 f"[MAKER][SELL] 卖一下行 -> 撤单重挂 | old={active_price:.{price_dp}f} new={new_px:.{price_dp}f}"
             )
             if aggressive_mode and new_px > floor_float + 1e-12:
