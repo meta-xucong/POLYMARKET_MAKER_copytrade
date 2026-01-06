@@ -28,13 +28,15 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
-from trading.execution import ClobPolymarketAPI
+from py_clob_client.clob_types import OrderArgs, OrderType
+from py_clob_client.order_builder.constants import BUY, SELL
 
 
 BUY_PRICE_DP = 2
@@ -43,91 +45,6 @@ SELL_PRICE_DP = 4
 SELL_SIZE_DP = 2
 _MIN_FILL_EPS = 1e-9
 DEFAULT_MIN_ORDER_SIZE = 5.0
-
-
-def _resolve_order_type(payload: Mapping[str, Any], order_type_cls: Any) -> Any:
-    desired = str(payload.get("type") or payload.get("timeInForce") or "GTC").upper()
-    aliases = {"IOC": "FAK"}
-    candidates = [desired, aliases.get(desired), "GTC", "FAK"]
-    for cand in candidates:
-        if not cand:
-            continue
-        member = getattr(order_type_cls, cand, None)
-        if member is not None:
-            return member
-    try:
-        return next(iter(order_type_cls))
-    except Exception:
-        return desired
-
-
-def _extract_order_id(response: Any) -> Optional[str]:
-    candidates = (
-        "order_id",
-        "orderId",
-        "orderID",
-        "id",
-        "orderHash",
-        "order_hash",
-        "hash",
-    )
-
-    visited: set[int] = set()
-
-    def walk(obj: Any, allow_plain_string: bool = False) -> Optional[str]:
-        if obj is None:
-            return None
-        if isinstance(obj, (str, bytes, bytearray)):
-            if not allow_plain_string:
-                return None
-            text = obj.decode() if isinstance(obj, (bytes, bytearray)) else obj
-            text = text.strip()
-            return text or None
-
-        obj_id = id(obj)
-        if obj_id in visited:
-            return None
-        visited.add(obj_id)
-
-        if isinstance(obj, dict):
-            for key in candidates:
-                cand = obj.get(key)
-                if cand not in (None, ""):
-                    return str(cand)
-            for value in obj.values():
-                found = walk(value, allow_plain_string=False)
-                if found:
-                    return found
-            return None
-
-        if isinstance(obj, (list, tuple, set)):
-            for item in obj:
-                found = walk(item, allow_plain_string=False)
-                if found:
-                    return found
-            return None
-
-        for key in candidates:
-            try:
-                cand = getattr(obj, key)
-            except AttributeError:
-                continue
-            if cand not in (None, ""):
-                return str(cand)
-
-        to_dict = getattr(obj, "_asdict", None)
-        if callable(to_dict):
-            try:
-                return walk(to_dict(), allow_plain_string=False)
-            except Exception:
-                return None
-
-        if hasattr(obj, "__dict__"):
-            return walk(vars(obj), allow_plain_string=False)
-
-        return None
-
-    return walk(response, allow_plain_string=True)
 
 
 def _round_up_to_dp(value: float, dp: int) -> float:
@@ -169,6 +86,295 @@ def _coerce_float(value: Any) -> Optional[float]:
 class PriceSample(NamedTuple):
     price: float
     decimals: Optional[int]
+
+
+class ClobPolymarketAPI:
+    """Adapter that bridges py_clob_client.ClobClient to maker execution helpers."""
+
+    def __init__(self, client) -> None:
+        self._client = client
+        self._min_interval_seconds = 1.0
+        self._last_call_ts = 0.0
+        self._rate_lock = threading.Lock()
+
+    def _enforce_rate_limit(self) -> None:
+        if self._min_interval_seconds <= 0:
+            return
+        with self._rate_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call_ts
+            remaining = self._min_interval_seconds - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+            self._last_call_ts = time.monotonic()
+
+    def create_order(self, payload: Dict[str, object]) -> Dict[str, object]:
+        side_raw = str(payload.get("side", "")).upper()
+        if side_raw not in {"BUY", "SELL"}:
+            raise ValueError(f"Unsupported side: {side_raw}")
+
+        token_id = str(payload.get("tokenId"))
+        if not token_id:
+            raise ValueError("tokenId is required")
+
+        price = float(payload.get("price"))
+        size = float(payload.get("size"))
+
+        side_const = SELL if side_raw == "SELL" else BUY
+        order_args = OrderArgs(token_id=token_id, side=side_const, price=price, size=size)
+
+        order_type = self._resolve_order_type(payload, OrderType)
+
+        self._enforce_rate_limit()
+        signed_or_response = self._client.create_order(order_args)
+
+        order_id = self._extract_order_id(signed_or_response)
+        if order_id is not None:
+            raw_response = signed_or_response
+        else:
+            self._apply_order_metadata(signed_or_response, order_type, payload)
+            self._enforce_rate_limit()
+            raw_response = self._client.post_order(signed_or_response, order_type)
+            order_id = self._extract_order_id(raw_response)
+            if order_id is None:
+                raise RuntimeError(f"Order response missing order id: {raw_response!r}")
+
+        if isinstance(raw_response, dict):
+            response = dict(raw_response)
+            response.setdefault("orderId", order_id)
+            return response
+        return {"orderId": order_id, "rawResponse": raw_response}
+
+    def get_order_status(self, order_id: str) -> Dict[str, object]:
+        candidate_methods = []
+        for attr in ("get_order_status", "order_status", "get_order"):
+            method = getattr(self._client, attr, None)
+            if callable(method):
+                candidate_methods.append(method)
+        private = getattr(self._client, "private", None)
+        if private is not None:
+            for attr in ("get_order_status", "get_order", "order_status"):
+                method = getattr(private, attr, None)
+                if callable(method):
+                    candidate_methods.append(method)
+
+        last_error: Optional[Exception] = None
+        for method in candidate_methods:
+            try:
+                self._enforce_rate_limit()
+                raw = method(order_id)
+                normalized = self._normalize_status(raw)
+                if normalized:
+                    return normalized
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Unable to fetch order status from client")
+
+    @staticmethod
+    def _resolve_order_type(payload: Dict[str, object], order_type_cls) -> object:
+        desired = str(payload.get("type") or payload.get("timeInForce") or "GTC").upper()
+        aliases = {"IOC": "FAK"}
+        candidates = [desired, aliases.get(desired), "GTC", "FAK"]
+        for cand in candidates:
+            if not cand:
+                continue
+            member = getattr(order_type_cls, cand, None)
+            if member is not None:
+                return member
+        try:
+            return next(iter(order_type_cls))
+        except Exception:
+            return desired
+
+    @staticmethod
+    def _apply_order_metadata(order, order_type, payload: Dict[str, object]) -> None:
+        order_type_str = ClobPolymarketAPI._order_type_to_str(order_type)
+        allow_partial = payload.get("allowPartial")
+
+        for key in ("orderType", "timeInForce", "type"):
+            ClobPolymarketAPI._maybe_assign(order, key, order_type_str)
+
+        if allow_partial is not None:
+            for key in ("allowPartial", "allowTaker"):
+                ClobPolymarketAPI._maybe_assign(order, key, bool(allow_partial))
+
+    @staticmethod
+    def _order_type_to_str(order_type: object) -> str:
+        if hasattr(order_type, "name"):
+            try:
+                return str(order_type.name)
+            except Exception:
+                pass
+        if hasattr(order_type, "value"):
+            try:
+                return str(order_type.value)
+            except Exception:
+                pass
+        return str(order_type)
+
+    @staticmethod
+    def _maybe_assign(target: object, key: str, value: object) -> None:
+        if target is None:
+            return
+        if isinstance(target, dict):
+            target[key] = value
+            return
+        try:
+            setattr(target, key, value)
+            return
+        except Exception:
+            pass
+        try:
+            target[key] = value  # type: ignore[index]
+        except Exception:
+            pass
+
+    @staticmethod
+    def _extract_order_id(response: object) -> Optional[str]:
+        candidates = (
+            "order_id",
+            "orderId",
+            "orderID",
+            "id",
+            "orderHash",
+            "order_hash",
+            "hash",
+        )
+
+        visited: set[int] = set()
+
+        def walk(obj: object, allow_plain_string: bool = False) -> Optional[str]:
+            if obj is None:
+                return None
+
+            if isinstance(obj, (str, bytes, bytearray)):
+                if not allow_plain_string:
+                    return None
+                text = obj.decode() if isinstance(obj, (bytes, bytearray)) else obj
+                text = text.strip()
+                return text or None
+
+            obj_id = id(obj)
+            if obj_id in visited:
+                return None
+            visited.add(obj_id)
+
+            if isinstance(obj, dict):
+                for key in candidates:
+                    cand = obj.get(key)
+                    if cand not in (None, ""):
+                        return str(cand)
+                for value in obj.values():
+                    found = walk(value, allow_plain_string=False)
+                    if found:
+                        return found
+                return None
+
+            if isinstance(obj, (list, tuple, set)):
+                for item in obj:
+                    found = walk(item, allow_plain_string=False)
+                    if found:
+                        return found
+                return None
+
+            for key in candidates:
+                try:
+                    cand = getattr(obj, key)
+                except AttributeError:
+                    continue
+                if cand not in (None, ""):
+                    return str(cand)
+
+            try:
+                from dataclasses import asdict, is_dataclass
+
+                if is_dataclass(obj):
+                    return walk(asdict(obj), allow_plain_string=False)
+            except Exception:
+                pass
+
+            to_dict = getattr(obj, "_asdict", None)
+            if callable(to_dict):
+                try:
+                    return walk(to_dict(), allow_plain_string=False)
+                except Exception:
+                    pass
+
+            if hasattr(obj, "__dict__"):
+                return walk(vars(obj), allow_plain_string=False)
+
+            return None
+
+        return walk(response, allow_plain_string=True)
+
+    @staticmethod
+    def _normalize_status(raw: object) -> Dict[str, object]:
+        def locate_payload(obj: object, visited: Set[int]) -> Optional[Dict[str, object]]:
+            if obj is None:
+                return None
+
+            obj_id = id(obj)
+            if obj_id in visited:
+                return None
+            visited.add(obj_id)
+
+            if isinstance(obj, dict):
+                status = obj.get("status") or obj.get("state") or obj.get("orderStatus")
+                filled_keys = (
+                    "filledAmount",
+                    "filled",
+                    "filledQuantity",
+                    "filledSize",
+                    "filledAmountQuote",
+                    "filled_amount",
+                    "totalFilled",
+                )
+                has_filled = any(key in obj for key in filled_keys) or isinstance(
+                    obj.get("fills"), (list, tuple)
+                )
+
+                if status is not None or has_filled:
+                    return obj
+
+                nested_keys = (
+                    "data",
+                    "order",
+                    "result",
+                    "response",
+                    "value",
+                    "payload",
+                )
+                for key in nested_keys:
+                    if key in obj:
+                        payload = locate_payload(obj[key], visited)
+                        if payload is not None:
+                            return payload
+
+                for value in obj.values():
+                    payload = locate_payload(value, visited)
+                    if payload is not None:
+                        return payload
+
+                return None
+
+            if isinstance(obj, (list, tuple, set)):
+                for item in obj:
+                    payload = locate_payload(item, visited)
+                    if payload is not None:
+                        return payload
+                return None
+
+            if hasattr(obj, "__dict__"):
+                return locate_payload(vars(obj), visited)
+
+            return None
+
+        normalized = locate_payload(raw, set())
+        return normalized or {}
 
 
 def _infer_price_decimals(value: Any, *, max_dp: int = 6) -> Optional[int]:
