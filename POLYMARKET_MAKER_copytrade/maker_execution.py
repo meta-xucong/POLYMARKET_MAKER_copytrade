@@ -27,11 +27,14 @@ fill statistics so that the strategy layer can update its internal state.
 from __future__ import annotations
 
 import math
+import os
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+
+import requests
 
 try:
     from trading.execution import ClobPolymarketAPI
@@ -45,6 +48,8 @@ SELL_PRICE_DP = 4
 SELL_SIZE_DP = 2
 _MIN_FILL_EPS = 1e-9
 DEFAULT_MIN_ORDER_SIZE = 5.0
+DEFAULT_REST_BOOKS_TIMEOUT = 10.0
+_POLY_HOST = os.environ.get("POLY_HOST", "https://clob.polymarket.com").rstrip("/")
 
 
 def _emit(logger, message: str) -> None:
@@ -298,6 +303,58 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
     return None
 
 
+def _best_from_levels(levels: Any, is_bid: bool) -> Optional[float]:
+    if not isinstance(levels, list) or not levels:
+        return None
+    prices: List[float] = []
+    for level in levels:
+        if isinstance(level, dict):
+            price = level.get("price")
+        elif isinstance(level, (list, tuple)) and level:
+            price = level[0]
+        else:
+            price = None
+        price_val = _coerce_float(price)
+        if price_val is not None:
+            prices.append(price_val)
+    if not prices:
+        return None
+    return max(prices) if is_bid else min(prices)
+
+
+def fetch_orderbooks_rest(
+    token_ids: Iterable[str],
+    *,
+    timeout: float = DEFAULT_REST_BOOKS_TIMEOUT,
+) -> Dict[str, Dict[str, Any]]:
+    ids = [str(token_id) for token_id in token_ids if token_id]
+    if not ids:
+        return {}
+    url = f"{_POLY_HOST}/books"
+    body = [{"token_id": token_id} for token_id in ids]
+    resp = requests.post(url, json=body, timeout=timeout)
+    resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, list):
+        return {}
+    output: Dict[str, Dict[str, Any]] = {}
+    for ob in payload:
+        if not isinstance(ob, dict):
+            continue
+        token_id = str(ob.get("asset_id") or ob.get("token_id") or "")
+        if not token_id:
+            continue
+        bids = ob.get("bids") or []
+        asks = ob.get("asks") or []
+        output[token_id] = {
+            "bids": bids if isinstance(bids, list) else [],
+            "asks": asks if isinstance(asks, list) else [],
+            "best_bid": _best_from_levels(bids, is_bid=True),
+            "best_ask": _best_from_levels(asks, is_bid=False),
+        }
+    return output
+
+
 def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSample]:
     method_candidates = (
         ("get_market_orderbook", {"market": token_id}),
@@ -335,6 +392,16 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         best = _extract_best_price(payload, side)
         if best is not None:
             return PriceSample(float(best.price), best.decimals)
+    try:
+        rest_books = fetch_orderbooks_rest([token_id])
+    except Exception:
+        return None
+    rest_ob = rest_books.get(str(token_id))
+    if rest_ob:
+        key = "best_bid" if side == "bid" else "best_ask"
+        price = rest_ob.get(key)
+        if price is not None:
+            return PriceSample(float(price), _infer_price_decimals(price))
     return None
 
 
