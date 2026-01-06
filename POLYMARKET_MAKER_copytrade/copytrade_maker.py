@@ -427,6 +427,13 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                     token_id = None
             if token_id:
                 by_id[str(token_id)] = value_val
+        logger.debug(
+            "[positions] fetched account=%s count=%s by_key=%s by_id=%s",
+            account,
+            len(positions) if isinstance(positions, list) else 0,
+            len(by_key),
+            len(by_id),
+        )
         return by_key, by_id
 
     def _lookup_position_value(
@@ -537,6 +544,11 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
             )
 
         if allowed_topics:
+            logger.debug(
+                "[watchlist] starting topics count=%d tokens=%s",
+                len(allowed_topics),
+                ",".join([t.identifier for t in allowed_topics]),
+            )
             maker_engine.start_topics(allowed_topics)
             cooldown_sec = float(cooldown_cfg.get("cooldown_sec_per_token") or 0)
             if cooldown_sec > 0:
@@ -662,6 +674,13 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                         continue
                     by_key, by_id = account_positions
                     size_val = _lookup_position_value(topic, by_key, by_id)
+                    logger.debug(
+                        "[signal] BUY evaluate token_id=%s token_key=%s size_val=%s threshold=%.6f",
+                        topic.token_id,
+                        topic.token_key,
+                        size_val,
+                        watch_min_position_usdc,
+                    )
                     if size_val is None:
                         size_for_watch = 0.0
                         _add_watchlist(
@@ -711,6 +730,11 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 if allowed_topics:
                     for topic in allowed_topics:
                         _remove_watchlist(_watchlist_key(event.source_account, topic), "order_started")
+                    logger.debug(
+                        "[signal] BUY start topics count=%d tokens=%s",
+                        len(allowed_topics),
+                        ",".join([t.identifier for t in allowed_topics]),
+                    )
                 maker_engine.start_topics(allowed_topics)
                 cooldown_sec = float(cooldown_cfg.get("cooldown_sec_per_token") or 0)
                 if cooldown_sec > 0:

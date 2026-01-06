@@ -272,6 +272,7 @@ class MakerEngine:
                 break
             best_bid, best_ask = self._get_best_prices(token_id)
             if best_bid is None or best_ask is None:
+                self._log("debug", f"[maker] token_id={token_id} 盘口缺失 bid={best_bid} ask={best_ask}")
                 time.sleep(refresh_interval)
                 continue
 
@@ -279,8 +280,16 @@ class MakerEngine:
 
             action = session.strategy.on_tick(best_ask=best_ask, best_bid=best_bid, ts=time.time())
             if action is None:
+                self._log(
+                    "debug",
+                    f"[maker] token_id={token_id} no_action bid={best_bid} ask={best_ask}",
+                )
                 time.sleep(refresh_interval)
                 continue
+            self._log(
+                "debug",
+                f"[maker] token_id={token_id} action={action.action.value} bid={best_bid} ask={best_ask}",
+            )
 
             if action.action == ActionType.BUY:
                 if not self._risk_allows_buy(session, order_size, best_bid):
@@ -463,6 +472,23 @@ class MakerEngine:
             cumulative_total_usd=total_usd,
             cumulative_token_usd=token_usd,
         )
+        self._log(
+            "debug",
+            (
+                "[risk] BUY token_id=%s allowed=%s reason=%s order_size=%.6f open_size=%.6f "
+                "ref_price=%.6f total_usd=%.6f token_usd=%.6f"
+            )
+            % (
+                session.token_id,
+                allowed,
+                reason,
+                order_size,
+                session.open_size,
+                ref_price,
+                total_usd,
+                token_usd,
+            ),
+        )
         if not allowed:
             self._log("info", f"[risk] BUY 拒绝 token_id={session.token_id} reason={reason}")
         return allowed
@@ -478,6 +504,21 @@ class MakerEngine:
             side="SELL",
             cumulative_total_usd=None,
             cumulative_token_usd=None,
+        )
+        self._log(
+            "debug",
+            (
+                "[risk] SELL token_id=%s allowed=%s reason=%s order_size=%.6f open_size=%.6f "
+                "ref_price=%.6f"
+            )
+            % (
+                session.token_id,
+                allowed,
+                reason,
+                order_size,
+                session.open_size,
+                ref_price,
+            ),
         )
         if not allowed:
             self._log("info", f"[risk] SELL 拒绝 token_id={session.token_id} reason={reason}")
