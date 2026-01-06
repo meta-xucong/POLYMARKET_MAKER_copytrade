@@ -47,6 +47,7 @@ class MakerEngine:
         risk_config: Optional[dict] = None,
         scheduler_config: Optional[dict] = None,
         orderbook_config: Optional[dict] = None,
+        ws_cache: Optional[object] = None,
         state: Optional[dict] = None,
         state_lock: Optional[threading.Lock] = None,
         logger=None,
@@ -58,6 +59,7 @@ class MakerEngine:
         self._risk_config = risk_config or {}
         self._scheduler_config = scheduler_config or {}
         self._orderbook_config = orderbook_config or {}
+        self._ws_cache = ws_cache
         self._state = state or {}
         self._state_lock = state_lock or threading.Lock()
         self._logger = logger
@@ -79,6 +81,7 @@ class MakerEngine:
         risk_config: Optional[dict] = None,
         scheduler_config: Optional[dict] = None,
         orderbook_config: Optional[dict] = None,
+        ws_cache: Optional[object] = None,
     ) -> None:
         self._config = config
         if run_params is not None:
@@ -95,6 +98,8 @@ class MakerEngine:
             )
         if orderbook_config is not None:
             self._orderbook_config = orderbook_config
+        if ws_cache is not None:
+            self._ws_cache = ws_cache
 
     def start_topics(self, topics: Iterable[Topic]) -> None:
         for topic in topics:
@@ -139,6 +144,7 @@ class MakerEngine:
                 self._start_cooldowns[token_id] = now
                 thread.start()
                 self._log("info", f"[maker] 启动 maker 波段线程 token_id={token_id}")
+        self._refresh_ws_tokens()
 
     def start_existing_position(
         self,
@@ -195,6 +201,7 @@ class MakerEngine:
                 "info",
                 f"[maker] 接管历史仓位 token_id={token_id} size={position_size}",
             )
+        self._refresh_ws_tokens()
 
     def stop_topics(self, topics: Iterable[Topic]) -> None:
         for topic in topics:
@@ -209,6 +216,7 @@ class MakerEngine:
                     session.exit_requested = True
                     session.stop_event.set()
                     self._log("info", f"[maker] 停止 maker 波段线程 token_id={token_id}")
+        self._refresh_ws_tokens()
 
     def match_token_ids(self, topic: Topic) -> list[str]:
         if topic.token_id:
@@ -231,6 +239,7 @@ class MakerEngine:
             ]
             for token_id in finished:
                 self._sessions.pop(token_id, None)
+        self._refresh_ws_tokens()
 
     def open_positions(self) -> Dict[str, float]:
         with self._lock:
@@ -242,6 +251,17 @@ class MakerEngine:
             if not session:
                 return
             session.open_size = max(float(open_size), 0.0)
+
+    def _refresh_ws_tokens(self) -> None:
+        ws_cache = self._ws_cache
+        if ws_cache is None:
+            return
+        with self._lock:
+            token_ids = list(self._sessions.keys())
+        try:
+            ws_cache.update_tokens(token_ids)
+        except Exception:
+            return
 
     def _run_session(self, token_id: str, stop_event: threading.Event) -> None:
         try:
@@ -270,6 +290,12 @@ class MakerEngine:
             session = self._sessions.get(token_id)
             if session is None:
                 break
+            ws_cache = self._ws_cache
+            best_bid_fn = None
+            best_ask_fn = None
+            if ws_cache is not None:
+                best_bid_fn = lambda: ws_cache.get_best(token_id)[0]  # noqa: E731
+                best_ask_fn = lambda: ws_cache.get_best(token_id)[1]  # noqa: E731
             best_bid, best_ask = self._get_best_prices(token_id)
             if best_bid is None or best_ask is None:
                 self._log("debug", f"[maker] token_id={token_id} 盘口缺失 bid={best_bid} ask={best_ask}")
@@ -307,11 +333,12 @@ class MakerEngine:
                         token_id,
                         capped_order_size,
                         poll_sec=poll_sec,
-                        min_quote_amt=min_quote_amount,
-                        min_order_size=min_order_size,
-                        stop_check=_stop,
-                        logger=self._logger,
-                    )
+                    min_quote_amt=min_quote_amount,
+                    min_order_size=min_order_size,
+                    stop_check=_stop,
+                    logger=self._logger,
+                    best_bid_fn=best_bid_fn,
+                )
                 except Exception as exc:
                     self._record_error(token_id, f"BUY 执行异常: {exc}")
                     session.strategy.on_reject(str(exc))
@@ -353,13 +380,14 @@ class MakerEngine:
                         position_size,
                         floor_price,
                         poll_sec=poll_sec,
-                        min_order_size=min_order_size,
-                        stop_check=_stop,
-                        sell_mode=sell_mode,
-                        aggressive_step=aggressive_step,
-                        aggressive_timeout=aggressive_timeout,
-                        logger=self._logger,
-                    )
+                    min_order_size=min_order_size,
+                    stop_check=_stop,
+                    sell_mode=sell_mode,
+                    aggressive_step=aggressive_step,
+                    aggressive_timeout=aggressive_timeout,
+                    logger=self._logger,
+                    best_ask_fn=best_ask_fn,
+                )
                 except Exception as exc:
                     self._record_error(token_id, f"SELL 执行异常: {exc}")
                     session.strategy.on_reject(str(exc))
@@ -445,6 +473,14 @@ class MakerEngine:
         return VolArbStrategy(strategy_cfg)
 
     def _get_best_prices(self, token_id: str) -> Tuple[Optional[float], Optional[float]]:
+        ws_cache = self._ws_cache
+        if ws_cache is not None:
+            try:
+                ws_bid, ws_ask = ws_cache.get_best(token_id)
+            except Exception:
+                ws_bid, ws_ask = None, None
+            if ws_bid is not None and ws_ask is not None:
+                return ws_bid, ws_ask
         refresh_sec = float(self._orderbook_config.get("refresh_sec") or 0.0)
         now = time.time()
         cached = self._orderbook_cache.get(token_id)
