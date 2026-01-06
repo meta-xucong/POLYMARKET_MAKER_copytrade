@@ -1,5 +1,5 @@
 {
-  "target_addresses": ["0x79add3f87e377b0899b935472c07d2c3816ba9f1"],
+  "target_addresses": ["0x79add3f87e377b0899b935472c07d2c3816ba9f1","0x39d0f1dca6fb7e5514858c1a337724a426764fe8"],
   "signal_tracking": {
     "poll_interval_sec": 30
   },
@@ -16,9 +16,7 @@
     "buy_price_threshold": null,
     "drop_window_minutes": 60,
     "drop_pct": 0.01,
-    "profit_ratio": 0.02,
     "profit_pct": 0.02,
-    "max_history_points": 600,
     "enable_incremental_drop_pct": true,
     "incremental_drop_pct_step": 0.002,
     "incremental_drop_pct_cap": 0.1,
@@ -70,7 +68,7 @@
     }
   },
   "logging": {
-    "level": "INFO",
+    "level": "DEBUG",
     "path": "logs/app.log"
   }
 }
