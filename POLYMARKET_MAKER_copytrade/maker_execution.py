@@ -68,16 +68,39 @@ def maker_buy_follow_bid(
     min_quote_amt: float,
     min_order_size: float,
     stop_check,
+    logger=None,
 ) -> dict[str, Any]:
     best_bid_sample = _fetch_best_price(client, token_id, "bid")
     best_bid = best_bid_sample.price if best_bid_sample is not None else None
     if best_bid is None:
+        _log(logger, "warning", f"[order] BUY 无法获取 best_bid token_id={token_id}")
         return {"filled": 0.0, "avg_price": None}
     if order_size < min_order_size:
+        _log(
+            logger,
+            "info",
+            f"[order] BUY 低于最小下单量 token_id={token_id} size={order_size} min={min_order_size}",
+        )
         return {"filled": 0.0, "avg_price": None}
     if order_size * best_bid < min_quote_amt:
+        _log(
+            logger,
+            "info",
+            (
+                "[order] BUY 低于最小名义金额 token_id=%s size=%.6f price=%.6f min_quote=%.6f"
+            )
+            % (token_id, order_size, best_bid, min_quote_amt),
+        )
         return {"filled": 0.0, "avg_price": None}
-    _place_order(client, token_id, "BUY", best_bid, order_size)
+    _log(
+        logger,
+        "info",
+        (
+            "[order] BUY 提交 token_id=%s price=%.6f size=%.6f notional=%.6f"
+        )
+        % (token_id, best_bid, order_size, order_size * best_bid),
+    )
+    _place_order(client, token_id, "BUY", best_bid, order_size, logger=logger)
     return {"filled": float(order_size), "avg_price": float(best_bid)}
 
 
@@ -93,6 +116,7 @@ def maker_sell_follow_ask_with_floor_wait(
     sell_mode: str,
     aggressive_step: float,
     aggressive_timeout: float,
+    logger=None,
 ) -> dict[str, Any]:
     best_ask_sample = _fetch_best_price(client, token_id, "ask")
     best_bid_sample = _fetch_best_price(client, token_id, "bid")
@@ -100,10 +124,31 @@ def maker_sell_follow_ask_with_floor_wait(
     best_bid = best_bid_sample.price if best_bid_sample is not None else None
     price = best_bid or best_ask
     if price is None or price < floor_price:
+        _log(
+            logger,
+            "info",
+            (
+                "[order] SELL 价格未达触发 token_id=%s price=%s floor=%.6f"
+            )
+            % (token_id, price, floor_price),
+        )
         return {"filled": 0.0, "avg_price": None, "remaining": order_size}
     if order_size < min_order_size:
+        _log(
+            logger,
+            "info",
+            f"[order] SELL 低于最小下单量 token_id={token_id} size={order_size} min={min_order_size}",
+        )
         return {"filled": 0.0, "avg_price": None, "remaining": order_size}
-    _place_order(client, token_id, "SELL", price, order_size)
+    _log(
+        logger,
+        "info",
+        (
+            "[order] SELL 提交 token_id=%s price=%.6f size=%.6f notional=%.6f"
+        )
+        % (token_id, price, order_size, order_size * price),
+    )
+    _place_order(client, token_id, "SELL", price, order_size, logger=logger)
     return {"filled": float(order_size), "avg_price": float(price), "remaining": 0.0}
 
 
@@ -245,20 +290,50 @@ def _extract_price(entry: Any) -> Optional[float]:
         return None
 
 
-def _place_order(client, token_id: str, side: str, price: float, size: float) -> None:
+def _place_order(
+    client,
+    token_id: str,
+    side: str,
+    price: float,
+    size: float,
+    *,
+    logger=None,
+) -> None:
     for name in ("place_order", "create_order", "submit_order", "order"):
         fn = getattr(client, name, None)
         if not callable(fn):
             continue
         try:
             fn(token_id=token_id, side=side, price=price, size=size)
+            _log(logger, "info", f"[order] {side} 提交成功 token_id={token_id}")
             return
         except TypeError:
             try:
                 fn(token_id, side, price, size)
+                _log(logger, "info", f"[order] {side} 提交成功 token_id={token_id}")
                 return
             except Exception:
+                _log(
+                    logger,
+                    "warning",
+                    f"[order] {side} 提交失败 token_id={token_id} via {name} 参数调用异常",
+                )
                 continue
         except Exception:
+            _log(
+                logger,
+                "warning",
+                f"[order] {side} 提交失败 token_id={token_id} via {name}",
+            )
             continue
     return None
+
+
+def _log(logger, level: str, message: str) -> None:
+    if logger is None:
+        return
+    log_fn = getattr(logger, level, None)
+    if callable(log_fn):
+        log_fn(message)
+    else:
+        logger.info(message)
