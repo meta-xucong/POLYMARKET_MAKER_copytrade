@@ -78,6 +78,11 @@ class _OrderAdapter:
             "placeOrder",
             "submitOrder",
         )
+        payload_alt = dict(payload)
+        if "token_id" in payload_alt and "tokenId" not in payload_alt:
+            payload_alt["tokenId"] = payload_alt["token_id"]
+        if "tokenId" in payload_alt and "token_id" not in payload_alt:
+            payload_alt["token_id"] = payload_alt["tokenId"]
         for obj in _iter_client_targets(self._client):
             for name in method_names:
                 method = getattr(obj, name, None)
@@ -88,16 +93,21 @@ class _OrderAdapter:
                     return _normalize_response(resp)
                 except TypeError:
                     try:
+                        resp = method(**payload_alt)
+                        return _normalize_response(resp)
+                    except Exception:
+                        pass
+                    try:
                         resp = method(payload)
                         return _normalize_response(resp)
                     except Exception:
                         pass
                     try:
                         resp = method(
-                            payload.get("token_id"),
-                            payload.get("side"),
-                            payload.get("price"),
-                            payload.get("size"),
+                            payload_alt.get("token_id"),
+                            payload_alt.get("side"),
+                            payload_alt.get("price"),
+                            payload_alt.get("size"),
                         )
                         return _normalize_response(resp)
                     except Exception:
