@@ -156,6 +156,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
         cfg.get("maker_strategy", {}),
         maker_engine,
         max_concurrent_exits=int(scheduler_cfg.get("max_concurrent_exit_jobs") or 0),
+        risk_config=risk_cfg,
         logger=logger,
     )
 
@@ -610,6 +611,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
             position_manager.update_config(
                 cfg.get("maker_strategy", {}),
                 max_concurrent_exits=int(scheduler_cfg.get("max_concurrent_exit_jobs") or 0),
+                risk_config=risk_cfg,
             )
             config_reload_sec = float(cfg.get("config_reload_sec") or config_reload_sec)
             watch_min_position_usdc = float(signal_cfg.get("watch_position_min_usdc", watch_min_position_usdc))
