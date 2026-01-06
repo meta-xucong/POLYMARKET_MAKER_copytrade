@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 
 @dataclass
@@ -10,13 +10,50 @@ class PriceSample:
 
 
 def _fetch_best_price(client, token_id: str, side: str) -> Optional[PriceSample]:
+    method_candidates = (
+        ("get_market_orderbook", {"market": token_id}),
+        ("get_market_orderbook", {"token_id": token_id}),
+        ("get_market_orderbook", {"market_id": token_id}),
+        ("get_order_book", {"market": token_id}),
+        ("get_order_book", {"token_id": token_id}),
+        ("get_orderbook", {"market": token_id}),
+        ("get_orderbook", {"token_id": token_id}),
+        ("get_market", {"market": token_id}),
+        ("get_market", {"token_id": token_id}),
+        ("get_market_data", {"market": token_id}),
+        ("get_market_data", {"token_id": token_id}),
+        ("get_ticker", {"market": token_id}),
+        ("get_ticker", {"token_id": token_id}),
+        ("get_price", {"token_id": token_id, "side": "BUY" if side == "bid" else "SELL"}),
+        ("get_price", {"market": token_id, "side": "BUY" if side == "bid" else "SELL"}),
+    )
+
+    for name, kwargs in method_candidates:
+        fn = getattr(client, name, None)
+        if not callable(fn):
+            continue
+        try:
+            resp = fn(**kwargs)
+        except TypeError:
+            continue
+        except Exception:
+            continue
+        payload = _normalize_payload(resp)
+        sample = _extract_best_price(payload, side)
+        if sample is not None:
+            return sample
+
     orderbook = _fetch_orderbook(client, token_id)
     if not orderbook:
         return None
     if side == "bid":
         price = _best_bid(orderbook.get("bids") or [])
+        if price is None:
+            price = _coerce_float(orderbook.get("best_bid"))
     else:
         price = _best_ask(orderbook.get("asks") or [])
+        if price is None:
+            price = _coerce_float(orderbook.get("best_ask"))
     if price is None:
         return None
     return PriceSample(price=price)
@@ -32,7 +69,8 @@ def maker_buy_follow_bid(
     min_order_size: float,
     stop_check,
 ) -> dict[str, Any]:
-    best_bid = _best_bid((_fetch_orderbook(client, token_id) or {}).get("bids") or [])
+    best_bid_sample = _fetch_best_price(client, token_id, "bid")
+    best_bid = best_bid_sample.price if best_bid_sample is not None else None
     if best_bid is None:
         return {"filled": 0.0, "avg_price": None}
     if order_size < min_order_size:
@@ -56,8 +94,10 @@ def maker_sell_follow_ask_with_floor_wait(
     aggressive_step: float,
     aggressive_timeout: float,
 ) -> dict[str, Any]:
-    best_ask = _best_ask((_fetch_orderbook(client, token_id) or {}).get("asks") or [])
-    best_bid = _best_bid((_fetch_orderbook(client, token_id) or {}).get("bids") or [])
+    best_ask_sample = _fetch_best_price(client, token_id, "ask")
+    best_bid_sample = _fetch_best_price(client, token_id, "bid")
+    best_ask = best_ask_sample.price if best_ask_sample is not None else None
+    best_bid = best_bid_sample.price if best_bid_sample is not None else None
     price = best_bid or best_ask
     if price is None or price < floor_price:
         return {"filled": 0.0, "avg_price": None, "remaining": order_size}
@@ -78,6 +118,97 @@ def _fetch_orderbook(client, token_id: str) -> Optional[dict[str, Any]]:
             continue
         if isinstance(resp, dict):
             return resp
+    return None
+
+
+def _coerce_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_payload(resp: Any) -> Any:
+    payload = resp
+    if isinstance(resp, tuple) and len(resp) == 2:
+        payload = resp[1]
+    if isinstance(payload, Mapping) and {"data", "status"} <= set(payload.keys()):
+        payload = payload.get("data")
+    return payload
+
+
+def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
+    numeric = _coerce_float(payload)
+    if numeric is not None:
+        return PriceSample(price=float(numeric))
+
+    if isinstance(payload, Mapping):
+        primary_keys = {
+            "bid": (
+                "best_bid",
+                "bestBid",
+                "bid",
+                "highestBid",
+                "bestBidPrice",
+                "bidPrice",
+                "buy",
+            ),
+            "ask": (
+                "best_ask",
+                "bestAsk",
+                "ask",
+                "offer",
+                "best_offer",
+                "bestOffer",
+                "lowestAsk",
+                "sell",
+            ),
+        }[side]
+        for key in primary_keys:
+            if key in payload:
+                extracted = _extract_best_price(payload[key], side)
+                if extracted is not None:
+                    return extracted
+
+        ladder_keys = {
+            "bid": ("bids", "bid_levels", "buy_orders", "buyOrders"),
+            "ask": ("asks", "ask_levels", "sell_orders", "sellOrders", "offers"),
+        }[side]
+        for key in ladder_keys:
+            if key in payload:
+                ladder = payload[key]
+                if isinstance(ladder, Iterable) and not isinstance(ladder, (str, bytes, bytearray)):
+                    for entry in ladder:
+                        if isinstance(entry, Mapping) and "price" in entry:
+                            candidate = _coerce_float(entry.get("price"))
+                            if candidate is not None:
+                                return PriceSample(price=float(candidate))
+                        extracted = _extract_best_price(entry, side)
+                        if extracted is not None:
+                            return extracted
+
+        for value in payload.values():
+            extracted = _extract_best_price(value, side)
+            if extracted is not None:
+                return extracted
+        return None
+
+    if isinstance(payload, Iterable) and not isinstance(payload, (str, bytes, bytearray)):
+        for item in payload:
+            extracted = _extract_best_price(item, side)
+            if extracted is not None:
+                return extracted
+        return None
+
     return None
 
 
@@ -131,4 +262,3 @@ def _place_order(client, token_id: str, side: str, price: float, size: float) ->
         except Exception:
             continue
     return None
-
