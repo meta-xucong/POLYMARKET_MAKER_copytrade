@@ -24,6 +24,7 @@ from modules.position_manager import PositionManager
 from modules.signal_tracker import SignalTracker
 from modules.state_store import load_state, save_state
 from modules.topic_selector import Topic
+from modules.ws_orderbook import WsOrderbookCache
 
 
 def _load_config(path: Path) -> Dict[str, Any]:
@@ -40,7 +41,9 @@ def _get_maker_client():
     ws_spec = importlib.util.find_spec("Volatility_arbitrage_main_ws")
     if ws_spec is not None:
         module = importlib.import_module("Volatility_arbitrage_main_ws")
-        return module.get_client()
+        get_client = getattr(module, "get_client", None)
+        if callable(get_client):
+            return get_client()
     module = importlib.import_module("Volatility_arbitrage_main_rest")
     return module.get_client()
 
@@ -86,6 +89,21 @@ def _setup_logging(cfg: Dict[str, Any], base_dir: Path) -> logging.Logger:
     return logger
 
 
+def _init_ws_cache(logger: logging.Logger, cfg: Dict[str, Any]) -> Optional[WsOrderbookCache]:
+    orderbook_cfg = cfg.get("orderbook", {}) if isinstance(cfg.get("orderbook"), dict) else {}
+    if orderbook_cfg.get("ws_enabled", True) is False:
+        return None
+    ws_spec = importlib.util.find_spec("Volatility_arbitrage_main_ws")
+    if ws_spec is None:
+        return None
+    module = importlib.import_module("Volatility_arbitrage_main_ws")
+    ws_watch = getattr(module, "ws_watch_by_ids", None)
+    if not callable(ws_watch):
+        return None
+    stale_sec = float(orderbook_cfg.get("ws_stale_sec", 30.0))
+    return WsOrderbookCache(ws_watch=ws_watch, logger=logger, stale_sec=stale_sec)
+
+
 def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
     logger = _setup_logging(cfg, base_dir)
 
@@ -116,6 +134,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
 
     data_client = DataApiClient()
     maker_client = _get_maker_client()
+    ws_cache = _init_ws_cache(logger, cfg)
 
     state_path = state_cfg.get("path") or "state/copytrade_state.json"
     state_file = Path(state_path)
@@ -147,6 +166,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
         risk_config=risk_cfg,
         scheduler_config=scheduler_cfg,
         orderbook_config=orderbook_cfg,
+        ws_cache=ws_cache,
         state=state,
         state_lock=state_lock,
         logger=logger,
@@ -580,6 +600,11 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 if isinstance(cfg.get("orderbook"), dict)
                 else orderbook_cfg
             )
+            new_ws_cache = _init_ws_cache(logger, cfg)
+            if ws_cache is not new_ws_cache:
+                if ws_cache is not None:
+                    ws_cache.stop()
+                ws_cache = new_ws_cache
             run_params = cfg.get("run_params", {}) if isinstance(cfg.get("run_params"), dict) else run_params
             strategy_defaults = (
                 cfg.get("maker_strategy_defaults", {})
@@ -607,6 +632,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
                 risk_config=risk_cfg,
                 scheduler_config=scheduler_cfg,
                 orderbook_config=orderbook_cfg,
+                ws_cache=ws_cache,
             )
             position_manager.update_config(
                 cfg.get("maker_strategy", {}),
