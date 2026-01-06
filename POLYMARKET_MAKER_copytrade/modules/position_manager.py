@@ -25,18 +25,28 @@ class PositionManager:
         maker_engine,
         *,
         max_concurrent_exits: int = 0,
+        risk_config: Optional[dict] = None,
         logger=None,
     ) -> None:
         self._client = client
         self._config = config
         self._maker_engine = maker_engine
+        self._risk_config = risk_config or {}
         self._logger = logger
         self._exit_semaphore: Optional[threading.Semaphore] = None
         if max_concurrent_exits and max_concurrent_exits > 0:
             self._exit_semaphore = threading.Semaphore(int(max_concurrent_exits))
 
-    def update_config(self, config: dict, *, max_concurrent_exits: Optional[int] = None) -> None:
+    def update_config(
+        self,
+        config: dict,
+        *,
+        max_concurrent_exits: Optional[int] = None,
+        risk_config: Optional[dict] = None,
+    ) -> None:
         self._config = config
+        if risk_config is not None:
+            self._risk_config = risk_config
         if max_concurrent_exits is None:
             return
         if max_concurrent_exits and max_concurrent_exits > 0:
@@ -52,9 +62,9 @@ class PositionManager:
                 continue
             for token_id in token_ids:
                 position_size = self._maker_engine.open_positions().get(token_id, 0.0)
+                self._cancel_open_orders(token_id)
                 if position_size <= 0:
                     self._log("info", f"[position] 无仓位，撤销挂单 token_id={token_id}")
-                    self._cancel_open_orders(token_id)
                     self._maker_engine.update_open_size(token_id, 0.0)
                     continue
                 if self._exit_semaphore and not self._exit_semaphore.acquire(blocking=False):
@@ -144,6 +154,9 @@ class PositionManager:
                 if not orders_ok:
                     time.sleep(exit_poll_sec)
                     continue
+                if open_orders:
+                    self._cancel_orders(open_orders)
+                    open_orders = []
                 if current_size <= 0 and not open_orders:
                     self._maker_engine.update_open_size(token_id, 0.0)
                     self._log("info", f"[position] 清仓完成 token_id={token_id}")
@@ -202,7 +215,9 @@ class PositionManager:
             or self._config.get("taker_order_type"),
             "exit_full_sell": True,
             "maker_only": bool(self._config.get("exit_maker_only", False)),
-            "allow_short": bool(self._config.get("allow_short", False)),
+            "allow_short": bool(
+                self._config.get("allow_short", self._risk_config.get("allow_short", False))
+            ),
             "order_size_mode": self._config.get("order_size_mode", "fixed_shares"),
             "slice_min": float(self._config.get("slice_min") or 0.0),
             "slice_max": float(self._config.get("slice_max") or 0.0),
@@ -250,6 +265,9 @@ class PositionManager:
             return
         if not open_orders:
             return
+        self._cancel_orders(open_orders)
+
+    def _cancel_orders(self, open_orders: Iterable[dict]) -> None:
         for order in open_orders:
             order_id = order.get("order_id") or order.get("id")
             if not order_id:
