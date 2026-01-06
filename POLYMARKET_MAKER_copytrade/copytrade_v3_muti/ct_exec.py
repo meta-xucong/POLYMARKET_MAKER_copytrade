@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from maker_execution import fetch_orderbooks_rest
+
 
 def fetch_open_orders_norm(client) -> Tuple[List[Dict[str, Any]], bool, Optional[str]]:
     candidates = (
@@ -65,6 +67,17 @@ def get_orderbook(client, token_id: str) -> Dict[str, Any]:
         orderbook = _normalize_orderbook(resp)
         if orderbook is not None:
             return orderbook
+    try:
+        rest_books = fetch_orderbooks_rest([token_id])
+    except Exception:
+        return {"bids": [], "asks": [], "best_bid": None, "best_ask": None}
+    rest_ob = rest_books.get(str(token_id)) or {}
+    return {
+        "bids": rest_ob.get("bids") or [],
+        "asks": rest_ob.get("asks") or [],
+        "best_bid": rest_ob.get("best_bid"),
+        "best_ask": rest_ob.get("best_ask"),
+    }
     return {"bids": [], "asks": [], "best_bid": None, "best_ask": None}
 
 
@@ -77,12 +90,12 @@ def _normalize_orderbook(resp: Any) -> Optional[Dict[str, Any]]:
         bids = []
     if not isinstance(asks, list):
         asks = []
-    best_bid = _best_price(bids)
-    best_ask = _best_price(asks)
+    best_bid = _best_price(bids, is_bid=True)
+    best_ask = _best_price(asks, is_bid=False)
     return {"bids": bids, "asks": asks, "best_bid": best_bid, "best_ask": best_ask}
 
 
-def _best_price(entries: Iterable[Any]) -> Optional[float]:
+def _best_price(entries: Iterable[Any], *, is_bid: bool) -> Optional[float]:
     best = None
     for entry in entries:
         if isinstance(entry, dict):
@@ -98,7 +111,7 @@ def _best_price(entries: Iterable[Any]) -> Optional[float]:
         if best is None:
             best = price_val
         else:
-            best = max(best, price_val)
+            best = max(best, price_val) if is_bid else min(best, price_val)
     return best
 
 
@@ -185,4 +198,3 @@ def _place_order(client, token_id: str, side: str, price: float, size: float) ->
         except Exception:
             continue
     raise RuntimeError("place_order_failed")
-
