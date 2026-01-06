@@ -26,6 +26,7 @@ fill statistics so that the strategy layer can update its internal state.
 """
 from __future__ import annotations
 
+import importlib.util
 import math
 import os
 import time
@@ -69,6 +70,9 @@ class _OrderAdapter:
         self._logger = logger
 
     def create_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        clob_response = self._create_order_via_clob_client(payload)
+        if clob_response is not None:
+            return clob_response
         method_names = (
             "create_order",
             "place_order",
@@ -150,6 +154,66 @@ class _OrderAdapter:
         _emit(self._logger, message)
         raise RuntimeError(message)
 
+    def _create_order_via_clob_client(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        client = self._client
+        if not (hasattr(client, "create_order") and hasattr(client, "post_order")):
+            return None
+        if importlib.util.find_spec("py_clob_client") is None:
+            return None
+
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY, SELL
+
+        side_raw = str(payload.get("side", "")).upper()
+        if side_raw not in {"BUY", "SELL"}:
+            return None
+
+        token_id = payload.get("tokenId") or payload.get("token_id")
+        if not token_id:
+            return None
+
+        price = payload.get("price")
+        size = payload.get("size")
+        if price is None or size is None:
+            return None
+
+        side_const = BUY if side_raw == "BUY" else SELL
+        order_args = OrderArgs(
+            token_id=str(token_id),
+            side=side_const,
+            price=float(price),
+            size=float(size),
+        )
+
+        signed_or_response = client.create_order(order_args)
+        order_id = _extract_order_id(signed_or_response)
+        if order_id is None:
+            order_type = _resolve_order_type(payload, OrderType)
+            allow_partial = payload.get("allowPartial")
+            if allow_partial is not None:
+                try:
+                    response = client.post_order(
+                        signed_or_response, order_type, allow_partial=bool(allow_partial)
+                    )
+                except TypeError:
+                    response = client.post_order(signed_or_response, order_type)
+            else:
+                response = client.post_order(signed_or_response, order_type)
+            order_id = _extract_order_id(response)
+            if order_id is None:
+                return _normalize_response(response)
+            if isinstance(response, dict):
+                response = dict(response)
+                response.setdefault("orderId", order_id)
+                return response
+            return {"orderId": order_id, "rawResponse": response}
+
+        if isinstance(signed_or_response, dict):
+            response = dict(signed_or_response)
+            response.setdefault("orderId", order_id)
+            return response
+        return {"orderId": order_id, "rawResponse": signed_or_response}
+
 
 def _iter_client_targets(client: Any) -> Iterable[Any]:
     targets: deque[Any] = deque([client])
@@ -175,6 +239,91 @@ def _normalize_response(resp: Any) -> Dict[str, Any]:
     if isinstance(resp, tuple) and len(resp) == 2 and isinstance(resp[1], dict):
         return resp[1]
     return {"data": resp}
+
+
+def _resolve_order_type(payload: Mapping[str, Any], order_type_cls: Any) -> Any:
+    desired = str(payload.get("type") or payload.get("timeInForce") or "GTC").upper()
+    aliases = {"IOC": "FAK"}
+    candidates = [desired, aliases.get(desired), "GTC", "FAK"]
+    for cand in candidates:
+        if not cand:
+            continue
+        member = getattr(order_type_cls, cand, None)
+        if member is not None:
+            return member
+    try:
+        return next(iter(order_type_cls))
+    except Exception:
+        return desired
+
+
+def _extract_order_id(response: Any) -> Optional[str]:
+    candidates = (
+        "order_id",
+        "orderId",
+        "orderID",
+        "id",
+        "orderHash",
+        "order_hash",
+        "hash",
+    )
+
+    visited: set[int] = set()
+
+    def walk(obj: Any, allow_plain_string: bool = False) -> Optional[str]:
+        if obj is None:
+            return None
+        if isinstance(obj, (str, bytes, bytearray)):
+            if not allow_plain_string:
+                return None
+            text = obj.decode() if isinstance(obj, (bytes, bytearray)) else obj
+            text = text.strip()
+            return text or None
+
+        obj_id = id(obj)
+        if obj_id in visited:
+            return None
+        visited.add(obj_id)
+
+        if isinstance(obj, dict):
+            for key in candidates:
+                cand = obj.get(key)
+                if cand not in (None, ""):
+                    return str(cand)
+            for value in obj.values():
+                found = walk(value, allow_plain_string=False)
+                if found:
+                    return found
+            return None
+
+        if isinstance(obj, (list, tuple, set)):
+            for item in obj:
+                found = walk(item, allow_plain_string=False)
+                if found:
+                    return found
+            return None
+
+        for key in candidates:
+            try:
+                cand = getattr(obj, key)
+            except AttributeError:
+                continue
+            if cand not in (None, ""):
+                return str(cand)
+
+        to_dict = getattr(obj, "_asdict", None)
+        if callable(to_dict):
+            try:
+                return walk(to_dict(), allow_plain_string=False)
+            except Exception:
+                return None
+
+        if hasattr(obj, "__dict__"):
+            return walk(vars(obj), allow_plain_string=False)
+
+        return None
+
+    return walk(response, allow_plain_string=True)
 
 
 def _round_up_to_dp(value: float, dp: int) -> float:
