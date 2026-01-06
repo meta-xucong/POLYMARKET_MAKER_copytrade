@@ -26,6 +26,7 @@ fill statistics so that the strategy layer can update its internal state.
 """
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import math
 import threading
@@ -81,6 +82,39 @@ def _coerce_float(value: Any) -> Optional[float]:
         except ValueError:
             return None
     return None
+
+
+def _get_default_clob_client() -> Any:
+    ws_spec = importlib.util.find_spec("Volatility_arbitrage_main_ws")
+    if ws_spec is not None:
+        module = importlib.import_module("Volatility_arbitrage_main_ws")
+        return module.get_client()
+    module = importlib.import_module("Volatility_arbitrage_main_rest")
+    return module.get_client()
+
+
+def fetch_orderbooks_rest(
+    token_ids: Iterable[str], client: Optional[Any] = None
+) -> Dict[str, Dict[str, Any]]:
+    resolved_client = client
+    if resolved_client is None:
+        try:
+            resolved_client = _get_default_clob_client()
+        except Exception:
+            resolved_client = None
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for token_id in token_ids:
+        token_key = str(token_id)
+        payload = None
+        if resolved_client is not None:
+            payload = _fetch_orderbook_payload(resolved_client, token_key)
+        if payload is None:
+            results[token_key] = {"bids": [], "asks": [], "best_bid": None, "best_ask": None}
+            continue
+        normalized = _normalize_orderbook_payload(payload)
+        results[token_key] = normalized
+    return results
 
 
 class PriceSample(NamedTuple):
@@ -510,6 +544,68 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         if best is not None:
             return PriceSample(float(best.price), best.decimals)
     return None
+
+
+def _fetch_orderbook_payload(client: Any, token_id: str) -> Optional[Any]:
+    method_candidates = (
+        ("get_market_orderbook", {"market": token_id}),
+        ("get_market_orderbook", {"token_id": token_id}),
+        ("get_market_orderbook", {"market_id": token_id}),
+        ("get_order_book", {"market": token_id}),
+        ("get_order_book", {"token_id": token_id}),
+        ("get_orderbook", {"market": token_id}),
+        ("get_orderbook", {"token_id": token_id}),
+        ("get_market", {"market": token_id}),
+        ("get_market", {"token_id": token_id}),
+        ("get_market_data", {"market": token_id}),
+        ("get_market_data", {"token_id": token_id}),
+        ("get_ticker", {"market": token_id}),
+        ("get_ticker", {"token_id": token_id}),
+    )
+
+    for name, kwargs in method_candidates:
+        fn = getattr(client, name, None)
+        if not callable(fn):
+            continue
+        try:
+            return fn(**kwargs)
+        except TypeError:
+            continue
+        except Exception:
+            continue
+    return None
+
+
+def _normalize_orderbook_payload(payload: Any) -> Dict[str, Any]:
+    data = payload
+    if isinstance(payload, tuple) and len(payload) == 2:
+        data = payload[1]
+    if isinstance(data, Mapping) and {"data", "status"} <= set(data.keys()):
+        data = data.get("data")
+
+    bids = _extract_ladder(data, ("bids", "bid_levels", "buy", "buy_orders", "buyOrders"))
+    asks = _extract_ladder(data, ("asks", "ask_levels", "sell", "sell_orders", "sellOrders", "offers"))
+
+    best_bid = _extract_best_price(data, "bid")
+    best_ask = _extract_best_price(data, "ask")
+
+    return {
+        "bids": bids,
+        "asks": asks,
+        "best_bid": best_bid.price if best_bid is not None else None,
+        "best_ask": best_ask.price if best_ask is not None else None,
+    }
+
+
+def _extract_ladder(payload: Any, keys: Tuple[str, ...]) -> List[Any]:
+    if isinstance(payload, Mapping):
+        for key in keys:
+            val = payload.get(key)
+            if isinstance(val, list):
+                return val
+    if isinstance(payload, list):
+        return payload
+    return []
 
 
 def _best_price_info(
