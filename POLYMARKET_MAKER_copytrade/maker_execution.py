@@ -33,6 +33,11 @@ from collections.abc import Callable, Iterable, Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+try:
+    from trading.execution import ClobPolymarketAPI
+except Exception:  # pragma: no cover - optional dependency
+    ClobPolymarketAPI = None
+
 
 BUY_PRICE_DP = 2
 BUY_SIZE_DP = 4
@@ -94,8 +99,9 @@ class _OrderAdapter:
                         continue
                 except Exception:
                     continue
-        _emit(self._logger, "[MAKER] 下单失败：未匹配到可用的下单方法")
-        return {"orderId": None, "status": "FAILED"}
+        message = "[MAKER] 下单失败：未匹配到可用的下单方法"
+        _emit(self._logger, message)
+        raise RuntimeError(message)
 
     def get_order_status(self, order_id: str) -> Dict[str, Any]:
         method_names = (
@@ -125,7 +131,9 @@ class _OrderAdapter:
                         continue
                 except Exception:
                     continue
-        return {"status": "UNKNOWN", "filledAmount": None}
+        message = "[MAKER] 查询订单状态失败：未匹配到可用的查询方法"
+        _emit(self._logger, message)
+        raise RuntimeError(message)
 
 
 def _iter_client_targets(client: Any) -> Iterable[Any]:
@@ -558,7 +566,9 @@ def maker_buy_follow_bid(
             "orders": [],
         }
 
-    adapter = _OrderAdapter(client, logger=logger)
+    adapter = (
+        ClobPolymarketAPI(client) if ClobPolymarketAPI is not None else _OrderAdapter(client, logger=logger)
+    )
     orders: List[Dict[str, Any]] = []
     records: Dict[str, Dict[str, Any]] = {}
     accounted: Dict[str, float] = {}
@@ -998,7 +1008,9 @@ def maker_sell_follow_ask_with_floor_wait(
     price_dp = _normalize_price_dp(price_decimals)
     tick = _order_tick(price_dp)
 
-    adapter = _OrderAdapter(client, logger=logger)
+    adapter = (
+        ClobPolymarketAPI(client) if ClobPolymarketAPI is not None else _OrderAdapter(client, logger=logger)
+    )
     orders: List[Dict[str, Any]] = []
     records: Dict[str, Dict[str, Any]] = {}
     accounted: Dict[str, float] = {}
