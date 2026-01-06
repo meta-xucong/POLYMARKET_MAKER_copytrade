@@ -26,6 +26,7 @@ fill statistics so that the strategy layer can update its internal state.
 """
 from __future__ import annotations
 
+import importlib.util
 import math
 import time
 from collections import deque
@@ -42,6 +43,91 @@ SELL_PRICE_DP = 4
 SELL_SIZE_DP = 2
 _MIN_FILL_EPS = 1e-9
 DEFAULT_MIN_ORDER_SIZE = 5.0
+
+
+def _resolve_order_type(payload: Mapping[str, Any], order_type_cls: Any) -> Any:
+    desired = str(payload.get("type") or payload.get("timeInForce") or "GTC").upper()
+    aliases = {"IOC": "FAK"}
+    candidates = [desired, aliases.get(desired), "GTC", "FAK"]
+    for cand in candidates:
+        if not cand:
+            continue
+        member = getattr(order_type_cls, cand, None)
+        if member is not None:
+            return member
+    try:
+        return next(iter(order_type_cls))
+    except Exception:
+        return desired
+
+
+def _extract_order_id(response: Any) -> Optional[str]:
+    candidates = (
+        "order_id",
+        "orderId",
+        "orderID",
+        "id",
+        "orderHash",
+        "order_hash",
+        "hash",
+    )
+
+    visited: set[int] = set()
+
+    def walk(obj: Any, allow_plain_string: bool = False) -> Optional[str]:
+        if obj is None:
+            return None
+        if isinstance(obj, (str, bytes, bytearray)):
+            if not allow_plain_string:
+                return None
+            text = obj.decode() if isinstance(obj, (bytes, bytearray)) else obj
+            text = text.strip()
+            return text or None
+
+        obj_id = id(obj)
+        if obj_id in visited:
+            return None
+        visited.add(obj_id)
+
+        if isinstance(obj, dict):
+            for key in candidates:
+                cand = obj.get(key)
+                if cand not in (None, ""):
+                    return str(cand)
+            for value in obj.values():
+                found = walk(value, allow_plain_string=False)
+                if found:
+                    return found
+            return None
+
+        if isinstance(obj, (list, tuple, set)):
+            for item in obj:
+                found = walk(item, allow_plain_string=False)
+                if found:
+                    return found
+            return None
+
+        for key in candidates:
+            try:
+                cand = getattr(obj, key)
+            except AttributeError:
+                continue
+            if cand not in (None, ""):
+                return str(cand)
+
+        to_dict = getattr(obj, "_asdict", None)
+        if callable(to_dict):
+            try:
+                return walk(to_dict(), allow_plain_string=False)
+            except Exception:
+                return None
+
+        if hasattr(obj, "__dict__"):
+            return walk(vars(obj), allow_plain_string=False)
+
+        return None
+
+    return walk(response, allow_plain_string=True)
 
 
 def _round_up_to_dp(value: float, dp: int) -> float:
