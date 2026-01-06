@@ -333,12 +333,11 @@ class MakerEngine:
                         token_id,
                         capped_order_size,
                         poll_sec=poll_sec,
-                    min_quote_amt=min_quote_amount,
-                    min_order_size=min_order_size,
-                    stop_check=_stop,
-                    logger=self._logger,
-                    best_bid_fn=best_bid_fn,
-                )
+                        min_quote_amt=min_quote_amount,
+                        min_order_size=min_order_size,
+                        stop_check=_stop,
+                        best_bid_fn=best_bid_fn,
+                    )
                 except Exception as exc:
                     self._record_error(token_id, f"BUY 执行异常: {exc}")
                     session.strategy.on_reject(str(exc))
