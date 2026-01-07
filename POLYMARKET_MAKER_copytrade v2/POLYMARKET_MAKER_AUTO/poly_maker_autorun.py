@@ -3,12 +3,11 @@ poly_maker_autorun
 -------------------
 
 基础骨架：配置加载、主循环、命令/交互入口。
-后续步骤将补充筛选对接、历史去重、子进程调度等能力。
+当前版本通过外部注入 topics/token 列表触发调度，不再内置筛选逻辑。
 """
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import json
 import math
 import random
@@ -24,8 +23,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import Customize_fliter_blacklist as filter_script
-
 # =====================
 # 配置与常量
 # =====================
@@ -39,11 +36,6 @@ DEFAULT_GLOBAL_CONFIG = {
     "log_dir": str(MAKER_ROOT / "logs" / "autorun"),
     "data_dir": str(MAKER_ROOT / "data"),
     "handled_topics_path": str(MAKER_ROOT / "data" / "handled_topics.json"),
-    "filter_output_path": str(MAKER_ROOT / "data" / "topics_filtered.json"),
-    "filter_params_path": str(MAKER_ROOT / "config" / "filter_params.json"),
-    "filter_timeout_sec": None,
-    "filter_max_retries": 1,
-    "filter_retry_delay_sec": 3.0,
     "process_start_retries": 1,
     "process_retry_delay_sec": 2.0,
     "process_graceful_timeout_sec": 5.0,
@@ -53,17 +45,23 @@ DEFAULT_GLOBAL_CONFIG = {
     "runtime_status_path": str(MAKER_ROOT / "data" / "autorun_status.json"),
 }
 
-FILTER_CONFIG_RELOAD_INTERVAL_SEC = 3600
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 
 
 def _topic_id_from_entry(entry: Any) -> str:
-    """从筛选结果条目中提取 topic_id/slug，兼容字符串或 dict。"""
+    """从外部注入条目中提取 topic_id/token_id/token_key。"""
 
     if isinstance(entry, str):
         return entry
     if isinstance(entry, dict):
-        return str(entry.get("slug") or entry.get("topic_id") or "").strip()
+        for key in ("topic_id", "token_id", "token_key", "slug", "condition_id"):
+            value = entry.get(key)
+            if value:
+                return str(value).strip()
+        condition_id = entry.get("condition_id")
+        outcome_index = entry.get("outcome_index")
+        if condition_id is not None and outcome_index is not None:
+            return f"{condition_id}:{outcome_index}"
     return str(entry).strip()
 
 
@@ -160,17 +158,6 @@ def write_handled_topics(path: Path, topics: set[str]) -> None:
     _dump_json_file(path, payload)
 
 
-def compute_new_topics(latest: List[Any], handled: set[str]) -> List[str]:
-    """从最新筛选结果中筛出尚未处理的话题列表。"""
-
-    result: List[str] = []
-    for entry in latest:
-        topic_id = _topic_id_from_entry(entry)
-        if topic_id and topic_id not in handled:
-            result.append(topic_id)
-    return result
-
-
 @dataclass
 class GlobalConfig:
     topics_poll_sec: float = DEFAULT_GLOBAL_CONFIG["topics_poll_sec"]
@@ -181,15 +168,6 @@ class GlobalConfig:
     handled_topics_path: Path = field(
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["handled_topics_path"])
     )
-    filter_output_path: Path = field(
-        default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["filter_output_path"])
-    )
-    filter_params_path: Path = field(
-        default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["filter_params_path"])
-    )
-    filter_timeout_sec: Optional[float] = DEFAULT_GLOBAL_CONFIG["filter_timeout_sec"]
-    filter_max_retries: int = DEFAULT_GLOBAL_CONFIG["filter_max_retries"]
-    filter_retry_delay_sec: float = DEFAULT_GLOBAL_CONFIG["filter_retry_delay_sec"]
     process_start_retries: int = DEFAULT_GLOBAL_CONFIG["process_start_retries"]
     process_retry_delay_sec: float = DEFAULT_GLOBAL_CONFIG["process_retry_delay_sec"]
     process_graceful_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
@@ -224,16 +202,6 @@ class GlobalConfig:
             or paths.get("handled_topics_file")
             or data_dir / "handled_topics.json"
         )
-        filter_output_path = Path(
-            merged.get("filter_output_path")
-            or paths.get("filter_output_file")
-            or data_dir / "topics_filtered.json"
-        )
-        filter_params_path = Path(
-            merged.get("filter_params_path")
-            or paths.get("filter_params_file")
-            or MAKER_ROOT / "config" / "filter_params.json"
-        )
         runtime_status_path = Path(
             merged.get("runtime_status_path")
             or paths.get("run_state_file")
@@ -257,15 +225,6 @@ class GlobalConfig:
             log_dir=log_dir,
             data_dir=data_dir,
             handled_topics_path=handled_topics_path,
-            filter_output_path=filter_output_path,
-            filter_params_path=filter_params_path,
-            filter_timeout_sec=cls._parse_timeout(
-                merged.get("filter_timeout_sec", cls.filter_timeout_sec)
-            ),
-            filter_max_retries=int(merged.get("filter_max_retries", cls.filter_max_retries)),
-            filter_retry_delay_sec=float(
-                merged.get("filter_retry_delay_sec", cls.filter_retry_delay_sec)
-            ),
             process_start_retries=int(
                 merged.get("process_start_retries", cls.process_start_retries)
             ),
@@ -289,132 +248,10 @@ class GlobalConfig:
             runtime_status_path=runtime_status_path,
         )
 
-    @staticmethod
-    def _parse_timeout(value: Any) -> Optional[float]:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except Exception:
-            return None
-
     def ensure_dirs(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-
-@dataclass
-class HighlightConfig:
-    max_hours: Optional[float] = 72.0
-    ask_min: Optional[float] = 0.80
-    ask_max: Optional[float] = 0.99
-    min_total_volume: Optional[float] = 20000.0
-    max_ask_diff: Optional[float] = 0.2
-
-    @classmethod
-    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "HighlightConfig":
-        data = data or {}
-        return cls(
-            max_hours=data.get("max_hours", cls.max_hours),
-            ask_min=data.get("ask_min", cls.ask_min),
-            ask_max=data.get("ask_max", cls.ask_max),
-            min_total_volume=data.get("min_total_volume", cls.min_total_volume),
-            max_ask_diff=data.get("max_ask_diff", cls.max_ask_diff),
-        )
-
-    def apply_to_filter(self) -> None:
-        if self.max_hours is not None:
-            filter_script.HIGHLIGHT_MAX_HOURS = float(self.max_hours)
-        if self.ask_min is not None:
-            filter_script.HIGHLIGHT_ASK_MIN = float(self.ask_min)
-        if self.ask_max is not None:
-            filter_script.HIGHLIGHT_ASK_MAX = float(self.ask_max)
-        if self.min_total_volume is not None:
-            filter_script.HIGHLIGHT_MIN_TOTAL_VOLUME = float(self.min_total_volume)
-        if self.max_ask_diff is not None:
-            filter_script.HIGHLIGHT_MAX_ASK_DIFF = float(self.max_ask_diff)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "max_hours": self.max_hours,
-            "ask_min": self.ask_min,
-            "ask_max": self.ask_max,
-            "min_total_volume": self.min_total_volume,
-            "max_ask_diff": self.max_ask_diff,
-        }
-
-
-@dataclass
-class FilterConfig:
-    min_end_hours: float = filter_script.DEFAULT_MIN_END_HOURS
-    max_end_days: int = 5
-    gamma_window_days: int = 2
-    gamma_min_window_hours: int = 1
-    legacy_end_days: int = filter_script.DEFAULT_LEGACY_END_DAYS
-    allow_illiquid: bool = False
-    skip_orderbook: bool = False
-    no_rest_backfill: bool = False
-    books_batch_size: int = 200
-    books_timeout_sec: float = 5.0
-    only: str = ""
-    blacklist_terms: List[str] = field(
-        default_factory=lambda: list(filter_script.DEFAULT_BLACKLIST_TERMS)
-    )
-    highlight: HighlightConfig = field(default_factory=HighlightConfig)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "FilterConfig":
-        data = data or {}
-        highlight_conf = HighlightConfig.from_dict(data.get("highlight"))
-        return cls(
-            min_end_hours=float(data.get("min_end_hours", cls.min_end_hours)),
-            max_end_days=int(data.get("max_end_days", cls.max_end_days)),
-            gamma_window_days=int(data.get("gamma_window_days", cls.gamma_window_days)),
-            gamma_min_window_hours=int(data.get("gamma_min_window_hours", cls.gamma_min_window_hours)),
-            legacy_end_days=int(data.get("legacy_end_days", cls.legacy_end_days)),
-            allow_illiquid=bool(data.get("allow_illiquid", cls.allow_illiquid)),
-            skip_orderbook=bool(data.get("skip_orderbook", cls.skip_orderbook)),
-            no_rest_backfill=bool(data.get("no_rest_backfill", cls.no_rest_backfill)),
-            books_batch_size=int(data.get("books_batch_size", cls.books_batch_size)),
-            books_timeout_sec=float(
-                data.get("books_timeout_sec", cls.books_timeout_sec)
-            ),
-            only=str(data.get("only", cls.only)),
-            blacklist_terms=[
-                str(t).strip()
-                for t in data.get("blacklist_terms", filter_script.DEFAULT_BLACKLIST_TERMS)
-                if str(t).strip()
-            ],
-            highlight=highlight_conf,
-        )
-
-    def to_filter_kwargs(self) -> Dict[str, Any]:
-        return {
-            "min_end_hours": self.min_end_hours,
-            "max_end_days": self.max_end_days,
-            "gamma_window_days": self.gamma_window_days,
-            "gamma_min_window_hours": self.gamma_min_window_hours,
-            "legacy_end_days": self.legacy_end_days,
-            "allow_illiquid": self.allow_illiquid,
-            "skip_orderbook": self.skip_orderbook,
-            "no_rest_backfill": self.no_rest_backfill,
-            "books_batch_size": self.books_batch_size,
-            "books_timeout": self.books_timeout_sec,
-            "only": self.only,
-            "blacklist_terms": self.blacklist_terms,
-        }
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            **self.to_filter_kwargs(),
-            "highlight": self.highlight.to_dict(),
-        }
-
-    def apply_highlight(self) -> None:
-        self.highlight.apply_to_filter()
-
-    def apply_blacklist(self) -> None:
-        filter_script.set_blacklist_terms(self.blacklist_terms)
 
 
 @dataclass
@@ -446,12 +283,10 @@ class AutoRunManager:
         self,
         global_config: GlobalConfig,
         strategy_defaults: Dict[str, Any],
-        filter_config: FilterConfig,
         run_params_template: Dict[str, Any],
     ):
         self.config = global_config
         self.strategy_defaults = strategy_defaults
-        self.filter_config = filter_config
         self.run_params_template = run_params_template or {}
         self.stop_event = threading.Event()
         self.command_queue: "queue.Queue[str]" = queue.Queue()
@@ -460,12 +295,10 @@ class AutoRunManager:
         self.topic_details: Dict[str, Dict[str, Any]] = {}
         self.handled_topics: set[str] = set()
         self.pending_topics: List[str] = []
-        self._next_topics_refresh: float = 0.0
         self._next_status_dump: float = 0.0
-        self._next_filter_reload: float = 0.0
-        self._filter_conf_mtime: Optional[float] = None
         self._next_topic_start_at: float = 0.0
         self.status_path = self.config.runtime_status_path
+        self._lock = threading.RLock()
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -480,11 +313,7 @@ class AutoRunManager:
                     self._process_commands()
                     self._poll_tasks()
                     self._schedule_pending_topics()
-                    self._maybe_reload_filter_config(now)
                     self._purge_inactive_tasks()
-                    if now >= self._next_topics_refresh:
-                        self._refresh_topics()
-                        self._next_topics_refresh = now + self.config.topics_poll_sec
                     if now >= self._next_status_dump:
                         self._print_status()
                         self._dump_runtime_status()
@@ -610,39 +439,32 @@ class AutoRunManager:
         return any(p.lower() in excerpt for p in patterns)
 
     def _schedule_pending_topics(self) -> None:
-        running = sum(1 for t in self.tasks.values() if t.is_running())
-        while (
-            self.pending_topics
-            and running < max(1, int(self.config.max_concurrent_tasks))
-        ):
-            now = time.time()
-            if now < self._next_topic_start_at:
-                break
-            topic_id = self.pending_topics.pop(0)
-            if topic_id in self.tasks and self.tasks[topic_id].is_running():
-                continue
-            try:
-                started = self._start_topic_process(topic_id)
-            except Exception as exc:  # pragma: no cover - 防御性保护
-                print(f"[ERROR] 调度话题 {topic_id} 时异常: {exc}")
-                traceback.print_exc()
-                started = False
-            if not started and topic_id not in self.pending_topics:
-                # 启动失败时重新入队，避免话题被遗忘
-                self.pending_topics.append(topic_id)
-            elif started:
-                self._next_topic_start_at = now + max(
-                    0.0, float(self.config.topic_start_cooldown_sec)
-                )
+        with self._lock:
             running = sum(1 for t in self.tasks.values() if t.is_running())
-
-    def _get_order_base_volume(self) -> Optional[float]:
-        highlight_conf = getattr(self.filter_config, "highlight", None)
-        base_volume = getattr(highlight_conf, "min_total_volume", None)
-        base_volume = _coerce_float(base_volume)
-        if base_volume is None or base_volume <= 0:
-            return None
-        return base_volume
+            while (
+                self.pending_topics
+                and running < max(1, int(self.config.max_concurrent_tasks))
+            ):
+                now = time.time()
+                if now < self._next_topic_start_at:
+                    break
+                topic_id = self.pending_topics.pop(0)
+                if topic_id in self.tasks and self.tasks[topic_id].is_running():
+                    continue
+                try:
+                    started = self._start_topic_process(topic_id)
+                except Exception as exc:  # pragma: no cover - 防御性保护
+                    print(f"[ERROR] 调度话题 {topic_id} 时异常: {exc}")
+                    traceback.print_exc()
+                    started = False
+                if not started and topic_id not in self.pending_topics:
+                    # 启动失败时重新入队，避免话题被遗忘
+                    self.pending_topics.append(topic_id)
+                elif started:
+                    self._next_topic_start_at = now + max(
+                        0.0, float(self.config.topic_start_cooldown_sec)
+                    )
+                running = sum(1 for t in self.tasks.values() if t.is_running())
 
     def _build_run_config(self, topic_id: str) -> Dict[str, Any]:
         base_template_raw = json.loads(json.dumps(self.run_params_template or {}))
@@ -661,8 +483,9 @@ class AutoRunManager:
         merged = {**base_template, **base, **topic_overrides}
 
         topic_info = self.topic_details.get(topic_id, {})
-        slug = topic_info.get("slug") or topic_id
-        merged["market_url"] = f"https://polymarket.com/market/{slug}"
+        topic_source = self._topic_source_from_payload(topic_info)
+        if topic_source:
+            merged["market_url"] = topic_source
         merged["topic_id"] = topic_id
 
         if topic_info.get("title"):
@@ -674,14 +497,9 @@ class AutoRunManager:
         if topic_info.get("end_time"):
             merged["end_time"] = topic_info.get("end_time")
 
-        highlight_sides = topic_info.get("highlight_sides") or []
-        preferred_side = topic_info.get("preferred_side") or None
-        if preferred_side is None and highlight_sides:
-            preferred_side = highlight_sides[0]
+        preferred_side = self._resolve_topic_side(topic_info)
         if preferred_side:
             merged["side"] = preferred_side
-        if highlight_sides:
-            merged["highlight_sides"] = highlight_sides
 
         base_order_size = _coerce_float(merged.get("order_size"))
         total_volume = _coerce_float(topic_info.get("total_volume"))
@@ -690,13 +508,54 @@ class AutoRunManager:
             scaled_size = _scale_order_size_by_volume(
                 base_order_size,
                 total_volume,
-                base_volume=self._get_order_base_volume(),
+                base_volume=None,
                 growth_factor=volume_growth_factor
                 if volume_growth_factor is not None and volume_growth_factor > 0
                 else 0.5,
             )
             merged["order_size"] = scaled_size
         return merged
+
+    def _resolve_topic_side(self, topic_info: Dict[str, Any]) -> Optional[str]:
+        raw_side = topic_info.get("side") or topic_info.get("outcome") or topic_info.get("outcome_name")
+        if isinstance(raw_side, str) and raw_side.strip():
+            side = raw_side.strip().upper()
+            if side in {"YES", "NO"}:
+                return side
+        outcome_index = topic_info.get("outcome_index")
+        if outcome_index is not None:
+            try:
+                idx = int(outcome_index)
+            except (TypeError, ValueError):
+                idx = None
+            if idx == 0:
+                return "YES"
+            if idx == 1:
+                return "NO"
+        return None
+
+    def _topic_source_from_payload(self, topic_info: Dict[str, Any]) -> Optional[str]:
+        source = (
+            topic_info.get("market_url")
+            or topic_info.get("source")
+            or topic_info.get("url")
+        )
+        if isinstance(source, str) and source.strip():
+            return source.strip()
+        yes_token = topic_info.get("yes_token")
+        no_token = topic_info.get("no_token")
+        if yes_token or no_token:
+            return f"{yes_token or ''},{no_token or ''}".strip()
+        token_id = topic_info.get("token_id")
+        side = self._resolve_topic_side(topic_info)
+        if token_id and side == "YES":
+            return f"{token_id},"
+        if token_id and side == "NO":
+            return f",{token_id}"
+        slug = topic_info.get("slug")
+        if slug:
+            return f"https://polymarket.com/market/{slug}"
+        return None
 
     def _start_topic_process(self, topic_id: str) -> bool:
         config_data = self._build_run_config(topic_id)
@@ -765,6 +624,33 @@ class AutoRunManager:
         print(f"[START] topic={topic_id} pid={proc.pid} log={log_path}")
         return True
 
+    def start_topics(self, topics: List[Dict[str, Any]]) -> List[str]:
+        started: List[str] = []
+        with self._lock:
+            for entry in topics:
+                topic_id = _topic_id_from_entry(entry)
+                if not topic_id:
+                    continue
+                self.topic_details[topic_id] = entry
+                if topic_id in self.pending_topics:
+                    continue
+                if topic_id in self.tasks and self.tasks[topic_id].is_running():
+                    continue
+                self.pending_topics.append(topic_id)
+                started.append(topic_id)
+        return started
+
+    def stop_topics(self, topics: List[Any]) -> List[str]:
+        stopped: List[str] = []
+        with self._lock:
+            for entry in topics:
+                topic_id = _topic_id_from_entry(entry)
+                if not topic_id:
+                    continue
+                self._stop_topic(topic_id)
+                stopped.append(topic_id)
+        return stopped
+
     # ========== 历史记录 ==========
     def _load_handled_topics(self) -> None:
         self.handled_topics = read_handled_topics(self.config.handled_topics_path)
@@ -779,8 +665,9 @@ class AutoRunManager:
     def _update_handled_topics(self, new_topics: List[str]) -> None:
         if not new_topics:
             return
-        self.handled_topics.update(new_topics)
-        write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+        with self._lock:
+            self.handled_topics.update(new_topics)
+            write_handled_topics(self.config.handled_topics_path, self.handled_topics)
 
     # ========== 命令处理 ==========
     def enqueue_command(self, command: str) -> None:
@@ -809,9 +696,6 @@ class AutoRunManager:
         if cmd.startswith("stop "):
             _, topic_id = cmd.split(" ", 1)
             self._stop_topic(topic_id.strip())
-            return
-        if cmd == "refresh":
-            self._refresh_topics()
             return
         print(f"[WARN] 未识别命令: {cmd}")
 
@@ -860,13 +744,15 @@ class AutoRunManager:
         task.end_reason = "stopped by user"
         # 标记为已处理，避免后续 refresh 把同一话题再次入队
         if topic_id not in self.handled_topics:
-            self.handled_topics.add(topic_id)
-            write_handled_topics(self.config.handled_topics_path, self.handled_topics)
-        if topic_id in self.pending_topics:
-            try:
-                self.pending_topics.remove(topic_id)
-            except ValueError:
-                pass
+            with self._lock:
+                self.handled_topics.add(topic_id)
+                write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+        with self._lock:
+            if topic_id in self.pending_topics:
+                try:
+                    self.pending_topics.remove(topic_id)
+                except ValueError:
+                    pass
         self._terminate_task(task, reason="stopped by user")
         self._purge_inactive_tasks()
         print(f"[CHOICE] stop topic={topic_id}")
@@ -910,54 +796,24 @@ class AutoRunManager:
         """移除已停止/结束且不再需要展示的任务。"""
 
         removable: List[str] = []
-        for topic_id, task in list(self.tasks.items()):
-            if task.is_running():
-                continue
-            if task.status in {"stopped", "ended", "exited", "error"} or task.no_restart:
-                removable.append(topic_id)
+        with self._lock:
+            for topic_id, task in list(self.tasks.items()):
+                if task.is_running():
+                    continue
+                if task.status in {"stopped", "ended", "exited", "error"} or task.no_restart:
+                    removable.append(topic_id)
 
         if not removable:
             return
 
-        for topic_id in removable:
-            self.tasks.pop(topic_id, None)
-            if topic_id in self.pending_topics:
-                try:
-                    self.pending_topics.remove(topic_id)
-                except ValueError:
-                    pass
-
-    def _refresh_topics(self) -> None:
-        try:
-            self.latest_topics = run_filter_once(
-                self.filter_config,
-                self.config.filter_output_path,
-                timeout_sec=self.config.filter_timeout_sec,
-                max_retries=self.config.filter_max_retries,
-                retry_delay_sec=self.config.filter_retry_delay_sec,
-            )
-            self.topic_details = {
-                _topic_id_from_entry(item): item
-                for item in self.latest_topics
-                if _topic_id_from_entry(item)
-            }
-            new_topics = compute_new_topics(self.latest_topics, self.handled_topics)
-            if new_topics:
-                preview = ", ".join(new_topics[:5])
-                print(
-                    f"[INCR] 新话题 {len(new_topics)} 个，将更新历史记录 preview={preview}"
-                )
-                for topic_id in new_topics:
-                    if topic_id in self.pending_topics:
-                        continue
-                    if topic_id in self.tasks and self.tasks[topic_id].is_running():
-                        continue
-                    self.pending_topics.append(topic_id)
-            else:
-                print("[INCR] 无新增话题")
-        except Exception as exc:  # pragma: no cover - 网络/外部依赖
-            print(f"[ERROR] 筛选流程失败：{exc}")
-            self.latest_topics = []
+        with self._lock:
+            for topic_id in removable:
+                self.tasks.pop(topic_id, None)
+                if topic_id in self.pending_topics:
+                    try:
+                        self.pending_topics.remove(topic_id)
+                    except ValueError:
+                        pass
 
     def _cleanup_all_tasks(self) -> None:
         for task in list(self.tasks.values()):
@@ -965,36 +821,8 @@ class AutoRunManager:
                 print(f"[CLEAN] 停止 topic={task.topic_id} ...")
                 self._terminate_task(task, reason="cleanup")
         # 写回 handled_topics，确保最新状态落盘
-        write_handled_topics(self.config.handled_topics_path, self.handled_topics)
-
-    def _maybe_reload_filter_config(self, now: Optional[float] = None) -> None:
-        if now is None:
-            now = time.time()
-        if now < self._next_filter_reload:
-            return
-
-        self._next_filter_reload = now + FILTER_CONFIG_RELOAD_INTERVAL_SEC
-
-        try:
-            current_mtime = self.config.filter_params_path.stat().st_mtime
-        except OSError:
-            print(
-                f"[WARN] 无法访问筛选配置文件：{self.config.filter_params_path}，保留现有配置。"
-            )
-            return
-
-        if self._filter_conf_mtime is not None and current_mtime <= self._filter_conf_mtime:
-            return
-
-        try:
-            filter_conf_raw = _load_json_file(self.config.filter_params_path)
-            self.filter_config = FilterConfig.from_dict(filter_conf_raw)
-            self._filter_conf_mtime = current_mtime
-            print(
-                f"[CONFIG] 已重新加载筛选配置（每 {FILTER_CONFIG_RELOAD_INTERVAL_SEC // 60:.0f} 分钟轮询一次）。"
-            )
-        except Exception as exc:  # pragma: no cover - 文件读取/解析异常
-            print(f"[WARN] 重载筛选配置失败，将继续使用旧配置：{exc}")
+        with self._lock:
+            write_handled_topics(self.config.handled_topics_path, self.handled_topics)
 
     def _restore_runtime_status(self) -> None:
         """尝试从上次运行的状态文件恢复待处理队列等信息。"""
@@ -1011,20 +839,19 @@ class AutoRunManager:
             return
 
         if handled_topics:
-            self.handled_topics.update(str(t) for t in handled_topics)
+            with self._lock:
+                self.handled_topics.update(str(t) for t in handled_topics)
 
         restored_topics: List[str] = []
         for topic_id in pending_topics:
             topic_id = str(topic_id)
-            if topic_id in self.pending_topics or topic_id in self.handled_topics:
+            if topic_id in self.pending_topics:
                 continue
             restored_topics.append(topic_id)
             self.pending_topics.append(topic_id)
 
         for topic_id, info in tasks_snapshot.items():
             topic_id = str(topic_id)
-            if topic_id in self.handled_topics:
-                continue
             if topic_id not in self.pending_topics:
                 restored_topics.append(topic_id)
                 self.pending_topics.append(topic_id)
@@ -1130,12 +957,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="策略参数模板 JSON 路径",
     )
     parser.add_argument(
-        "--filter-config",
-        type=Path,
-        default=MAKER_ROOT / "config" / "filter_params.json",
-        help="筛选参数配置 JSON 路径",
-    )
-    parser.add_argument(
         "--run-config-template",
         type=Path,
         default=MAKER_ROOT / "config" / "run_params.json",
@@ -1156,112 +977,22 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def load_configs(
     args: argparse.Namespace,
-) -> tuple[GlobalConfig, Dict[str, Any], FilterConfig, Dict[str, Any]]:
+) -> tuple[GlobalConfig, Dict[str, Any], Dict[str, Any]]:
     global_conf_raw = _load_json_file(args.global_config)
     strategy_conf_raw = _load_json_file(args.strategy_config)
-    filter_conf_raw = _load_json_file(args.filter_config)
     run_params_template = _load_json_file(args.run_config_template)
     return (
         GlobalConfig.from_dict(global_conf_raw),
         strategy_conf_raw,
-        FilterConfig.from_dict(filter_conf_raw),
         run_params_template,
     )
 
 
-def run_filter_once(
-    filter_conf: FilterConfig,
-    output_path: Path,
-    *,
-    timeout_sec: Optional[float] = None,
-    max_retries: int = 0,
-    retry_delay_sec: float = 3.0,
-) -> List[Dict[str, Any]]:
-    """调用筛选脚本，落盘 JSON，并返回话题列表，带超时与可选重试。"""
-
-    filter_conf.apply_blacklist()
-    filter_conf.apply_highlight()
-
-    attempts = max(1, int(max_retries) + 1)
-    for attempt in range(1, attempts + 1):
-        timeout_label = f"{timeout_sec}s" if timeout_sec is not None else "no-timeout"
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    filter_script.collect_filter_results, **filter_conf.to_filter_kwargs()
-                )
-                result = (
-                    future.result(timeout=timeout_sec)
-                    if timeout_sec is not None
-                    else future.result()
-                )
-            break
-        except concurrent.futures.TimeoutError as exc:  # pragma: no cover - 线程超时
-            print(
-                "[WARN] 筛选调用超时（{} 内未返回，通常为 Gamma/clob 接口无响应或窗口过大）".format(
-                    timeout_label
-                )
-            )
-            if attempt >= attempts:
-                raise
-            time.sleep(retry_delay_sec)
-        except Exception as exc:  # pragma: no cover - 网络/线程异常
-            print(
-                f"[WARN] 筛选调用失败（尝试 {attempt}/{attempts}，timeout={timeout_label}）: {exc}"
-            )
-            if attempt >= attempts:
-                raise
-            time.sleep(retry_delay_sec)
-
-    highlight_map: Dict[str, List[str]] = {}
-    for ho in result.highlights:
-        slug = ho.market.slug
-        side = (ho.outcome.name or "").upper()
-        if not side:
-            continue
-        highlight_map.setdefault(slug, []).append(side)
-
-    topics: List[Dict[str, Any]] = []
-    for ms in result.chosen:
-        highlight_sides = highlight_map.get(ms.slug, [])
-        if not highlight_sides:
-            # 仅保留命中高亮条件的市场，避免不满足高亮口径的条目进入 topics 列表
-            continue
-        preferred_side = highlight_sides[0]
-        topics.append(
-            {
-                "slug": ms.slug,
-                "title": ms.title,
-                "yes_token": ms.yes.token_id,
-                "no_token": ms.no.token_id,
-                "end_time": ms.end_time.isoformat() if ms.end_time else None,
-                "liquidity": ms.liquidity,
-                "total_volume": ms.totalVolume,
-                "preferred_side": preferred_side,
-                "highlight_sides": highlight_sides,
-            }
-        )
-
-    payload = {
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "params": filter_conf.to_dict(),
-        "total_markets": result.total_markets,
-        "candidates": len(result.candidates),
-        "chosen": len(result.chosen),
-        "rejected": len(result.rejected),
-        "highlights": len(result.highlights),
-        "topics": topics,
-    }
-    _dump_json_file(output_path, payload)
-    print(f"[FILTER] 已写入筛选结果到 {output_path}，共 {len(topics)} 个话题")
-    return topics
-
-
 def main(argv: Optional[List[str]] = None) -> None:
     args = parse_args(argv)
-    global_conf, strategy_conf, filter_conf, run_params_template = load_configs(args)
+    global_conf, strategy_conf, run_params_template = load_configs(args)
 
-    manager = AutoRunManager(global_conf, strategy_conf, filter_conf, run_params_template)
+    manager = AutoRunManager(global_conf, strategy_conf, run_params_template)
 
     def _handle_sigterm(signum: int, frame: Any) -> None:  # pragma: no cover - 信号处理不可测
         print(f"\n[WARN] signal {signum} received, exiting...")
