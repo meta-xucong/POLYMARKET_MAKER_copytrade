@@ -5,10 +5,10 @@
     "task_timeout_seconds": 240
   },
   "paths": {
-    "log_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade v2/logs",
-    "data_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade v2/logs",
-    "order_history_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade v2/logsorder_history.jsonl",
-    "run_state_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade v2/logs/run_state.json"
+    "log_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/logs",
+    "data_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/logs",
+    "order_history_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/logsorder_history.jsonl",
+    "run_state_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/logs/run_state.json"
   },
   "retry_strategy": {
     "max_attempts": 4,
