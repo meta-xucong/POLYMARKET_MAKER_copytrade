@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+V2_ROOT = Path(__file__).resolve().parent
+V1_ROOT = V2_ROOT / "POLYMARKET_MAKER_copytrade_v1"
+if str(V1_ROOT) not in sys.path:
+    sys.path.insert(0, str(V1_ROOT))
 
 from smartmoney_query.api_client import DataApiClient
 
