@@ -9,9 +9,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 V2_ROOT = Path(__file__).resolve().parent
+V1_COPYTRADE_ROOT = V2_ROOT / "POLYMARKET_MAKER_copytrade_v1"
 LEGACY_COPYTRADE_ROOT = V2_ROOT.parent / "POLYMARKET_MAKER_copytrade"
-COPYTRADE_ROOT = LEGACY_COPYTRADE_ROOT
 AUTO_ROOT = V2_ROOT / "POLYMARKET_MAKER_AUTO"
+
+if V1_COPYTRADE_ROOT.exists():
+    COPYTRADE_ROOT = V1_COPYTRADE_ROOT
+else:
+    COPYTRADE_ROOT = LEGACY_COPYTRADE_ROOT
 
 if str(COPYTRADE_ROOT) not in sys.path:
     sys.path.insert(0, str(COPYTRADE_ROOT))
