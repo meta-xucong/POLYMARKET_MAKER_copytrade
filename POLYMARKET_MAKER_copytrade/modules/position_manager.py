@@ -125,6 +125,13 @@ class PositionManager:
             )
         return snapshot
 
+    def fetch_position_size(self, token_id: str) -> Optional[float]:
+        try:
+            return self._fetch_position_size(token_id)
+        except Exception as exc:
+            self._log("warning", f"[position] 拉取仓位失败 token_id={token_id}: {exc}")
+            return None
+
     def _close_one(self, token_id: str, position_size: float) -> None:
         poll_sec = float(self._config.get("poll_interval_sec", 10))
         exit_poll_sec = float(self._config.get("exit_poll_interval_sec") or poll_sec)
