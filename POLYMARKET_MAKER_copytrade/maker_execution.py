@@ -1239,6 +1239,7 @@ def maker_sell_follow_ask_with_floor_wait(
     sell_mode: str = "conservative",
     aggressive_step: float = 0.01,
     aggressive_timeout: float = 300.0,
+    logger: Optional[Any] = None,
     progress_probe: Optional[Callable[[], None]] = None,
     progress_probe_interval: float = 60.0,
     position_fetcher: Optional[Callable[[], Optional[float]]] = None,
