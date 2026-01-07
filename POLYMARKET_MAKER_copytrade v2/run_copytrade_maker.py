@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 V2_ROOT = Path(__file__).resolve().parent
-COPYTRADE_ROOT = V2_ROOT / "copytrade"
-AUTO_ROOT = V2_ROOT / "POLYMARKET_MAKER_AUTO"
 LEGACY_COPYTRADE_ROOT = V2_ROOT.parent / "POLYMARKET_MAKER_copytrade"
+COPYTRADE_ROOT = LEGACY_COPYTRADE_ROOT
+AUTO_ROOT = V2_ROOT / "POLYMARKET_MAKER_AUTO"
 
 if str(COPYTRADE_ROOT) not in sys.path:
     sys.path.insert(0, str(COPYTRADE_ROOT))
@@ -47,7 +47,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--copytrade-output",
         type=Path,
-        default=COPYTRADE_ROOT / "data" / "copytrade_topics.json",
+        default=V2_ROOT / "data" / "copytrade_topics.json",
         help="copytrade 输出 topics JSON 路径",
     )
     parser.add_argument(
