@@ -363,17 +363,26 @@ class MakerEngine:
 
                 filled = float(buy_result.get("filled") or 0.0)
                 avg_price = buy_result.get("avg_price")
-                if filled <= 0 or not avg_price:
+                if filled <= 0:
                     self._log("info", f"[maker] BUY 未成交 token_id={token_id}")
                     session.strategy.on_reject("not_filled")
                     time.sleep(refresh_interval)
                     continue
+                if avg_price is None:
+                    avg_price = float(best_bid)
+                    self._log(
+                        "warning",
+                        f"[maker] BUY 成交均价缺失，使用参考价={avg_price:.6f} token_id={token_id}",
+                    )
 
-                session.strategy.on_buy_filled(float(avg_price), size=filled)
                 with self._lock:
-                    session.open_size = filled
+                    new_total_position = max(session.open_size + filled, filled)
+                    session.open_size = new_total_position
                     session.last_buy_price = float(avg_price)
                     session.last_status = "BOUGHT"
+                session.strategy.on_buy_filled(
+                    float(avg_price), size=filled, total_position=new_total_position
+                )
                 self._record_cumulative_buy(session, filled, float(avg_price))
 
             elif action.action == ActionType.SELL:
