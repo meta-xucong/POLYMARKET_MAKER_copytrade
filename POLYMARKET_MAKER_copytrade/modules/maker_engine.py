@@ -50,6 +50,7 @@ class MakerEngine:
         ws_cache: Optional[object] = None,
         state: Optional[dict] = None,
         state_lock: Optional[threading.Lock] = None,
+        position_fetcher: Optional[callable] = None,
         logger=None,
     ) -> None:
         self._client = client
@@ -62,6 +63,7 @@ class MakerEngine:
         self._ws_cache = ws_cache
         self._state = state or {}
         self._state_lock = state_lock or threading.Lock()
+        self._position_fetcher = position_fetcher
         self._logger = logger
         self._sessions: Dict[str, MakerSession] = {}
         self._lock = threading.Lock()
@@ -82,6 +84,7 @@ class MakerEngine:
         scheduler_config: Optional[dict] = None,
         orderbook_config: Optional[dict] = None,
         ws_cache: Optional[object] = None,
+        position_fetcher: Optional[callable] = None,
     ) -> None:
         self._config = config
         if run_params is not None:
@@ -98,6 +101,37 @@ class MakerEngine:
             self._orderbook_config = orderbook_config
         if ws_cache is not None:
             self._ws_cache = ws_cache
+        if position_fetcher is not None:
+            self._position_fetcher = position_fetcher
+
+    def update_position_fetcher(self, position_fetcher: Optional[callable]) -> None:
+        self._position_fetcher = position_fetcher
+
+    def _build_position_probe(self, token_id: str) -> Optional[callable]:
+        if not self._position_fetcher:
+            return None
+        refresh_sec = float(
+            self._config.get("buy_position_refresh_sec")
+            or self._config.get("exit_position_refresh_sec")
+            or 30.0
+        )
+        refresh_sec = max(refresh_sec, 0.0)
+        last_ts = 0.0
+        last_val: Optional[float] = None
+
+        def _probe() -> Optional[float]:
+            nonlocal last_ts, last_val
+            now = time.time()
+            if refresh_sec == 0.0 or now - last_ts >= refresh_sec:
+                try:
+                    last_val = self._position_fetcher(token_id)
+                except Exception as exc:
+                    self._log("warning", f"[maker] 持仓校对失败 token_id={token_id}: {exc}")
+                    last_val = None
+                last_ts = now
+            return last_val
+
+        return _probe
 
     def start_topics(self, topics: Iterable[Topic]) -> None:
         for topic in topics:
@@ -335,6 +369,7 @@ class MakerEngine:
             )
 
             if action.action == ActionType.BUY:
+                position_probe = self._build_position_probe(token_id)
                 capped_order_size = self._cap_buy_order_size(session, order_size, best_bid)
                 if capped_order_size <= 0:
                     session.strategy.on_reject("risk_blocked")
@@ -354,6 +389,7 @@ class MakerEngine:
                         min_order_size=min_order_size,
                         stop_check=_stop,
                         best_bid_fn=best_bid_fn,
+                        external_fill_probe=position_probe,
                     )
                 except Exception as exc:
                     self._record_error(token_id, f"BUY 执行异常: {exc}")
@@ -386,6 +422,7 @@ class MakerEngine:
                 self._record_cumulative_buy(session, filled, float(avg_price))
 
             elif action.action == ActionType.SELL:
+                position_probe = self._build_position_probe(token_id)
                 floor_price = session.strategy.sell_trigger_price()
                 if floor_price is None:
                     floor_price = float(best_bid) * (1 + spread_bps / 10000.0)
@@ -411,6 +448,10 @@ class MakerEngine:
                         aggressive_step=aggressive_step,
                         aggressive_timeout=aggressive_timeout,
                         best_ask_fn=best_ask_fn,
+                        position_fetcher=position_probe,
+                        position_refresh_interval=float(
+                            self._config.get("exit_position_refresh_sec") or 30.0
+                        ),
                     )
                 except Exception as exc:
                     self._record_error(token_id, f"SELL 执行异常: {exc}")

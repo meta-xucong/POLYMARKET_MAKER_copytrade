@@ -179,6 +179,7 @@ def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:
         risk_config=risk_cfg,
         logger=logger,
     )
+    maker_engine.update_position_fetcher(position_manager.fetch_position_size)
 
     def _fetch_target_positions() -> tuple[dict[str, float], dict[str, float]]:
         by_key: dict[str, float] = {}
