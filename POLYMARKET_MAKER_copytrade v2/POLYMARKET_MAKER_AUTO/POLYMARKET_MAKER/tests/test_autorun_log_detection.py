@@ -6,8 +6,6 @@ def _build_manager(tmp_path):
         "log_dir": tmp_path / "logs",
         "data_dir": tmp_path / "data",
         "handled_topics_path": tmp_path / "handled.json",
-        "filter_output_path": tmp_path / "topics.json",
-        "filter_params_path": tmp_path / "filter_params.json",
         "runtime_status_path": tmp_path / "status.json",
     }
     global_conf = module.GlobalConfig(
@@ -15,7 +13,7 @@ def _build_manager(tmp_path):
         topics_poll_sec=1.0,
         command_poll_sec=0.1,
     )
-    return module.AutoRunManager(global_conf, {}, module.FilterConfig(), {})
+    return module.AutoRunManager(global_conf, {}, {})
 
 
 def test_log_indicates_missing_side_detection(tmp_path):
