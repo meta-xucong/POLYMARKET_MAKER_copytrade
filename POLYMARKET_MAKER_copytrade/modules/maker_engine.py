@@ -70,7 +70,7 @@ class MakerEngine:
         self._orderbook_cache: Dict[str, Tuple[float, float, float]] = {}
         max_jobs = int(self._scheduler_config.get("max_concurrent_jobs") or 0)
         if max_jobs > 0:
-            self._session_semaphore = threading.Semaphore(max_jobs)
+            self._reset_session_semaphore(max_jobs)
 
     def update_config(
         self,
@@ -93,9 +93,7 @@ class MakerEngine:
         if scheduler_config is not None:
             self._scheduler_config = scheduler_config
             max_jobs = int(self._scheduler_config.get("max_concurrent_jobs") or 0)
-            self._session_semaphore = (
-                threading.Semaphore(max_jobs) if max_jobs > 0 else None
-            )
+            self._reset_session_semaphore(max_jobs)
         if orderbook_config is not None:
             self._orderbook_config = orderbook_config
         if ws_cache is not None:
@@ -263,6 +261,25 @@ class MakerEngine:
         except Exception:
             return
 
+    def _reset_session_semaphore(self, max_jobs: int) -> None:
+        if max_jobs <= 0:
+            self._session_semaphore = None
+            return
+        active = self._active_session_count()
+        self._session_semaphore = threading.Semaphore(max_jobs)
+        to_acquire = min(active, max_jobs)
+        for _ in range(to_acquire):
+            self._session_semaphore.acquire()
+        if active > max_jobs:
+            self._log(
+                "warning",
+                f"[maker] 并发上限已低于当前活跃数 active={active} max={max_jobs}",
+            )
+
+    def _active_session_count(self) -> int:
+        with self._lock:
+            return sum(1 for session in self._sessions.values() if session.thread.is_alive())
+
     def _run_session(self, token_id: str, stop_event: threading.Event) -> None:
         try:
             self._run_session_loop(token_id, stop_event)
@@ -379,14 +396,13 @@ class MakerEngine:
                         position_size,
                         floor_price,
                         poll_sec=poll_sec,
-                    min_order_size=min_order_size,
-                    stop_check=_stop,
-                    sell_mode=sell_mode,
-                    aggressive_step=aggressive_step,
-                    aggressive_timeout=aggressive_timeout,
-                    logger=self._logger,
-                    best_ask_fn=best_ask_fn,
-                )
+                        min_order_size=min_order_size,
+                        stop_check=_stop,
+                        sell_mode=sell_mode,
+                        aggressive_step=aggressive_step,
+                        aggressive_timeout=aggressive_timeout,
+                        best_ask_fn=best_ask_fn,
+                    )
                 except Exception as exc:
                     self._record_error(token_id, f"SELL 执行异常: {exc}")
                     session.strategy.on_reject(str(exc))
