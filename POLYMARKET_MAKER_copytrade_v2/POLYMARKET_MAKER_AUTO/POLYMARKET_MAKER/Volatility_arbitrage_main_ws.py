@@ -225,49 +225,21 @@ def _parse_cli(argv: List[str]) -> Optional[str]:
     return None
 
 def _resolve_ids_via_rest(source: str):
-    import urllib.parse, requests, json
-    GAMMA_API = "https://gamma-api.polymarket.com/markets"
-
-    def _is_url(s: str) -> bool:
-        return s.startswith("http://") or s.startswith("https://")
-
-    def _extract_market_slug(url: str):
-        p = urllib.parse.urlparse(url)
-        parts = [x for x in p.path.split("/") if x]
-        if len(parts) >= 2 and parts[0] == "event":
-            return parts[-1]
-        if len(parts) >= 2 and parts[0] == "market":
-            return parts[1]
-        return None
-
-    if _is_url(source):
-        slug = _extract_market_slug(source)
-        if not slug:
-            raise ValueError("无法从 URL 解析出 market slug")
-        _enforce_rest_rate_limit()
-        r = requests.get(GAMMA_API, params={"limit": 1, "slug": slug}, timeout=10)
-        r.raise_for_status()
-        arr = r.json()
-        if not (isinstance(arr, list) and arr):
-            raise ValueError("gamma-api 未找到该市场")
-        m = arr[0]
-        title = m.get("question") or slug
-        token_ids_raw = m.get("clobTokenIds", "[]")
-        token_ids = json.loads(token_ids_raw) if isinstance(token_ids_raw, str) else (token_ids_raw or [])
-        return [x for x in token_ids if x], title
-
     if "," in source:
         a, b = [x.strip() for x in source.split(",", 1)]
         title = "manual-token-ids"
         return [x for x in (a, b) if x], title
 
-    raise ValueError("未识别的输入。")
+    token_id = source.strip()
+    if token_id:
+        return [token_id], "token-id"
+    raise ValueError("未识别的输入，请传入 token_id 或 'YES_id,NO_id'。")
 
 if __name__ == "__main__":
     import sys
     src = _parse_cli(sys.argv[1:])
     if not src:
-        print('请输入 Polymarket 市场 URL：')
+        print('请输入 token_id：')
         src = input().strip()
         if not src:
             raise SystemExit(1)

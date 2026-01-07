@@ -6,80 +6,23 @@
 
 from __future__ import annotations
 
-import re, time, threading, json
+import time, threading
 from datetime import datetime
 from typing import Optional, Tuple, Dict, Any
 
-try:
-    import requests
-except Exception:
-    requests = None
-
-GAMMA_API = "https://gamma-api.polymarket.com/markets"
-
-_GAMMA_RATE_LIMIT_SEC = 1.0
-_last_gamma_request_ts = 0.0
-
-
-def _enforce_gamma_rate_limit() -> None:
-    global _last_gamma_request_ts
-    now = time.monotonic()
-    elapsed = now - _last_gamma_request_ts
-    remaining = _GAMMA_RATE_LIMIT_SEC - elapsed
-    if remaining > 0:
-        time.sleep(remaining)
-    _last_gamma_request_ts = time.monotonic()
-
-def _is_url(s: str) -> bool:
-    return s.startswith("http")
-
-def _extract_market_slug(url: str) -> Optional[str]:
-    # 同时兼容 market 页与 event 页
-    m = re.search(r"/market/([^/?#]+)", url)
-    if m:
-        return m.group(1)
-    m = re.search(r"/event/([^/?#]+)", url)
-    return m.group(1) if m else None
-
-def _gamma_fetch_market_by_slug(slug: str) -> Optional[dict]:
-    if requests is None:
-        print("[ERROR] 依赖 requests，请先安装： pip install requests")
-        return None
-    try:
-        _enforce_gamma_rate_limit()
-        r = requests.get(GAMMA_API, params={"limit": 1, "slug": slug}, timeout=10)
-        r.raise_for_status()
-        arr = r.json()
-        if isinstance(arr, list) and arr:
-            return arr[0]
-    except Exception as e:
-        print(f"[WARN] gamma-api 查询失败: {e}")
-    return None
-
 def resolve_token_ids(source: str) -> Tuple[Optional[str], Optional[str], str, Optional[dict]]:
     """
-    输入：Polymarket 市场 URL，或 'YES_id,NO_id'
+    输入：token_id 或 'YES_id,NO_id'
     返回：(yes_token_id, no_token_id, label)
     """
-    if _is_url(source):
-        slug = _extract_market_slug(source)
-        if not slug:
-            raise ValueError("无法从 URL 解析出 market/event slug")
-        m = _gamma_fetch_market_by_slug(slug)
-        if not m:
-            raise ValueError("gamma-api 未找到该市场（slug=%s）" % slug)
-        token_ids_raw = m.get("clobTokenIds", "[]")
-        token_ids = json.loads(token_ids_raw) if isinstance(token_ids_raw, str) else (token_ids_raw or [])
-        yes_id = token_ids[0] if len(token_ids) > 0 else None
-        no_id  = token_ids[1] if len(token_ids) > 1 else None
-        title = m.get("question") or slug
-        return yes_id, no_id, title, m
-
     if "," in source:
         a, b = source.split(",", 1)
         return (a.strip() or None), (b.strip() or None), "manual-token-ids", None
 
-    raise ValueError("未识别的输入。请传入 Polymarket 市场 URL，或 'YES_id,NO_id'。")
+    token_id = source.strip()
+    if not token_id:
+        raise ValueError("未识别的输入。请传入 token_id 或 'YES_id,NO_id'。")
+    return token_id, token_id, "token-id", None
 
 # ============ 监听 & 节流输出 ============
 def watch_prices(source: str, interval: int = 1):
@@ -231,7 +174,7 @@ def watch_prices(source: str, interval: int = 1):
 # ============ CLI ============
 def _parse_cli(argv):
     """
-    --source "<url 或 YES,NO>"
+    --source "<token_id 或 YES,NO>"
     --interval 1
     """
     source = None
@@ -254,6 +197,6 @@ if __name__ == "__main__":
     import sys as _sys
     src, itv = _parse_cli(_sys.argv[1:])
     if not src:
-        print("用法: python Volatility_arbitrage_price_watch.py --source <url 或 YES_id,NO_id> [--interval 1]")
+        print("用法: python Volatility_arbitrage_price_watch.py --source <token_id 或 YES_id,NO_id> [--interval 1]")
         _sys.exit(1)
     watch_prices(src, itv)

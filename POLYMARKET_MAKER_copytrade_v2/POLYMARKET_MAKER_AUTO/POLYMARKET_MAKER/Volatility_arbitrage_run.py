@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 运行入口（循环策略版）：
-- 事件页 /event/<slug>：列出子问题并选择（与老版一致）。
+- 输入 token_id（或 "YES_id,NO_id"）。
 - 新增：
   1) 交互输入：买入份数（留空按 $1 反推）、跌幅窗口/阈值、盈利百分比、可选买入触发价；
   2) 基于 `VolArbStrategy` 的循环状态机：跌幅触发买入 → 成交确认 → 盈利达标卖出；
@@ -56,14 +56,7 @@ def _get_client():
             print("[ERR] 无法导入 get_client：", e1, "|", e2)
             sys.exit(1)
 
-# ========== 2) 保留 price_watch 的单市场解析函数（先尝试） ==========
-try:
-    from Volatility_arbitrage_price_watch import resolve_token_ids
-except Exception as e:
-    print("[ERR] 无法从 Volatility_arbitrage_price_watch 导入 resolve_token_ids：", e)
-    sys.exit(1)
-
-# ========== 3) 行情订阅（未动） ==========
+# ========== 2) 行情订阅（未动） ==========
 try:
     from Volatility_arbitrage_main_ws import ws_watch_by_ids
 except Exception as e:
@@ -195,23 +188,10 @@ def _parse_yes_no_ids_literal(source: str) -> Tuple[Optional[str], Optional[str]
         return parts[0], parts[1]
     return None, None
 
-def _extract_event_slug(s: str) -> str:
-    m = re.search(r"/event/([^/?#]+)", s)
-    if m: return m.group(1)
-    s = s.strip()
-    if s and ("/" not in s) and ("?" not in s) and ("&" not in s):
-        return s
-    return ""
-
-
-def _extract_market_slug(s: str) -> str:
-    m = re.search(r"/market/([^/?#]+)", s)
-    if m:
-        return m.group(1)
-    s = s.strip()
-    if s and ("/" not in s) and ("?" not in s) and ("&" not in s):
-        return s
-    return ""
+def _normalize_token_id(source: str) -> str:
+    if not isinstance(source, str):
+        return ""
+    return source.strip()
 
 
 _TEXT_TIMEZONE_REGEXES = [
@@ -837,16 +817,6 @@ def _apply_timezone_override_meta(
 
     base_meta["timezone_hint"] = override_hint
     return base_meta
-
-
-def _maybe_fetch_market_meta_from_source(source: str) -> Dict[str, Any]:
-    slug = _extract_market_slug(source)
-    if not slug:
-        return {}
-    m = _fetch_market_by_slug(slug)
-    if m:
-        return _market_meta_from_obj(m)
-    return {}
 
 
 def _market_has_ended(meta: Dict[str, Any], now: Optional[float] = None) -> bool:
@@ -1514,59 +1484,41 @@ def _http_json(url: str, params=None) -> Optional[Any]:
     except Exception:
         return None
 
-def _list_markets_under_event(event_slug: str) -> List[dict]:
-    if not event_slug:
-        return []
-    # A) /events?slug=<slug>
-    for closed_flag in ("false", "true", None):
-        params = {"slug": event_slug}
-        if closed_flag is not None:
-            params["closed"] = closed_flag
-        data = _http_json(f"{GAMMA_ROOT}/events", params=params)
-        evs = []
+def _fetch_market_by_token_id(token_id: str, max_pages: int = 10) -> Optional[dict]:
+    if not token_id:
+        return None
+    offset = 0
+    limit = 200
+    for _ in range(max_pages):
+        data = _http_json(f"{GAMMA_ROOT}/markets", params={"limit": limit, "offset": offset})
+        mkts = []
         if isinstance(data, dict) and "data" in data:
-            evs = data["data"]
+            mkts = data["data"]
         elif isinstance(data, list):
-            evs = data
-        if isinstance(evs, list):
-            for ev in evs:
-                mkts = ev.get("markets") or []
-                if mkts:
-                    return mkts
-        # 若找到事件但 markets 为空，则无需继续尝试其它 closed_flag
-        if evs:
+            mkts = data
+        if not isinstance(mkts, list) or not mkts:
             break
-    # B) /markets?search=<slug> 精确过滤 eventSlug
-    data = _http_json(f"{GAMMA_ROOT}/markets", params={"limit": 200, "search": event_slug})
-    mkts = []
-    if isinstance(data, dict) and "data" in data:
-        mkts = data["data"]
-    elif isinstance(data, list):
-        mkts = data
-    if isinstance(mkts, list):
-        return [m for m in mkts if str(m.get("eventSlug") or "") == str(event_slug)]
-    return []
-
-def _fetch_market_by_slug(market_slug: str) -> Optional[dict]:
-    return _http_json(f"{GAMMA_ROOT}/markets/slug/{market_slug}")
-
-def _pick_market_subquestion(markets: List[dict]) -> dict:
-    print("[CHOICE] 该事件下存在多个子问题，请选择其一，或直接粘贴具体子问题URL：")
-    for i, m in enumerate(markets):
-        title = m.get("title") or m.get("question") or m.get("slug")
-        end_ts = m.get("endDate") or m.get("endTime") or ""
-        mslug = m.get("slug") or ""
-        url = f"https://polymarket.com/market/{mslug}" if mslug else "(no slug)"
-        print(f"  [{i}] {title}  (end={end_ts})  -> {url}")
-    while True:
-        s = input("请输入序号或粘贴URL：").strip()
-        if s.startswith(("http://", "https://")):
-            return {"__direct_url__": s}
-        if s.isdigit():
-            idx = int(s)
-            if 0 <= idx < len(markets):
-                return markets[idx]
-        print("请输入有效序号或URL。")
+        for m in mkts:
+            if not isinstance(m, dict):
+                continue
+            ids = m.get("clobTokenIds") or m.get("clobTokens") or []
+            if isinstance(ids, str):
+                try:
+                    ids = json.loads(ids)
+                except Exception:
+                    ids = []
+            if token_id in [str(x) for x in (ids or [])]:
+                return m
+            outcomes = m.get("outcomes") or m.get("tokens") or []
+            if isinstance(outcomes, list):
+                for o in outcomes:
+                    if not isinstance(o, dict):
+                        continue
+                    tid = o.get("tokenId") or o.get("clobTokenId") or o.get("token_id") or o.get("id")
+                    if tid is not None and str(tid) == str(token_id):
+                        return m
+        offset += limit
+    return None
 
 def _tokens_from_market_obj(m: dict) -> Tuple[str, str, str]:
     title = m.get("title") or m.get("question") or m.get("slug") or ""
@@ -1602,113 +1554,21 @@ def _tokens_from_market_obj(m: dict) -> Tuple[str, str, str]:
         return str(y), str(n), title
     return yes_id, no_id, title
 
-def _looks_like_event_source(source: str) -> bool:
-    """Return True when *source* clearly refers to an event rather than a market."""
-
-    if not isinstance(source, str):
-        return False
-    lower = source.strip().lower()
-    if not lower:
-        return False
-    if "/event/" in lower:
-        return True
-    # 兼容直接输入 event-xxx 这类 slug（旧脚本支持粘贴 slug）。
-    if lower.startswith("event-"):
-        return True
-    return False
-
-
 def _resolve_with_fallback(source: str) -> Tuple[str, str, str, Dict[str, Any]]:
     # 1) "YES_id,NO_id"
     y, n = _parse_yes_no_ids_literal(source)
     if y and n:
         return y, n, "(Manual IDs)", {}
-    # 2) 先尝试旧解析器（单一市场 URL/slug）
-    if not _looks_like_event_source(source):
-        try:
-            y1, n1, title1, raw1 = resolve_token_ids(source)
-            if y1 and n1:
-                meta = _market_meta_from_obj(raw1 or {}) if raw1 else {}
-                if not meta:
-                    meta = _maybe_fetch_market_meta_from_source(source)
-                return y1, n1, title1, meta
-        except Exception:
-            pass
-    # 2.5) 若上一步失败：把输入当作可能的 market slug（含 /event 路由别名）
-    cand_slugs: List[str] = []
-    if not _looks_like_event_source(source):
-        ms = _extract_market_slug(source)
-        if ms:
-            cand_slugs.append(ms)
-        es = _extract_event_slug(source)
-        if es and es not in cand_slugs:
-            cand_slugs.append(es)
-    for slug in cand_slugs:
-        # A) 直接按 /markets/slug/<slug>
-        m = _fetch_market_by_slug(slug)
-        if isinstance(m, dict):
-            yx, nx, tx = _tokens_from_market_obj(m)
-            if yx and nx:
-                return yx, nx, tx or (m.get("title") or m.get("question") or slug), _market_meta_from_obj(m)
-        # B) 用 /markets?search=<slug> 兜底（先 active，再放宽）
-        for params in ({"limit": 200, "search": slug, "active": "true"}, {"limit": 200, "search": slug}):
-            data = _http_json(f"{GAMMA_ROOT}/markets", params=params)
-            mkts = []
-            if isinstance(data, dict) and "data" in data:
-                mkts = data["data"]
-            elif isinstance(data, list):
-                mkts = data
-            if isinstance(mkts, list) and mkts:
-                hit = None
-                # 优先 slug 精确命中
-                for m2 in mkts:
-                    if str(m2.get("slug") or "") == slug:
-                        hit = m2; break
-                # 其次 eventSlug 命中
-                if not hit:
-                    for m2 in mkts:
-                        if str(m2.get("eventSlug") or "") == slug:
-                            hit = m2; break
-                if hit:
-                    yx, nx, tx = _tokens_from_market_obj(hit)
-                    if yx and nx:
-                        return yx, nx, tx, _market_meta_from_obj(hit)
-    # 3) 事件页/事件 slug 回退链路
-    event_slug = _extract_event_slug(source)
-    if not event_slug:
-        raise ValueError("无法从输入中提取事件 slug，且直接解析失败。")
-    mkts = _list_markets_under_event(event_slug)
-    if not mkts:
-        raise ValueError(f"未在事件 {event_slug} 下检索到子问题列表。")
-    chosen = _pick_market_subquestion(mkts)
-    if "__direct_url__" in chosen:
-        y2, n2, title2, raw2 = resolve_token_ids(chosen["__direct_url__"])
+    # 2) 单 token_id（新机制）
+    token_id = _normalize_token_id(source)
+    if not token_id:
+        raise ValueError("未提供 token_id。")
+    market = _fetch_market_by_token_id(token_id)
+    if isinstance(market, dict):
+        y2, n2, title2 = _tokens_from_market_obj(market)
         if y2 and n2:
-            meta = _market_meta_from_obj(raw2 or {}) if raw2 else {}
-            if not meta:
-                meta = _maybe_fetch_market_meta_from_source(chosen["__direct_url__"])
-            return y2, n2, title2, meta
-        raise ValueError("无法从粘贴的URL解析出 tokenId。")
-    y3, n3, title3 = _tokens_from_market_obj(chosen)
-    if y3 and n3:
-        meta = _market_meta_from_obj(chosen)
-        return y3, n3, title3, meta
-    slug2 = chosen.get("slug") or ""
-    if slug2:
-        # 兜底：拉完整市场详情；若还不行，再把 /market/<slug> 丢给旧解析器
-        m_full = _fetch_market_by_slug(slug2)
-        if m_full:
-            y4, n4, title4 = _tokens_from_market_obj(m_full)
-            if y4 and n4:
-                meta = _market_meta_from_obj(m_full)
-                return y4, n4, title4, meta
-        y5, n5, title5, raw5 = resolve_token_ids(f"https://polymarket.com/market/{slug2}")
-        if y5 and n5:
-            meta = _market_meta_from_obj(raw5 or {}) if raw5 else {}
-            if not meta:
-                meta = _maybe_fetch_market_meta_from_source(f"https://polymarket.com/market/{slug2}")
-            return y5, n5, title5, meta
-    raise ValueError("子问题未包含 tokenId，且兜底解析失败。")
+            return y2, n2, title2, _market_meta_from_obj(market)
+    return token_id, token_id, "(Token ID)", {}
 
 # ====== 下单执行工具 ======
 def _floor(x: float, dp: int) -> float:
@@ -1746,13 +1606,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     else:
         run_cfg = run_config
     source = str(
-        run_cfg.get("market_url")
+        run_cfg.get("token_id")
+        or run_cfg.get("tokenId")
+        or run_cfg.get("market_url")
         or run_cfg.get("source")
         or run_cfg.get("url")
         or ""
     ).strip()
     if not source:
-        print("[ERR] 配置未提供市场 URL，退出。")
+        print("[ERR] 配置未提供 token_id，退出。")
         return
 
     timezone_override_hint: Optional[Any] = run_cfg.get("timezone")
@@ -2064,30 +1926,19 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         "last_error": "",
     }
 
-    slug_for_refresh = ""
-    if isinstance(market_meta, dict):
-        slug_for_refresh = (
-            str(market_meta.get("slug") or "")
-            or str(market_meta.get("market_slug") or "")
-        )
-        if not slug_for_refresh:
-            raw_meta = market_meta.get("raw") if isinstance(market_meta, dict) else {}
-            if isinstance(raw_meta, dict):
-                slug_for_refresh = str(raw_meta.get("slug") or "")
-    if not slug_for_refresh:
-        slug_for_refresh = _extract_market_slug(source)
+    token_for_refresh = str(yes_id or no_id or "")
     unable_to_refresh_logged = False
 
     def _refresh_market_meta() -> Dict[str, Any]:
         nonlocal market_meta, market_deadline_ts, unable_to_refresh_logged
         nonlocal profit_floor, market_price_precision, profit_pct
-        slug = slug_for_refresh
-        if not slug:
+        token_id = token_for_refresh
+        if not token_id:
             if not unable_to_refresh_logged:
-                print("[COUNTDOWN] 无市场 slug，无法刷新事件状态，仅依赖本地信息。")
+                print("[COUNTDOWN] 无 token_id，无法刷新事件状态，仅依赖本地信息。")
                 unable_to_refresh_logged = True
             return market_meta
-        m_obj = _fetch_market_by_slug(slug)
+        m_obj = _fetch_market_by_token_id(token_id)
         if isinstance(m_obj, dict):
             refreshed = _market_meta_from_obj(m_obj, timezone_override_hint)
             if refreshed:
