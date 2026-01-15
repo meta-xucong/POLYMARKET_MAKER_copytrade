@@ -837,6 +837,9 @@ class AutoRunManager:
                 continue
             topic_id = f"{condition_id}:{outcome_index_int}"
             side = str(item.get("side") or "").upper()
+            if side and side not in {"YES", "NO"}:
+                # copytrade 可能给出 BUY/SELL 等交易方向，策略仅接受 YES/NO
+                side = ""
             market_slug = item.get("market_slug") or item.get("slug")
             topics.append(
                 {
