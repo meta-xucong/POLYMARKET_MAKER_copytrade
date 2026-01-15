@@ -31,17 +31,19 @@
 | `countdown.timezone` | 当 `absolute_time` 只写日期/无时区时，用于推断时区。 | IANA 时区名称 | 与市场时区一致即可。 |
 
 ## global_config.json —— 自动化调度与路径
-供 `poly_maker_autorun.py` 使用，控制筛选/调度循环、文件路径与重试策略。【F:poly_maker_autorun.py†L32-L48】【F:poly_maker_autorun.py†L117-L219】
+供 `poly_maker_autorun.py` 使用，控制 copytrade token 轮询/调度循环、文件路径与重试策略。【F:poly_maker_autorun.py†L32-L59】【F:poly_maker_autorun.py†L117-L216】
 
 | 字段 | 作用 | 类型/格式 | 推荐设置 |
 | --- | --- | --- | --- |
 | `scheduler.max_concurrent_jobs` | 同时运行的子进程/任务上限。 | 整数 | 根据机器核数调整，1~4 为宜。 |
-| `scheduler.poll_interval_seconds` | 轮询筛选结果的间隔秒数。 | 浮点 | 1~10 秒。 |
+| `scheduler.poll_interval_seconds` | 轮询运行状态/调度循环的基础间隔秒数。 | 浮点 | 1~10 秒。 |
+| `scheduler.copytrade_poll_seconds` | 轮询 copytrade token 文件的间隔秒数。 | 浮点 | 10~60 秒。 |
 | `scheduler.task_timeout_seconds` | 单个任务的超时时长。 | 整数（秒） | 180 为默认，可按策略时长调整。 |
 | `paths.log_directory` | 日志目录（可相对或绝对路径）。 | 字符串 | 统一写入 `POLYMARKET_MAKER/logs/`。 |
 | `paths.data_directory` | 数据目录（去重状态、筛选结果等）。 | 字符串 | 默认与日志共用 `POLYMARKET_MAKER/logs/`，便于一处收集。 |
 | `paths.order_history_file` | 历史订单记录文件路径。 | 字符串 | 默认写入 `POLYMARKET_MAKER/logs/order_history.jsonl`。 |
 | `paths.run_state_file` | 运行状态快照文件。 | 字符串 | 默认写入 `POLYMARKET_MAKER/logs/run_state.json`。 |
+| `paths.copytrade_tokens_file` | copytrade 产出的 token 文件路径。 | 字符串 | 指向 `copytrade/tokens_from_copytrade.json`。 |
 | `retry_strategy.max_attempts` | 筛选或子任务的最大重试次数。 | 整数 | 3~5。 |
 | `retry_strategy.initial_backoff_seconds` | 首次重试等待秒数。 | 浮点 | 1.0 起步。 |
 | `retry_strategy.backoff_multiplier` | 指数退避倍率。 | 浮点 | 2.0 表示每次翻倍。 |
@@ -63,8 +65,8 @@
 | `default.max_open_orders` | 同时挂单数量上限。 | 整数 | 10~30。 |
 | `topics.*` | 针对特定话题 ID/slug 的覆盖：可单独调整 `topic_name`、`min_edge`、`max_position_per_market`、`order_size`、`spread_target`、`refresh_interval_seconds`、`max_open_orders`。 | 按字段类型填写 | 仅覆盖需要调整的字段，其余沿用 `default`。 |
 
-## filter_params.json —— 市场筛选参数
-驱动 `Customize_fliter_blacklist.py` 的 REST 筛选器，字段与命令行参数一致，支持高亮阈值等设置。【F:POLYMARKET_MAKER/config/filter_params.json†L1-L69】【F:Customize_fliter_blacklist.py†L723-L799】
+## filter_params.json —— 市场筛选参数（旧流程保留）
+用于旧筛选流程的参数模板，copytrade 版本不再依赖该文件；保留是为了兼容历史配置。【F:POLYMARKET_MAKER/config/filter_params.json†L1-L69】
 
 | 字段 | 作用 | 类型/格式 | 推荐设置 |
 | --- | --- | --- | --- |
@@ -84,5 +86,3 @@
 | `highlight.ask_max` | 高亮条件：卖一价不高于该值。 | 0~1 小数 | 0.95~0.999。 |
 | `highlight.min_total_volume` | 高亮条件：总成交量下限（USDC）。 | 浮点 | 1_000~50_000。 |
 | `highlight.max_ask_diff` | 高亮条件：单边点差上限（|ask-bid|）。 | 0~1 小数 | 0.05~0.2。 |
-
-> 提示：`filter_params.json` 直接对应命令行参数，修改后无需转换即可被 `Customize_fliter_blacklist.py` 读取并复用。【F:Customize_fliter_blacklist.py†L723-L771】
