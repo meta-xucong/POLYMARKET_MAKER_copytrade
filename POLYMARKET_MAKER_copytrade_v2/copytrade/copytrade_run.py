@@ -16,6 +16,8 @@ if str(REPO_ROOT) not in sys.path:
 from smartmoney_query.api_client import DataApiClient
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("copytrade_config.json")
+DEFAULT_MARKET_STATUS_TTL_SEC = 900
+MARKET_STATUS_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _utc_now_iso() -> str:
@@ -112,6 +114,13 @@ def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
         )
     if token_id is None:
         return None
+    market_id = (
+        getattr(trade, "market_id", None)
+        or raw.get("marketId")
+        or raw.get("market_id")
+        or raw.get("conditionId")
+        or raw.get("condition_id")
+    )
     timestamp = getattr(trade, "timestamp", None)
     if timestamp is None:
         return None
@@ -121,6 +130,7 @@ def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
         "side": side,
         "size": size,
         "timestamp": timestamp,
+        "market_id": str(market_id) if market_id is not None else None,
     }
 
 
@@ -145,6 +155,98 @@ def _parse_last_seen(value: Any) -> Optional[datetime]:
         except ValueError:
             return None
     return None
+
+
+def _parse_epoch_ts(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        if value > 1e12:
+            value = value / 1000.0
+        return float(value)
+    if isinstance(value, datetime):
+        return value.timestamp()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    return None
+
+
+def _market_meta_has_ended(meta: Optional[Dict[str, Any]]) -> bool:
+    if not meta:
+        return False
+
+    raw = meta.get("raw") if isinstance(meta, dict) else None
+    data = raw if isinstance(raw, dict) else meta
+
+    status = str(
+        data.get("status") or data.get("market_status") or data.get("marketStatus") or ""
+    ).lower()
+    if status in {"resolved", "closed", "settled", "finalized", "ended"}:
+        return True
+
+    for key in ("resolved", "isResolved", "closed", "isClosed", "is_closed"):
+        flag = data.get(key)
+        if isinstance(flag, bool) and flag:
+            return True
+
+    candidates: List[float] = []
+    for key in (
+        "resolved_ts",
+        "end_ts",
+        "endDate",
+        "endTime",
+        "closeTime",
+        "closeDate",
+        "closedTime",
+        "expiry",
+        "expirationTime",
+        "resolvedTime",
+        "resolutionTime",
+        "resolveTime",
+        "resolvedAt",
+        "finalizationTime",
+        "finalizedTime",
+        "settlementTime",
+    ):
+        ts = _parse_epoch_ts(data.get(key))
+        if ts is not None:
+            candidates.append(ts)
+    if not candidates:
+        return False
+    return time.time() >= min(candidates)
+
+
+def _get_cached_market_meta(
+    client: DataApiClient,
+    market_id: str,
+    ttl_sec: int,
+    logger: logging.Logger,
+) -> Optional[Dict[str, Any]]:
+    cached = MARKET_STATUS_CACHE.get(market_id)
+    now = time.time()
+    if cached:
+        fetched_at = cached.get("fetched_at")
+        if isinstance(fetched_at, (int, float)) and now - float(fetched_at) <= ttl_sec:
+            return cached.get("meta")
+
+    meta = client.fetch_market_meta(market_id)
+    if meta is None:
+        logger.warning("market meta 获取失败: market_id=%s", market_id)
+        return None
+
+    MARKET_STATUS_CACHE[market_id] = {"meta": meta, "fetched_at": now}
+    return meta
 
 
 def _load_token_map(path: Path) -> Dict[str, Dict[str, Any]]:
@@ -264,6 +366,10 @@ def run_once(
     sell_map = _load_sell_signals(sell_signal_path)
 
     initial_lookback_sec = int(config.get("initial_lookback_sec", 3600))
+    filter_closed_markets = bool(config.get("filter_closed_markets", True))
+    market_status_ttl_sec = int(
+        config.get("market_status_ttl_sec", DEFAULT_MARKET_STATUS_TTL_SEC)
+    )
     now_ms = int(time.time() * 1000)
     changed = False
     sell_changed = False
@@ -293,6 +399,19 @@ def run_once(
             if not token_id:
                 continue
             key = str(token_id)
+            market_id = action.get("market_id")
+            if filter_closed_markets and market_id:
+                meta = _get_cached_market_meta(
+                    client, str(market_id), market_status_ttl_sec, logger
+                )
+                if meta and _market_meta_has_ended(meta):
+                    logger.info(
+                        "跳过已结束市场: market_id=%s token_id=%s account=%s",
+                        market_id,
+                        token_id,
+                        account,
+                    )
+                    continue
 
             last_seen = action["timestamp"].astimezone(timezone.utc).isoformat().replace(
                 "+00:00", "Z"

@@ -51,10 +51,12 @@ class DataApiClient:
     def __init__(
         self,
         host: str = "https://data-api.polymarket.com",
+        gamma_host: str = "https://gamma-api.polymarket.com",
         session: requests.Session | None = None,
         timeout: float = 15.0,
     ) -> None:
         self.host = host.rstrip("/")
+        self.gamma_host = gamma_host.rstrip("/")
         self.session = session or requests.Session()
         self.timeout = timeout
 
@@ -117,6 +119,36 @@ class DataApiClient:
                 break
 
         return trades
+
+    def fetch_market_meta(self, market_id: str) -> Dict[str, Any] | None:
+        if not market_id:
+            return None
+
+        endpoints = [
+            (f"{self.gamma_host}/markets/{market_id}", None),
+            (f"{self.gamma_host}/markets", {"conditionId": market_id, "limit": 1}),
+            (f"{self.gamma_host}/markets", {"marketId": market_id, "limit": 1}),
+            (f"{self.gamma_host}/markets", {"id": market_id, "limit": 1}),
+        ]
+
+        for url, params in endpoints:
+            try:
+                resp = self.session.get(url, params=params, timeout=self.timeout)
+                resp.raise_for_status()
+                payload = resp.json()
+            except Exception:
+                continue
+
+            if isinstance(payload, dict):
+                if payload.get("id") or payload.get("marketId") or payload.get("conditionId"):
+                    return payload
+                items = payload.get("data") or payload.get("results") or payload.get("markets")
+                if isinstance(items, list) and items:
+                    return items[0]
+            elif isinstance(payload, list) and payload:
+                return payload[0]
+
+        return None
 
     def _to_trade(self, raw: Dict[str, Any]) -> Trade | None:
         side = _pick_first(raw, ["side", "takerSide", "tradeSide"])

@@ -1,6 +1,8 @@
 {
   "poll_interval_sec": 30,
   "initial_lookback_sec": 3600,
+  "filter_closed_markets": true,
+  "market_status_ttl_sec": 900,
   "targets": [
     {
       "account": "0x96489abcb9f583d6835c8ef95ffc923d05a86825",
