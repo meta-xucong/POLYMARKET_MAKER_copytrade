@@ -6,8 +6,8 @@
 
 ### 1.1 现有 autorun 流程
 
-- `POLYMARKET_MAKER_AUTO/poly_maker_autorun.py` 通过 `Customize_fliter_blacklist.py` 输出的筛选结果（topics）驱动自动下单流程：
-  - 定时调用 `run_filter_once()` 生成 topics 列表并写入 `topics_filtered.json`。
+- `POLYMARKET_MAKER_AUTO/poly_maker_autorun.py` 通过读取 copytrade 产出的 token 文件驱动自动下单流程：
+  - 定时读取 `tokens_from_copytrade.json` 生成 topic 列表。
   - 解析 topic 信息并塞入队列，启动 `Volatility_arbitrage_run.py` 子进程执行做市策略。
 - 策略本身（`POLYMARKET_MAKER/Volatility_arbitrage_*`）已经完备，本次只替换“topics 的来源”，严禁改动 maker 执行逻辑。
 
@@ -43,6 +43,7 @@ POLYMARKET_MAKER_copytrade_v2/
 ```json
 {
   "poll_interval_sec": 30,
+  "initial_lookback_sec": 3600,
   "targets": [
     {
       "account": "0x123...",
@@ -54,16 +55,14 @@ POLYMARKET_MAKER_copytrade_v2/
       "min_size": 0.5,
       "enabled": true
     }
-  ],
-  "token_output_path": "copytrade/tokens_from_copytrade.json",
-  "log_dir": "copytrade/logs"
+  ]
 }
 ```
 
 - `targets` 支持多个目标账户；
 - `min_size`（可选）用于过滤过小成交；
-- `token_output_path` 指定专属 JSON 输出位置；
-- `log_dir` 指定日志输出目录。
+- `initial_lookback_sec` 用于首次启动时回溯抓取区间；
+- 产出的 token、sell 信号、状态文件路径固定在 `copytrade/` 目录内，方便用户不用额外配置。
 
 ### 2.3 tokens_from_copytrade.json 输出结构
 
@@ -73,30 +72,23 @@ POLYMARKET_MAKER_copytrade_v2/
   "tokens": [
     {
       "token_id": "<token_id>",
-      "condition_id": "<condition_id>",
-      "outcome_index": 0,
-      "side": "BUY",
       "source_account": "0x123...",
-      "last_seen": "2024-01-01T12:00:00Z",
-      "market_slug": "example-market-slug"
+      "last_seen": "2024-01-01T12:00:00Z"
     }
   ]
 }
 ```
 
 - 该文件由 copytrade 脚本更新，供 maker 侧读取；
-- `side` 用于标识该 token 对应目标账户买入/卖出方向；
-- `market_slug` 可选（若数据源返回）；
-- 实际字段可依据参考代码抽取，但需要保证 maker 侧能用 `token_id / condition_id + outcome_index` 进行交易。
+- 实际字段以 `token_id` 为核心，供 maker 侧直接发起做市；
+- 卖出信号另写入 `copytrade_sell_signals.json`，用于触发停止做市并清仓。
 
 ### 2.4 copytrade_run.py 功能蓝图
 
 - 读取 `copytrade_config.json`，按 `targets` 循环抓取目标账户的 positions 或 trades；
-- 参考 `copytrade_v3_muti` 的数据解析逻辑：
-  - 将 position/trade 归一化为 `token_key = condition_id:outcome_index`；
-  - 识别 BUY/SELL（可基于 trade 方向或 size 增减）；
+- 参考 `copytrade_v3_muti` 的数据解析逻辑，识别 BUY/SELL；
 - 过滤后写入 `tokens_from_copytrade.json`：
-  - 去重：同一 `token_key + side` 仅保留最新时间；
+  - 去重：同一 `token_id` 仅保留最新时间；
   - 记录 `source_account` 和 `last_seen`；
 - 输出日志到 `copytrade/logs/`：
   - 轮转或按日期写入；
@@ -108,7 +100,7 @@ POLYMARKET_MAKER_copytrade_v2/
 
 ### 3.1 改造目标
 
-- 删除 `poly_maker_autorun.py` 中“filter 参数 + `Customize_fliter_blacklist.py`”筛选流程；
+- 保持 `poly_maker_autorun.py` 仅基于 token 文件驱动调度流程；
 - 替换为读取 `copytrade/tokens_from_copytrade.json` 生成待执行列表；
 - 下单/做市逻辑不改动，仅将 topic 入口改为 token 入口（或使用 token 数据构造 topic_info）。
 
@@ -118,27 +110,23 @@ POLYMARKET_MAKER_copytrade_v2/
   - `copytrade_tokens_path`: 指向 `copytrade/tokens_from_copytrade.json`；
   - `copytrade_poll_sec`: 读取 token 文件的轮询周期；
 - 在 `AutoRunManager._refresh_topics()` 中：
-  - 删除 `run_filter_once()`；
-  - 替换为 `_load_copytrade_tokens()` 读取 token JSON；
+  - 使用 `_load_copytrade_tokens()` 读取 token JSON；
   - 将 token 转换为“伪 topic”条目，放入 `latest_topics` 和 `topic_details`。
 
 ### 3.3 token -> topic 的映射规则
 
-- **目标**：满足 `_build_run_config()` 对 `topic_id`, `yes_token`, `no_token`, `side` 等字段的依赖。
+- **目标**：满足 `_build_run_config()` 对 `topic_id` 等字段的依赖。
 - 设计建议：
-  - `topic_id` 使用 `condition_id:outcome_index` 作为唯一 key；
-  - `topic_details[topic_id]` 中直接填入：
-    - `yes_token` / `no_token`（若可从 API 获得）；
-    - `highlight_sides` / `preferred_side`（依据 BUY/SELL 推断）；
-    - `slug`（若能从 API 获取，则保持原有 market_url 逻辑），否则 fallback 为 `topic_id`；
-- 若无法获得 `yes_token`/`no_token`，就保持原有字段为空，保持 maker 侧逻辑不变（不得改动 maker 逻辑）。
+  - `topic_id` 直接使用 `token_id` 作为唯一 key；
+  - `topic_details[token_id]` 中可填入：
+    - `slug`（若能从 API 获取则写入；否则 fallback 为 `token_id`）。
+- 若无法获得 `slug`，就保持字段为空，让 maker 侧逻辑自行处理（不得改动 maker 逻辑）。
 
 ### 3.4 需要调整的代码位置（仅说明）
 
 - `POLYMARKET_MAKER_AUTO/poly_maker_autorun.py`
-  - 移除/禁用 `FilterConfig` 与 `run_filter_once()` 相关逻辑；
-  - 增加 `copytrade token` 解析函数（例如 `_load_copytrade_tokens()`）；
-  - `GlobalConfig` 中新增 copytrade 路径与轮询参数。
+  - 仅保留 `copytrade token` 解析函数（例如 `_load_copytrade_tokens()`）；
+  - `GlobalConfig` 中保留 copytrade 路径与轮询参数。
 - `POLYMARKET_MAKER/config` 若需要：
   - 新增 `autorun` 配置模板（指向 token 文件）或扩展现有配置文件字段。
 
@@ -158,8 +146,8 @@ POLYMARKET_MAKER_copytrade_v2/
 
 ## 5. 风险与注意事项
 
-- **数据缺失风险**：若 copytrade 数据源不提供 `yes_token/no_token`，需要确保 maker 能够从 `topic_id`/slug 自行解析；否则保持字段为空，让 maker 逻辑自行处理。
-- **去重策略**：必须有稳定的 token key，否则 autorun 可能重复触发；建议使用 `condition_id:outcome_index` 作为主键。
+- **数据缺失风险**：若 copytrade 数据源不提供 `slug`，保持字段为空，让 maker 逻辑自行处理。
+- **去重策略**：必须有稳定的 token key，否则 autorun 可能重复触发；建议使用 `token_id` 作为主键。
 - **兼容性**：所有改动仅影响 topics 来源，其他逻辑不变。
 
 ---

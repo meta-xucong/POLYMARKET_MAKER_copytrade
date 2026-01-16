@@ -36,22 +36,13 @@
 | 字段 | 作用 | 类型/格式 | 推荐设置 |
 | --- | --- | --- | --- |
 | `scheduler.max_concurrent_jobs` | 同时运行的子进程/任务上限。 | 整数 | 根据机器核数调整，1~4 为宜。 |
-| `scheduler.poll_interval_seconds` | 轮询运行状态/调度循环的基础间隔秒数。 | 浮点 | 1~10 秒。 |
+| `scheduler.command_poll_seconds` | 主循环轮询/调度间隔秒数。 | 浮点 | 1~10 秒。 |
 | `scheduler.copytrade_poll_seconds` | 轮询 copytrade token 文件的间隔秒数。 | 浮点 | 10~60 秒。 |
-| `scheduler.task_timeout_seconds` | 单个任务的超时时长。 | 整数（秒） | 180 为默认，可按策略时长调整。 |
 | `paths.log_directory` | 日志目录（可相对或绝对路径）。 | 字符串 | 统一写入 `POLYMARKET_MAKER/logs/`。 |
-| `paths.data_directory` | 数据目录（去重状态、筛选结果等）。 | 字符串 | 默认与日志共用 `POLYMARKET_MAKER/logs/`，便于一处收集。 |
-| `paths.order_history_file` | 历史订单记录文件路径。 | 字符串 | 默认写入 `POLYMARKET_MAKER/logs/order_history.jsonl`。 |
-| `paths.run_state_file` | 运行状态快照文件。 | 字符串 | 默认写入 `POLYMARKET_MAKER/logs/run_state.json`。 |
+| `paths.data_directory` | 数据目录（状态快照、退出信号等）。 | 字符串 | 建议与日志目录分开保存。 |
+| `paths.run_state_file` | 运行状态快照文件。 | 字符串 | 默认写入 `POLYMARKET_MAKER/data/autorun_status.json`。 |
 | `paths.copytrade_tokens_file` | copytrade 产出的 token 文件路径。 | 字符串 | 指向 `copytrade/tokens_from_copytrade.json`。 |
 | `paths.copytrade_sell_signals_file` | copytrade 产出的 sell 信号文件路径。 | 字符串 | 指向 `copytrade/copytrade_sell_signals.json`。 |
-| `retry_strategy.max_attempts` | 筛选或子任务的最大重试次数。 | 整数 | 3~5。 |
-| `retry_strategy.initial_backoff_seconds` | 首次重试等待秒数。 | 浮点 | 1.0 起步。 |
-| `retry_strategy.backoff_multiplier` | 指数退避倍率。 | 浮点 | 2.0 表示每次翻倍。 |
-| `retry_strategy.max_backoff_seconds` | 退避的最大等待上限。 | 浮点 | 30.0 或更高。 |
-| `retry_strategy.jitter_fraction` | 退避抖动比例，避免雪崩。 | 0~1 小数 | 0.1~0.3。 |
-| `monitoring.metrics_flush_interval_seconds` | 指标刷写周期。 | 整数/浮点（秒） | 15 秒默认。 |
-| `monitoring.healthcheck_interval_seconds` | 健康检查间隔。 | 整数/浮点（秒） | 30 秒默认。 |
 
 ## strategy_defaults.json —— 策略模板
 为不同话题/主题提供默认下单参数与覆盖示例。【F:POLYMARKET_MAKER/config/strategy_defaults.json†L1-L24】
@@ -65,25 +56,3 @@
 | `default.refresh_interval_seconds` | 策略刷新/再报价周期。 | 整数（秒） | 5~15。 |
 | `default.max_open_orders` | 同时挂单数量上限。 | 整数 | 10~30。 |
 | `topics.*` | 针对特定话题 ID/slug 的覆盖：可单独调整 `topic_name`、`min_edge`、`max_position_per_market`、`order_size`、`spread_target`、`refresh_interval_seconds`、`max_open_orders`。 | 按字段类型填写 | 仅覆盖需要调整的字段，其余沿用 `default`。 |
-
-## filter_params.json —— 市场筛选参数（旧流程保留）
-用于旧筛选流程的参数模板，copytrade 版本不再依赖该文件；保留是为了兼容历史配置。【F:POLYMARKET_MAKER/config/filter_params.json†L1-L69】
-
-| 字段 | 作用 | 类型/格式 | 推荐设置 |
-| --- | --- | --- | --- |
-| `min_end_hours` | 抓取结束时间至少距离当前多少小时的市场。 | 浮点（小时） | ≥1。 |
-| `max_end_days` | 抓取未来 N 天内结束的市场。 | 整数（天） | 1~7。 |
-| `gamma_window_days` | Gamma 时间切片窗口长度；命中 500 条时会递归切分。 | 整数（天） | 1~3。 |
-| `gamma_min_window_hours` | 递归切分的最小窗口大小。 | 整数（小时） | 1~6。 |
-| `legacy_end_days` | 结束早于该天数的市场视为旧格式/归档。 | 整数（天） | 默认 730。 |
-| `allow_illiquid` | 是否允许无报价市场通过。 | 布尔 | 诊断用，生产环境建议 `false`。 |
-| `skip_orderbook` | 是否跳过订单簿/价格回补。 | 布尔 | 仅诊断或节省请求时使用。 |
-| `no_rest_backfill` | 关闭 REST 回补（默认开启）。 | 布尔 | 一般保持 `false`。 |
-| `books_batch_size` | `/books` 回补的 token_id 批量大小。 | 整数 | 100~500。 |
-| `only` | 仅处理包含该子串的 slug/title（大小写不敏感）。 | 字符串 | 留空表示不过滤。 |
-| `blacklist_terms` | 标题/slug 命中任意黑名单词条即跳过。 | 字符串数组 | 可按需增删。 |
-| `highlight.max_hours` | 高亮条件：距离结束 ≤ 该小时数。 | 浮点（小时） | 24~72。 |
-| `highlight.ask_min` | 高亮条件：卖一价不低于该值。 | 0~1 小数 | 0.9~0.99。 |
-| `highlight.ask_max` | 高亮条件：卖一价不高于该值。 | 0~1 小数 | 0.95~0.999。 |
-| `highlight.min_total_volume` | 高亮条件：总成交量下限（USDC）。 | 浮点 | 1_000~50_000。 |
-| `highlight.max_ask_diff` | 高亮条件：单边点差上限（|ask-bid|）。 | 0~1 小数 | 0.05~0.2。 |
