@@ -147,7 +147,6 @@ def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
         "token_id": str(token_id) if token_id is not None else None,
         "condition_id": str(condition_id) if condition_id is not None else None,
         "outcome_index": outcome_index,
-        "side": side,
         "size": size,
         "timestamp": timestamp,
         "market_slug": str(market_slug) if market_slug else None,
