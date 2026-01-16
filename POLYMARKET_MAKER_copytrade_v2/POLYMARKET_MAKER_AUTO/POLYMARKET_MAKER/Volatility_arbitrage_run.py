@@ -24,6 +24,7 @@ from typing import Dict, Any, Tuple, List, Optional
 import math
 from decimal import Decimal, ROUND_UP, ROUND_DOWN
 import requests
+from pathlib import Path
 from datetime import datetime, timezone, timedelta, date, time as dtime
 from json import JSONDecodeError
 try:
@@ -1551,6 +1552,90 @@ def _place_sell_fok(client, token_id: str, price: float, size: float) -> Dict[st
     return client.post_order(signed, OrderType.FOK)
 
 
+def _normalize_open_order(order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(order, dict):
+        return None
+    order_id = order.get("order_id") or order.get("id") or order.get("orderId")
+    token_id = order.get("token_id") or order.get("tokenId") or order.get("asset_id")
+    side = order.get("side") or order.get("orderType") or order.get("type")
+    price = order.get("price") or order.get("rate")
+    size = (
+        order.get("size")
+        or order.get("remaining")
+        or order.get("original_size")
+        or order.get("originalSize")
+        or order.get("amount")
+    )
+    if not order_id or not token_id:
+        return None
+    return {
+        "order_id": str(order_id),
+        "token_id": str(token_id),
+        "side": str(side) if side is not None else "",
+        "price": float(price) if price is not None else None,
+        "size": float(size) if size is not None else None,
+    }
+
+
+def _fetch_open_orders_norm(client: Any) -> List[Dict[str, Any]]:
+    try:
+        from py_clob_client.clob_types import OpenOrderParams
+        payload = client.get_orders(OpenOrderParams())
+    except Exception:
+        try:
+            payload = client.get_orders()
+        except Exception:
+            return []
+    orders = payload if isinstance(payload, list) else []
+    normalized: List[Dict[str, Any]] = []
+    for order in orders:
+        parsed = _normalize_open_order(order)
+        if not parsed:
+            continue
+        normalized.append(parsed)
+    return normalized
+
+
+def _cancel_order(client: Any, order_id: str) -> None:
+    if callable(getattr(client, "cancel", None)):
+        client.cancel(order_id=order_id)
+        return
+    if callable(getattr(client, "cancel_order", None)):
+        client.cancel_order(order_id)
+        return
+    if callable(getattr(client, "cancel_orders", None)):
+        client.cancel_orders([order_id])
+        return
+    private = getattr(client, "private", None)
+    if private is not None:
+        if callable(getattr(private, "cancel", None)):
+            private.cancel(order_id=order_id)
+            return
+        if callable(getattr(private, "cancel_order", None)):
+            private.cancel_order(order_id)
+            return
+        if callable(getattr(private, "cancel_orders", None)):
+            private.cancel_orders([order_id])
+            return
+
+
+def _cancel_open_orders_for_token(client: Any, token_id: str) -> int:
+    open_orders = _fetch_open_orders_norm(client)
+    canceled = 0
+    for order in open_orders:
+        if str(order.get("token_id")) != str(token_id):
+            continue
+        order_id = order.get("order_id")
+        if not order_id:
+            continue
+        try:
+            _cancel_order(client, str(order_id))
+            canceled += 1
+        except Exception:
+            continue
+    return canceled
+
+
 # ===== 主流程 =====
 def main(run_config: Optional[Dict[str, Any]] = None):
     client = _get_client()
@@ -1574,6 +1659,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     if not token_id:
         print("[ERR] 配置未提供 token_id，无法下单。")
         return
+    exit_signal_path = run_cfg.get("exit_signal_path") or run_cfg.get("exit_signal_file")
+    exit_signal_path = Path(exit_signal_path) if exit_signal_path else None
     source = str(
         run_cfg.get("market_url")
         or run_cfg.get("source")
@@ -2261,6 +2348,57 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         except (TypeError, ValueError):
             return None
 
+    def _latest_price() -> Optional[float]:
+        snap = latest.get(token_id) or {}
+        if _snapshot_stale(snap):
+            return None
+        try:
+            value = snap.get("price")
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _exit_signal_active() -> bool:
+        return bool(exit_signal_path and exit_signal_path.exists())
+
+    def _force_exit(reason: str) -> None:
+        if stop_event.is_set():
+            return
+        print(f"[EXIT] 收到清仓信号: {reason}")
+        canceled = _cancel_open_orders_for_token(client, token_id)
+        if canceled:
+            print(f"[EXIT] 已尝试撤销挂单数量={canceled}")
+        snapshot, _ = _fetch_position_snapshot_with_cache(
+            client=client,
+            token_id=token_id,
+            cache=None,
+            cache_ts=0.0,
+            log_errors=True,
+            force=True,
+        )
+        total_pos = snapshot[1] if snapshot else None
+        if total_pos is None or total_pos <= 0:
+            print("[EXIT] 未检测到持仓，直接退出。")
+            strategy.stop("sell signal")
+            stop_event.set()
+            return
+        exit_price = _latest_best_bid()
+        if exit_price is None:
+            exit_price = _latest_best_ask()
+        if exit_price is None:
+            exit_price = _latest_price()
+        if exit_price is None or exit_price <= 0:
+            exit_price = 0.01
+        try:
+            _place_sell_fok(client, token_id=token_id, price=exit_price, size=total_pos)
+            print(
+                f"[EXIT] 已发出清仓卖单 token_id={token_id} size={total_pos:.4f} price={exit_price:.4f}"
+            )
+        except Exception as exc:
+            print(f"[EXIT] 清仓卖单失败: {exc}")
+        strategy.stop("sell signal")
+        stop_event.set()
+
     def _awaiting_blocking(awaiting: Any) -> bool:
         if awaiting is None:
             return False
@@ -2704,6 +2842,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             now = time.time()
             loop_started = now
             try:
+                if _exit_signal_active():
+                    _force_exit("sell signal file detected")
+                    break
                 if pending_buy is not None and now >= buy_cooldown_until:
                     if sell_only_event.is_set():
                         print("[COUNTDOWN] 仍在仅卖出模式内，丢弃待执行的买入信号。")

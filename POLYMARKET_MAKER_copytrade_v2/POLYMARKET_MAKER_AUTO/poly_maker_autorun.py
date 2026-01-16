@@ -38,6 +38,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "data_dir": str(MAKER_ROOT / "data"),
     "handled_topics_path": str(MAKER_ROOT / "data" / "handled_topics.json"),
     "copytrade_tokens_path": str(PROJECT_ROOT.parent / "copytrade" / "tokens_from_copytrade.json"),
+    "copytrade_sell_signals_path": str(
+        PROJECT_ROOT.parent / "copytrade" / "copytrade_sell_signals.json"
+    ),
     "process_start_retries": 1,
     "process_retry_delay_sec": 2.0,
     "process_graceful_timeout_sec": 5.0,
@@ -190,6 +193,9 @@ class GlobalConfig:
     copytrade_tokens_path: Path = field(
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["copytrade_tokens_path"])
     )
+    copytrade_sell_signals_path: Path = field(
+        default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["copytrade_sell_signals_path"])
+    )
     process_start_retries: int = DEFAULT_GLOBAL_CONFIG["process_start_retries"]
     process_retry_delay_sec: float = DEFAULT_GLOBAL_CONFIG["process_retry_delay_sec"]
     process_graceful_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
@@ -229,6 +235,11 @@ class GlobalConfig:
             or paths.get("copytrade_tokens_file")
             or PROJECT_ROOT.parent / "copytrade" / "tokens_from_copytrade.json"
         )
+        copytrade_sell_signals_path = Path(
+            merged.get("copytrade_sell_signals_path")
+            or paths.get("copytrade_sell_signals_file")
+            or PROJECT_ROOT.parent / "copytrade" / "copytrade_sell_signals.json"
+        )
         runtime_status_path = Path(
             merged.get("runtime_status_path")
             or paths.get("run_state_file")
@@ -259,6 +270,7 @@ class GlobalConfig:
             data_dir=data_dir,
             handled_topics_path=handled_topics_path,
             copytrade_tokens_path=copytrade_tokens_path,
+            copytrade_sell_signals_path=copytrade_sell_signals_path,
             process_start_retries=int(
                 merged.get("process_start_retries", cls.process_start_retries)
             ),
@@ -505,6 +517,7 @@ class AutoRunManager:
             merged["topic_name"] = topic_info.get("title")
         if topic_info.get("token_id"):
             merged["token_id"] = topic_info.get("token_id")
+        merged["exit_signal_path"] = str(self._exit_signal_path(topic_id))
         if topic_info.get("yes_token"):
             merged["yes_token"] = topic_info.get("yes_token")
         if topic_info.get("no_token"):
@@ -767,7 +780,13 @@ class AutoRunManager:
                 detail = dict(item)
                 detail.setdefault("topic_id", topic_id)
                 self.topic_details[topic_id] = detail
-            new_topics = compute_new_topics(self.latest_topics, self.handled_topics)
+            sell_signals = self._load_copytrade_sell_signals()
+            self._apply_sell_signals(sell_signals)
+            new_topics = [
+                topic_id
+                for topic_id in compute_new_topics(self.latest_topics, self.handled_topics)
+                if topic_id not in sell_signals
+            ]
             if new_topics:
                 preview = ", ".join(new_topics[:5])
                 print(
@@ -813,6 +832,56 @@ class AutoRunManager:
             )
         print(f"[COPYTRADE] 已读取 token {len(topics)} 条 | {path}")
         return topics
+
+    def _load_copytrade_sell_signals(self) -> set[str]:
+        path = self.config.copytrade_sell_signals_path
+        if not path.exists():
+            return set()
+        payload = _load_json_file(path)
+        raw_tokens = payload.get("sell_tokens")
+        if not isinstance(raw_tokens, list):
+            print(f"[WARN] copytrade sell_signal 文件格式异常：{path}")
+            return set()
+        signals: set[str] = set()
+        for item in raw_tokens:
+            if not isinstance(item, dict):
+                continue
+            token_id = item.get("token_id") or item.get("tokenId")
+            if not token_id:
+                continue
+            signals.add(str(token_id))
+        if signals:
+            preview = ", ".join(list(signals)[:5])
+            print(f"[COPYTRADE] 已读取 sell 信号 {len(signals)} 条 preview={preview}")
+        return signals
+
+    def _exit_signal_path(self, token_id: str) -> Path:
+        safe_id = _safe_topic_filename(token_id)
+        return self.config.data_dir / f"exit_signal_{safe_id}.json"
+
+    def _issue_exit_signal(self, token_id: str) -> None:
+        path = self._exit_signal_path(token_id)
+        payload = {
+            "token_id": token_id,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _dump_json_file(path, payload)
+
+    def _apply_sell_signals(self, sell_signals: set[str]) -> None:
+        if not sell_signals:
+            return
+        for token_id in sell_signals:
+            if token_id in self.pending_topics:
+                try:
+                    self.pending_topics.remove(token_id)
+                except ValueError:
+                    pass
+            task = self.tasks.get(token_id)
+            if task and task.is_running():
+                task.no_restart = True
+                task.end_reason = "sell signal"
+                task.heartbeat("sell signal received")
+            self._issue_exit_signal(token_id)
 
     def _cleanup_all_tasks(self) -> None:
         for task in list(self.tasks.values()):

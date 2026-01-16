@@ -14,6 +14,7 @@
     }
   ],
   "token_output_path": "copytrade/tokens_from_copytrade.json",
+  "sell_signal_path": "copytrade/copytrade_sell_signals.json",
   "state_path": "copytrade/copytrade_state.json",
   "log_dir": "copytrade/logs"
 }

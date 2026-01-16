@@ -87,6 +87,8 @@ def _deep_find_first(value: Any, keys: Tuple[str, ...], max_depth: int = 4) -> A
 
 
 def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
+    raw_side = str(getattr(trade, "side", "") or "").upper()
+    side = raw_side if raw_side in {"BUY", "SELL"} else None
     size = float(getattr(trade, "size", 0.0) or 0.0)
     if size <= 0:
         return None
@@ -191,6 +193,35 @@ def _load_token_map(path: Path) -> Dict[str, Dict[str, Any]]:
     return mapping
 
 
+def _load_sell_signals(path: Path) -> Dict[str, Dict[str, Any]]:
+    payload = _load_json(path)
+    signals = payload.get("sell_tokens") if isinstance(payload, dict) else []
+    mapping: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(signals, list):
+        return mapping
+    for item in signals:
+        if not isinstance(item, dict):
+            continue
+        token_id = item.get("token_id") or item.get("tokenId")
+        if not token_id:
+            continue
+        mapping[str(token_id)] = dict(item)
+    return mapping
+
+
+def _write_sell_signals(path: Path, mapping: Dict[str, Dict[str, Any]]) -> None:
+    def _sort_key(entry: Dict[str, Any]) -> float:
+        ts = _parse_last_seen(entry.get("last_seen"))
+        return ts.timestamp() if ts else 0.0
+
+    tokens = sorted(mapping.values(), key=_sort_key, reverse=True)
+    payload = {
+        "updated_at": _utc_now_iso(),
+        "sell_tokens": tokens,
+    }
+    _write_json(path, payload)
+
+
 def _write_tokens(path: Path, mapping: Dict[str, Dict[str, Any]]) -> None:
     def _sort_key(entry: Dict[str, Any]) -> float:
         ts = _parse_last_seen(entry.get("last_seen"))
@@ -250,6 +281,10 @@ def run_once(
         raise ValueError("targets 必须是数组")
 
     token_output_path = _resolve_path(config.get("token_output_path"), base_dir)
+    sell_signal_path = _resolve_path(
+        config.get("sell_signal_path") or "copytrade_sell_signals.json",
+        base_dir,
+    )
     state_path = _resolve_path(config.get("state_path"), base_dir)
 
     state = _load_json(state_path)
@@ -258,10 +293,12 @@ def run_once(
     state.setdefault("targets", {})
 
     token_map = _load_token_map(token_output_path)
+    sell_map = _load_sell_signals(sell_signal_path)
 
     initial_lookback_sec = int(config.get("initial_lookback_sec", 3600))
     now_ms = int(time.time() * 1000)
     changed = False
+    sell_changed = False
 
     for target in poll_targets:
         if not isinstance(target, dict):
@@ -319,11 +356,35 @@ def run_once(
                 token_map[key] = new_entry
                 changed = True
 
+            if action.get("side") == "SELL":
+                sell_entry = {
+                    "token_id": token_id,
+                    "source_account": account,
+                    "last_seen": last_seen,
+                    "market_slug": action.get("market_slug"),
+                }
+                existing_sell = sell_map.get(key)
+                existing_ts = _parse_last_seen(
+                    existing_sell.get("last_seen") if existing_sell else None
+                )
+                new_ts = _parse_last_seen(last_seen)
+                if existing_ts is None or (new_ts and new_ts >= existing_ts):
+                    sell_map[key] = sell_entry
+                    sell_changed = True
+
     if changed:
         _write_tokens(token_output_path, token_map)
         logger.info("tokens output updated: %s (total=%s)", token_output_path, len(token_map))
     else:
         logger.info("no token updates, total=%s", len(token_map))
+
+    if sell_changed:
+        _write_sell_signals(sell_signal_path, sell_map)
+        logger.info(
+            "sell signal output updated: %s (total=%s)",
+            sell_signal_path,
+            len(sell_map),
+        )
 
     _write_json(state_path, state)
 
