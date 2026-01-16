@@ -30,7 +30,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 MAKER_ROOT = PROJECT_ROOT / "POLYMARKET_MAKER"
 
 DEFAULT_GLOBAL_CONFIG = {
-    "topics_poll_sec": 300.0,
     "copytrade_poll_sec": 30.0,
     "command_poll_sec": 5.0,
     "max_concurrent_tasks": 10,
@@ -53,25 +52,15 @@ ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整
 
 
 def _topic_id_from_entry(entry: Any) -> str:
-    """从筛选结果条目中提取 topic_id/slug，兼容字符串或 dict。"""
+    """从 copytrade token 条目中提取 token_id。"""
 
     if isinstance(entry, str):
-        return entry
+        return entry.strip()
     if isinstance(entry, dict):
         token_id = entry.get("token_id") or entry.get("tokenId")
         if isinstance(token_id, str) and token_id.strip():
             return token_id.strip()
-        token_key = entry.get("token_key")
-        if isinstance(token_key, str) and token_key.strip():
-            return token_key.strip()
-        condition_id = entry.get("condition_id") or entry.get("conditionId")
-        outcome_index = entry.get("outcome_index") or entry.get("outcomeIndex")
-        if condition_id is not None and outcome_index is not None:
-            try:
-                return f"{condition_id}:{int(outcome_index)}"
-            except Exception:
-                pass
-        return str(entry.get("slug") or entry.get("topic_id") or "").strip()
+        return ""
     return str(entry).strip()
 
 
@@ -181,7 +170,6 @@ def compute_new_topics(latest: List[Any], handled: set[str]) -> List[str]:
 
 @dataclass
 class GlobalConfig:
-    topics_poll_sec: float = DEFAULT_GLOBAL_CONFIG["topics_poll_sec"]
     copytrade_poll_sec: float = DEFAULT_GLOBAL_CONFIG["copytrade_poll_sec"]
     command_poll_sec: float = DEFAULT_GLOBAL_CONFIG["command_poll_sec"]
     max_concurrent_tasks: int = DEFAULT_GLOBAL_CONFIG["max_concurrent_tasks"]
@@ -247,10 +235,6 @@ class GlobalConfig:
         )
 
         return cls(
-            topics_poll_sec=float(
-                scheduler.get("poll_interval_seconds")
-                or merged.get("topics_poll_sec", DEFAULT_GLOBAL_CONFIG["topics_poll_sec"])
-            ),
             copytrade_poll_sec=float(
                 scheduler.get("copytrade_poll_seconds")
                 or merged.get(
@@ -258,7 +242,9 @@ class GlobalConfig:
                 )
             ),
             command_poll_sec=float(
-                merged.get("command_poll_sec", DEFAULT_GLOBAL_CONFIG["command_poll_sec"])
+                scheduler.get("command_poll_seconds")
+                or scheduler.get("poll_interval_seconds")
+                or merged.get("command_poll_sec", DEFAULT_GLOBAL_CONFIG["command_poll_sec"])
             ),
             max_concurrent_tasks=int(
                 scheduler.get("max_concurrent_jobs")

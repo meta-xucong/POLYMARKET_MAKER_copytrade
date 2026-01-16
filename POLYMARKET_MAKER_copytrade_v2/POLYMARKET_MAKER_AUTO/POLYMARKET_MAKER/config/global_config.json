@@ -1,27 +1,14 @@
 {
   "scheduler": {
     "max_concurrent_jobs": 1,
-    "poll_interval_seconds": 300.0,
-    "copytrade_poll_seconds": 30.0,
-    "task_timeout_seconds": 240
+    "command_poll_seconds": 5.0,
+    "copytrade_poll_seconds": 30.0
   },
   "paths": {
     "log_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logs",
-    "data_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logs",
-    "order_history_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logsorder_history.jsonl",
-    "run_state_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logs/run_state.json",
+    "data_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/data",
+    "run_state_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/data/autorun_status.json",
     "copytrade_tokens_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/copytrade/tokens_from_copytrade.json",
     "copytrade_sell_signals_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/copytrade/copytrade_sell_signals.json"
-  },
-  "retry_strategy": {
-    "max_attempts": 4,
-    "initial_backoff_seconds": 2.0,
-    "backoff_multiplier": 2.0,
-    "max_backoff_seconds": 60.0,
-    "jitter_fraction": 0.3
-  },
-  "monitoring": {
-    "metrics_flush_interval_seconds": 120,
-    "healthcheck_interval_seconds": 180
   }
 }

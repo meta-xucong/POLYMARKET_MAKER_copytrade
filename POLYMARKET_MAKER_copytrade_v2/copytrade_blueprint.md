@@ -6,8 +6,8 @@
 
 ### 1.1 现有 autorun 流程
 
-- `POLYMARKET_MAKER_AUTO/poly_maker_autorun.py` 通过 `Customize_fliter_blacklist.py` 输出的筛选结果（topics）驱动自动下单流程：
-  - 定时调用 `run_filter_once()` 生成 topics 列表并写入 `topics_filtered.json`。
+- `POLYMARKET_MAKER_AUTO/poly_maker_autorun.py` 通过读取 copytrade 产出的 token 文件驱动自动下单流程：
+  - 定时读取 `tokens_from_copytrade.json` 生成 topic 列表。
   - 解析 topic 信息并塞入队列，启动 `Volatility_arbitrage_run.py` 子进程执行做市策略。
 - 策略本身（`POLYMARKET_MAKER/Volatility_arbitrage_*`）已经完备，本次只替换“topics 的来源”，严禁改动 maker 执行逻辑。
 
@@ -100,7 +100,7 @@ POLYMARKET_MAKER_copytrade_v2/
 
 ### 3.1 改造目标
 
-- 删除 `poly_maker_autorun.py` 中“filter 参数 + `Customize_fliter_blacklist.py`”筛选流程；
+- 保持 `poly_maker_autorun.py` 仅基于 token 文件驱动调度流程；
 - 替换为读取 `copytrade/tokens_from_copytrade.json` 生成待执行列表；
 - 下单/做市逻辑不改动，仅将 topic 入口改为 token 入口（或使用 token 数据构造 topic_info）。
 
@@ -110,8 +110,7 @@ POLYMARKET_MAKER_copytrade_v2/
   - `copytrade_tokens_path`: 指向 `copytrade/tokens_from_copytrade.json`；
   - `copytrade_poll_sec`: 读取 token 文件的轮询周期；
 - 在 `AutoRunManager._refresh_topics()` 中：
-  - 删除 `run_filter_once()`；
-  - 替换为 `_load_copytrade_tokens()` 读取 token JSON；
+  - 使用 `_load_copytrade_tokens()` 读取 token JSON；
   - 将 token 转换为“伪 topic”条目，放入 `latest_topics` 和 `topic_details`。
 
 ### 3.3 token -> topic 的映射规则
@@ -126,9 +125,8 @@ POLYMARKET_MAKER_copytrade_v2/
 ### 3.4 需要调整的代码位置（仅说明）
 
 - `POLYMARKET_MAKER_AUTO/poly_maker_autorun.py`
-  - 移除/禁用 `FilterConfig` 与 `run_filter_once()` 相关逻辑；
-  - 增加 `copytrade token` 解析函数（例如 `_load_copytrade_tokens()`）；
-  - `GlobalConfig` 中新增 copytrade 路径与轮询参数。
+  - 仅保留 `copytrade token` 解析函数（例如 `_load_copytrade_tokens()`）；
+  - `GlobalConfig` 中保留 copytrade 路径与轮询参数。
 - `POLYMARKET_MAKER/config` 若需要：
   - 新增 `autorun` 配置模板（指向 token 文件）或扩展现有配置文件字段。
 
