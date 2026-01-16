@@ -10,7 +10,8 @@
     "data_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logs",
     "order_history_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logsorder_history.jsonl",
     "run_state_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logs/run_state.json",
-    "copytrade_tokens_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/copytrade/tokens_from_copytrade.json"
+    "copytrade_tokens_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/copytrade/tokens_from_copytrade.json",
+    "copytrade_sell_signals_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/copytrade/copytrade_sell_signals.json"
   },
   "retry_strategy": {
     "max_attempts": 4,

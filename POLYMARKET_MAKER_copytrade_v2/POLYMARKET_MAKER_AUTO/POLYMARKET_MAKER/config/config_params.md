@@ -44,6 +44,7 @@
 | `paths.order_history_file` | 历史订单记录文件路径。 | 字符串 | 默认写入 `POLYMARKET_MAKER/logs/order_history.jsonl`。 |
 | `paths.run_state_file` | 运行状态快照文件。 | 字符串 | 默认写入 `POLYMARKET_MAKER/logs/run_state.json`。 |
 | `paths.copytrade_tokens_file` | copytrade 产出的 token 文件路径。 | 字符串 | 指向 `copytrade/tokens_from_copytrade.json`。 |
+| `paths.copytrade_sell_signals_file` | copytrade 产出的 sell 信号文件路径。 | 字符串 | 指向 `copytrade/copytrade_sell_signals.json`。 |
 | `retry_strategy.max_attempts` | 筛选或子任务的最大重试次数。 | 整数 | 3~5。 |
 | `retry_strategy.initial_backoff_seconds` | 首次重试等待秒数。 | 浮点 | 1.0 起步。 |
 | `retry_strategy.backoff_multiplier` | 指数退避倍率。 | 浮点 | 2.0 表示每次翻倍。 |
