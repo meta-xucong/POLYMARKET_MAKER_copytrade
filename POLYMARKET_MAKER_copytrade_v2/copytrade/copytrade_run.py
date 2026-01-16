@@ -23,15 +23,6 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _resolve_path(raw: Optional[str], base_dir: Path) -> Path:
-    if not raw:
-        return base_dir
-    path = Path(raw)
-    if path.is_absolute():
-        return path
-    return (base_dir / path).resolve()
-
-
 def _load_json(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -122,34 +113,15 @@ def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
         )
     if token_id is None:
         return None
-    condition_id = raw.get("conditionId") or raw.get("condition_id") or raw.get("marketId")
-    if condition_id is None:
-        condition_id = _deep_find_first(
-            raw, ("conditionId", "condition_id", "marketId", "market_id")
-        )
-    outcome_index = raw.get("outcomeIndex") or raw.get("outcome_index")
-    if outcome_index is None:
-        outcome_index = _deep_find_first(raw, ("outcomeIndex", "outcome_index"))
-
-    if outcome_index is not None:
-        try:
-            outcome_index = int(outcome_index)
-        except (TypeError, ValueError):
-            outcome_index = None
-
     timestamp = getattr(trade, "timestamp", None)
     if timestamp is None:
         return None
 
-    market_slug = raw.get("marketSlug") or raw.get("market_slug") or raw.get("slug")
-
     return {
         "token_id": str(token_id) if token_id is not None else None,
-        "condition_id": str(condition_id) if condition_id is not None else None,
-        "outcome_index": outcome_index,
+        "side": side,
         "size": size,
         "timestamp": timestamp,
-        "market_slug": str(market_slug) if market_slug else None,
     }
 
 
@@ -280,12 +252,9 @@ def run_once(
     if not isinstance(poll_targets, list):
         raise ValueError("targets 必须是数组")
 
-    token_output_path = _resolve_path(config.get("token_output_path"), base_dir)
-    sell_signal_path = _resolve_path(
-        config.get("sell_signal_path") or "copytrade_sell_signals.json",
-        base_dir,
-    )
-    state_path = _resolve_path(config.get("state_path"), base_dir)
+    token_output_path = base_dir / "tokens_from_copytrade.json"
+    sell_signal_path = base_dir / "copytrade_sell_signals.json"
+    state_path = base_dir / "copytrade_state.json"
 
     state = _load_json(state_path)
     if not isinstance(state, dict):
@@ -331,11 +300,8 @@ def run_once(
             )
             new_entry = {
                 "token_id": token_id,
-                "condition_id": action.get("condition_id"),
-                "outcome_index": action.get("outcome_index"),
                 "source_account": account,
                 "last_seen": last_seen,
-                "market_slug": action.get("market_slug"),
             }
 
             existing = token_map.get(key)
@@ -345,13 +311,6 @@ def run_once(
                 if existing_ts is None or (new_ts and new_ts >= existing_ts):
                     token_map[key] = new_entry
                     changed = True
-                else:
-                    if not existing.get("token_id") and new_entry.get("token_id"):
-                        existing["token_id"] = new_entry["token_id"]
-                        changed = True
-                    if not existing.get("market_slug") and new_entry.get("market_slug"):
-                        existing["market_slug"] = new_entry["market_slug"]
-                        changed = True
             else:
                 token_map[key] = new_entry
                 changed = True
@@ -361,7 +320,6 @@ def run_once(
                     "token_id": token_id,
                     "source_account": account,
                     "last_seen": last_seen,
-                    "market_slug": action.get("market_slug"),
                 }
                 existing_sell = sell_map.get(key)
                 existing_ts = _parse_last_seen(
@@ -411,7 +369,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         raise ValueError("配置文件必须是 JSON 对象")
 
     base_dir = config_path.parent
-    log_dir = _resolve_path(config.get("log_dir"), base_dir)
+    log_dir = base_dir / "logs"
     logger = _setup_logger(log_dir)
 
     poll_interval = float(config.get("poll_interval_sec", 30))
