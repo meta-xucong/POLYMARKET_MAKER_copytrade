@@ -1,6 +1,6 @@
 {
   "scheduler": {
-    "max_concurrent_jobs": 1,
+    "max_concurrent_jobs": 4,
     "command_poll_seconds": 5.0,
     "copytrade_poll_seconds": 30.0
   },
