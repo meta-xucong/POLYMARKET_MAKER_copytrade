@@ -55,6 +55,9 @@ def _topic_id_from_entry(entry: Any) -> str:
     if isinstance(entry, str):
         return entry
     if isinstance(entry, dict):
+        token_id = entry.get("token_id") or entry.get("tokenId")
+        if isinstance(token_id, str) and token_id.strip():
+            return token_id.strip()
         token_key = entry.get("token_key")
         if isinstance(token_key, str) and token_key.strip():
             return token_key.strip()
@@ -382,15 +385,6 @@ class AutoRunManager:
                         f"[AUTO] topic={task.topic_id} 日志显示市场已结束，自动结束该话题。"
                     )
                     self._terminate_task(task, reason="market closed (auto)")
-                elif self._log_indicates_missing_side(task):
-                    task.status = "ended"
-                    task.no_restart = True
-                    task.end_reason = "missing side"
-                    task.heartbeat("missing side detected from log")
-                    print(
-                        f"[AUTO] topic={task.topic_id} 检测到无法确定下单方向，视为话题结束，释放执行名额。"
-                    )
-                    self._terminate_task(task, reason="missing side (auto)")
                 continue
             self._handle_process_exit(task, rc)
 
@@ -402,13 +396,6 @@ class AutoRunManager:
             task.status = "exited" if rc == 0 else "error"
         task.heartbeat(f"process finished rc={rc}")
         self._update_log_excerpt(task)
-
-        if self._log_indicates_missing_side(task):
-            task.no_restart = True
-            task.status = "ended"
-            task.end_reason = "missing side"
-            task.heartbeat("missing side detected from log on exit")
-            return
 
         if task.no_restart:
             return
@@ -462,15 +449,6 @@ class AutoRunManager:
         )
         return any(p.lower() in excerpt for p in patterns)
 
-    def _log_indicates_missing_side(self, task: TopicTask) -> bool:
-        excerpt = (task.log_excerpt or "").lower()
-        if not excerpt:
-            return False
-        patterns = (
-            "未提供下单方向 side，且未能从 preferred_side/highlight_sides 推断",
-        )
-        return any(p.lower() in excerpt for p in patterns)
-
     def _schedule_pending_topics(self) -> None:
         running = sum(1 for t in self.tasks.values() if t.is_running())
         while (
@@ -518,27 +496,21 @@ class AutoRunManager:
         merged = {**base_template, **base, **topic_overrides}
 
         topic_info = self.topic_details.get(topic_id, {})
-        slug = topic_info.get("slug") or topic_id
-        merged["market_url"] = f"https://polymarket.com/market/{slug}"
+        slug = topic_info.get("slug")
+        if slug:
+            merged["market_url"] = f"https://polymarket.com/market/{slug}"
         merged["topic_id"] = topic_id
 
         if topic_info.get("title"):
             merged["topic_name"] = topic_info.get("title")
+        if topic_info.get("token_id"):
+            merged["token_id"] = topic_info.get("token_id")
         if topic_info.get("yes_token"):
             merged["yes_token"] = topic_info.get("yes_token")
         if topic_info.get("no_token"):
             merged["no_token"] = topic_info.get("no_token")
         if topic_info.get("end_time"):
             merged["end_time"] = topic_info.get("end_time")
-
-        highlight_sides = topic_info.get("highlight_sides") or []
-        preferred_side = topic_info.get("preferred_side") or None
-        if preferred_side is None and highlight_sides:
-            preferred_side = highlight_sides[0]
-        if preferred_side:
-            merged["side"] = preferred_side
-        if highlight_sides:
-            merged["highlight_sides"] = highlight_sides
 
         base_order_size = _coerce_float(merged.get("order_size"))
         total_volume = _coerce_float(topic_info.get("total_volume"))
@@ -827,27 +799,16 @@ class AutoRunManager:
         for item in raw_tokens:
             if not isinstance(item, dict):
                 continue
-            condition_id = item.get("condition_id") or item.get("conditionId")
-            outcome_index = item.get("outcome_index") or item.get("outcomeIndex")
-            if condition_id is None or outcome_index is None:
+            token_id = item.get("token_id") or item.get("tokenId")
+            if not token_id:
                 continue
-            try:
-                outcome_index_int = int(outcome_index)
-            except Exception:
-                continue
-            topic_id = f"{condition_id}:{outcome_index_int}"
-            side = str(item.get("side") or "").upper()
             market_slug = item.get("market_slug") or item.get("slug")
             topics.append(
                 {
-                    "topic_id": topic_id,
-                    "condition_id": str(condition_id),
-                    "outcome_index": outcome_index_int,
-                    "slug": market_slug or topic_id,
-                    "token_id": item.get("token_id"),
+                    "topic_id": str(token_id),
+                    "token_id": str(token_id),
+                    "slug": market_slug,
                     "last_seen": item.get("last_seen"),
-                    "preferred_side": side or None,
-                    "highlight_sides": [side] if side else [],
                 }
             )
         print(f"[COPYTRADE] 已读取 token {len(topics)} 条 | {path}")
