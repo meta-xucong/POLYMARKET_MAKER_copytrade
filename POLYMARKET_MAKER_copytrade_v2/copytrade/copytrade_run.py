@@ -263,7 +263,6 @@ def run_once(
     token_map = _load_token_map(token_output_path)
     sell_map = _load_sell_signals(sell_signal_path)
 
-    initial_lookback_sec = int(config.get("initial_lookback_sec", 3600))
     now_ms = int(time.time() * 1000)
     changed = False
     sell_changed = False
@@ -280,7 +279,13 @@ def run_once(
         target_state = state["targets"].get(account, {})
         since_ms = int(target_state.get("last_timestamp_ms") or 0)
         if since_ms <= 0:
-            since_ms = max(0, now_ms - initial_lookback_sec * 1000)
+            init_ms = now_ms
+            state["targets"][account] = {
+                "last_timestamp_ms": init_ms,
+                "updated_at": _utc_now_iso(),
+            }
+            logger.info("初始化目标账户状态，忽略已有仓位: account=%s", account)
+            continue
 
         actions, latest_ms = _collect_trades(client, account, since_ms, min_size, logger)
         if latest_ms > since_ms:
