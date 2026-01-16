@@ -87,9 +87,6 @@ def _deep_find_first(value: Any, keys: Tuple[str, ...], max_depth: int = 4) -> A
 
 
 def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
-    side = str(getattr(trade, "side", "") or "").upper()
-    if side not in {"BUY", "SELL"}:
-        return None
     size = float(getattr(trade, "size", 0.0) or 0.0)
     if size <= 0:
         return None
@@ -121,6 +118,8 @@ def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
                 "outcome_token_id",
             ),
         )
+    if token_id is None:
+        return None
     condition_id = raw.get("conditionId") or raw.get("condition_id") or raw.get("marketId")
     if condition_id is None:
         condition_id = _deep_find_first(
@@ -130,12 +129,11 @@ def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
     if outcome_index is None:
         outcome_index = _deep_find_first(raw, ("outcomeIndex", "outcome_index"))
 
-    if condition_id is None or outcome_index is None:
-        return None
-    try:
-        outcome_index = int(outcome_index)
-    except (TypeError, ValueError):
-        return None
+    if outcome_index is not None:
+        try:
+            outcome_index = int(outcome_index)
+        except (TypeError, ValueError):
+            outcome_index = None
 
     timestamp = getattr(trade, "timestamp", None)
     if timestamp is None:
@@ -145,9 +143,8 @@ def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
 
     return {
         "token_id": str(token_id) if token_id is not None else None,
-        "condition_id": str(condition_id),
+        "condition_id": str(condition_id) if condition_id is not None else None,
         "outcome_index": outcome_index,
-        "side": side,
         "size": size,
         "timestamp": timestamp,
         "market_slug": str(market_slug) if market_slug else None,
@@ -186,16 +183,10 @@ def _load_token_map(path: Path) -> Dict[str, Dict[str, Any]]:
     for item in tokens:
         if not isinstance(item, dict):
             continue
-        condition_id = item.get("condition_id") or item.get("conditionId")
-        outcome_index = item.get("outcome_index") or item.get("outcomeIndex")
-        side = str(item.get("side") or "").upper()
-        if condition_id is None or outcome_index is None or not side:
+        token_id = item.get("token_id") or item.get("tokenId")
+        if not token_id:
             continue
-        try:
-            outcome_index = int(outcome_index)
-        except (TypeError, ValueError):
-            continue
-        key = f"{condition_id}:{outcome_index}:{side}"
+        key = str(token_id)
         mapping[key] = dict(item)
     return mapping
 
@@ -293,19 +284,18 @@ def run_once(
                 "updated_at": _utc_now_iso(),
             }
         for action in actions:
-            condition_id = action["condition_id"]
-            outcome_index = action["outcome_index"]
-            side = action["side"]
-            key = f"{condition_id}:{outcome_index}:{side}"
+            token_id = action.get("token_id")
+            if not token_id:
+                continue
+            key = str(token_id)
 
             last_seen = action["timestamp"].astimezone(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
             )
             new_entry = {
-                "token_id": action.get("token_id"),
-                "condition_id": condition_id,
-                "outcome_index": outcome_index,
-                "side": side,
+                "token_id": token_id,
+                "condition_id": action.get("condition_id"),
+                "outcome_index": action.get("outcome_index"),
                 "source_account": account,
                 "last_seen": last_seen,
                 "market_slug": action.get("market_slug"),
