@@ -2949,6 +2949,32 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             _execute_sell(position_size, floor_hint=floor_hint, source="[STAGNANT]")
         else:
             strategy.stop("price stagnation")
+            print("[QUEUE] 释放队列：价格停滞且无持仓，已退出。")
+            stop_event.set()
+
+    def _handle_no_feed_exit(idle_seconds: float) -> None:
+        nonlocal exit_after_sell_only_clear, stagnation_triggered
+        if stagnation_triggered:
+            return
+        stagnation_triggered = True
+        print(
+            "[STAGNANT] "
+            f"{_fmt_minutes(idle_seconds)} 未收到行情更新，触发退出。"
+        )
+        _maybe_refresh_position_size("[STAGNANT][NO-FEED][SYNC]", force=True)
+        if _has_actionable_position():
+            sell_only_event.set()
+            strategy.enable_sell_only("price stagnation (no feed)")
+            exit_after_sell_only_clear = True
+            floor_hint = _latest_best_bid()
+            if floor_hint is None:
+                floor_hint = _latest_best_ask()
+            if floor_hint is None:
+                floor_hint = _latest_price()
+            _execute_sell(position_size, floor_hint=floor_hint, source="[STAGNANT][NO-FEED]")
+        else:
+            strategy.stop("price stagnation (no feed)")
+            print("[QUEUE] 释放队列：长时间无行情且无持仓，已退出。")
             stop_event.set()
 
     try:
@@ -3005,6 +3031,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 _reconcile_empty_long_state("[LOOP]")
 
                 if stagnation_window_seconds > 0 and not stagnation_triggered:
+                    with ws_state_lock:
+                        last_event_ts = float(ws_state.get("last_event_ts") or 0.0)
+                    if last_event_ts > 0:
+                        idle_seconds = now - last_event_ts
+                        if idle_seconds >= stagnation_window_seconds:
+                            _handle_no_feed_exit(idle_seconds)
+                            if stop_event.is_set():
+                                break
+                            continue
                     snap = latest.get(token_id) or {}
                     last_px = float(snap.get("price") or 0.0)
                     if last_px > 0:
@@ -3037,6 +3072,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     awaiting_is_sell = awaiting_val == ActionType.SELL
                     if not _has_actionable_position(status) and not awaiting_is_sell:
                         print("[COUNTDOWN] 倒计时仅卖出模式下已清仓，脚本将退出。")
+                        if stagnation_triggered:
+                            print("[QUEUE] 释放队列：停滞清仓完成，已退出。")
                         strategy.stop("countdown sell-only cleared position")
                         stop_event.set()
                         break
