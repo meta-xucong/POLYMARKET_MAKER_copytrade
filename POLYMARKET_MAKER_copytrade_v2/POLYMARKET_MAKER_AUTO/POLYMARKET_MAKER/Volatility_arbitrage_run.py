@@ -20,7 +20,8 @@ import hashlib
 import json
 import inspect
 from queue import Queue, Empty
-from typing import Dict, Any, Tuple, List, Optional
+from collections import deque
+from typing import Dict, Any, Tuple, List, Optional, Deque
 import math
 from decimal import Decimal, ROUND_UP, ROUND_DOWN
 import requests
@@ -1779,6 +1780,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         dt = datetime.fromtimestamp(ts_f, tz=timezone.utc)
         return dt.isoformat()
 
+    def _snapshot_ts(snap: Dict[str, Any]) -> float:
+        for key in ("ts", "timestamp", "time"):
+            ts_val = _coerce_float(snap.get(key))
+            if ts_val is not None:
+                return ts_val
+        return time.time()
+
     end_ts = market_meta.get("end_ts") if isinstance(market_meta, dict) else None
     resolved_ts = market_meta.get("resolved_ts") if isinstance(market_meta, dict) else None
     if end_ts or resolved_ts:
@@ -1978,6 +1986,18 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         )
     else:
         print("[INIT] 未启用递增跌幅阈值，保持固定阈值运行。")
+
+    stagnation_window_minutes = _coerce_float(run_cfg.get("stagnation_window_minutes"))
+    if stagnation_window_minutes is None:
+        stagnation_window_minutes = 120.0
+    stagnation_pct = _normalize_ratio(run_cfg.get("stagnation_pct"), 0.0)
+    if stagnation_window_minutes <= 0:
+        print("[INIT] 价格停滞监控已禁用。")
+    else:
+        print(
+            "[INIT] 价格停滞监控窗口 "
+            f"{stagnation_window_minutes:.1f} 分钟，阈值 {stagnation_pct * 100:.4f}%。"
+        )
 
     sell_only_start_ts: Optional[float] = None
     countdown_cfg = run_cfg.get("countdown") if isinstance(run_cfg, dict) else {}
@@ -2511,6 +2531,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     exit_after_sell_only_clear: bool = False
     min_loop_interval = 1.0
     next_loop_after = 0.0
+    stagnation_window_seconds = max(float(stagnation_window_minutes), 0.0) * 60.0
+    stagnation_history: Deque[Tuple[float, float]] = deque()
+    stagnation_triggered: bool = False
 
     def _reconcile_empty_long_state(reason: str) -> None:
         nonlocal position_size
@@ -2903,6 +2926,31 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 f"price={display_price:.4f} size={sold_display:.4f} status={sell_status}{dust_note}"
             )
 
+    def _handle_stagnation_exit(change_ratio: float, window_span: float) -> None:
+        nonlocal exit_after_sell_only_clear, stagnation_triggered
+        if stagnation_triggered:
+            return
+        stagnation_triggered = True
+        print(
+            "[STAGNANT] 价格在 "
+            f"{_fmt_minutes(window_span)} 内波动 {_fmt_pct(change_ratio)} "
+            f"≤ 阈值 {_fmt_pct(stagnation_pct)}，触发退出。"
+        )
+        _maybe_refresh_position_size("[STAGNANT][SYNC]", force=True)
+        if _has_actionable_position():
+            sell_only_event.set()
+            strategy.enable_sell_only("price stagnation")
+            exit_after_sell_only_clear = True
+            floor_hint = _latest_best_bid()
+            if floor_hint is None:
+                floor_hint = _latest_best_ask()
+            if floor_hint is None:
+                floor_hint = _latest_price()
+            _execute_sell(position_size, floor_hint=floor_hint, source="[STAGNANT]")
+        else:
+            strategy.stop("price stagnation")
+            stop_event.set()
+
     try:
         while not stop_event.is_set():
             now = time.time()
@@ -2955,6 +3003,32 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     _maybe_refresh_position_size("[LOOP]")
 
                 _reconcile_empty_long_state("[LOOP]")
+
+                if stagnation_window_seconds > 0 and not stagnation_triggered:
+                    snap = latest.get(token_id) or {}
+                    last_px = float(snap.get("price") or 0.0)
+                    if last_px > 0:
+                        snap_ts = _snapshot_ts(snap)
+                        stagnation_history.append((snap_ts, last_px))
+                        while (
+                            stagnation_history
+                            and snap_ts - stagnation_history[0][0]
+                            > stagnation_window_seconds
+                        ):
+                            stagnation_history.popleft()
+                        if len(stagnation_history) >= 2:
+                            window_span = snap_ts - stagnation_history[0][0]
+                            if window_span >= stagnation_window_seconds:
+                                prices = [p for _, p in stagnation_history]
+                                high = max(prices)
+                                low = min(prices)
+                                if high > 0:
+                                    change_ratio = (high - low) / high
+                                    if change_ratio <= stagnation_pct:
+                                        _handle_stagnation_exit(change_ratio, window_span)
+                                        if stop_event.is_set():
+                                            break
+                                        continue
 
                 if sell_only_event.is_set() and exit_after_sell_only_clear:
                     status = strategy.status()
