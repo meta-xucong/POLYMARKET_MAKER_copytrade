@@ -38,7 +38,7 @@
 | `scheduler.max_concurrent_jobs` | 同时运行的子进程/任务上限。 | 整数 | 根据机器核数调整，1~4 为宜。 |
 | `scheduler.command_poll_seconds` | 主循环轮询/调度间隔秒数。 | 浮点 | 1~10 秒。 |
 | `scheduler.copytrade_poll_seconds` | 轮询 copytrade token 文件的间隔秒数。 | 浮点 | 10~60 秒。 |
-| `paths.log_directory` | 日志目录（可相对或绝对路径）。 | 字符串 | 统一写入 `POLYMARKET_MAKER/logs/`。 |
+| `paths.log_directory` | maker 波段子进程日志目录（可相对或绝对路径）。 | 字符串 | 建议写入 `POLYMARKET_MAKER/logs/autorun/`。 |
 | `paths.data_directory` | 数据目录（状态快照、退出信号等）。 | 字符串 | 建议与日志目录分开保存。 |
 | `paths.run_state_file` | 运行状态快照文件。 | 字符串 | 默认写入 `POLYMARKET_MAKER/data/autorun_status.json`。 |
 | `paths.copytrade_tokens_file` | copytrade 产出的 token 文件路径。 | 字符串 | 指向 `copytrade/tokens_from_copytrade.json`。 |
