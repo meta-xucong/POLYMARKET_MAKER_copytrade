@@ -1991,12 +1991,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     if stagnation_window_minutes is None:
         stagnation_window_minutes = 120.0
     stagnation_pct = _normalize_ratio(run_cfg.get("stagnation_pct"), 0.0)
+    no_event_exit_minutes = _coerce_float(run_cfg.get("no_event_exit_minutes"))
+    if no_event_exit_minutes is None:
+        no_event_exit_minutes = 10.0
     if stagnation_window_minutes <= 0:
         print("[INIT] 价格停滞监控已禁用。")
     else:
         print(
             "[INIT] 价格停滞监控窗口 "
             f"{stagnation_window_minutes:.1f} 分钟，阈值 {stagnation_pct * 100:.4f}%。"
+        )
+    if no_event_exit_minutes <= 0:
+        print("[INIT] 启动后无行情自动退出已禁用。")
+    else:
+        print(
+            "[INIT] 启动后无行情自动退出阈值 "
+            f"{no_event_exit_minutes:.1f} 分钟。"
         )
 
     sell_only_start_ts: Optional[float] = None
@@ -2532,8 +2542,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     min_loop_interval = 1.0
     next_loop_after = 0.0
     stagnation_window_seconds = max(float(stagnation_window_minutes), 0.0) * 60.0
+    no_event_exit_seconds = max(float(no_event_exit_minutes), 0.0) * 60.0
     stagnation_history: Deque[Tuple[float, float]] = deque()
     stagnation_triggered: bool = False
+    run_started_at = time.time()
 
     def _reconcile_empty_long_state(reason: str) -> None:
         nonlocal position_size
@@ -3029,6 +3041,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     _maybe_refresh_position_size("[LOOP]")
 
                 _reconcile_empty_long_state("[LOOP]")
+
+                if no_event_exit_seconds > 0 and not stagnation_triggered:
+                    with ws_state_lock:
+                        last_event_ts = float(ws_state.get("last_event_ts") or 0.0)
+                    if last_event_ts <= 0:
+                        idle_seconds = now - run_started_at
+                        if idle_seconds >= no_event_exit_seconds:
+                            _handle_no_feed_exit(idle_seconds)
+                            if stop_event.is_set():
+                                break
+                            continue
 
                 if stagnation_window_seconds > 0 and not stagnation_triggered:
                     with ws_state_lock:
