@@ -20,7 +20,8 @@ import hashlib
 import json
 import inspect
 from queue import Queue, Empty
-from typing import Dict, Any, Tuple, List, Optional
+from collections import deque
+from typing import Dict, Any, Tuple, List, Optional, Deque
 import math
 from decimal import Decimal, ROUND_UP, ROUND_DOWN
 import requests
@@ -1511,6 +1512,57 @@ def _list_markets_under_event(event_slug: str) -> List[dict]:
 def _fetch_market_by_slug(market_slug: str) -> Optional[dict]:
     return _http_json(f"{GAMMA_ROOT}/markets/slug/{market_slug}")
 
+def _fetch_market_by_token_id(token_id: str) -> Optional[dict]:
+    if not token_id:
+        return None
+
+    def _normalize_clob_tokens(raw_value: Any) -> List[str]:
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, (list, tuple)):
+            return [str(item) for item in raw_value if item is not None]
+        if isinstance(raw_value, str):
+            trimmed = raw_value.strip()
+            if trimmed.startswith("[") and trimmed.endswith("]"):
+                try:
+                    parsed = json.loads(trimmed)
+                except JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed if item is not None]
+            return [trimmed]
+        return [str(raw_value)]
+
+    def _select_market(markets: List[dict]) -> Optional[dict]:
+        if not markets:
+            return None
+        token_str = str(token_id)
+        matches = []
+        for market in markets:
+            clob_tokens = _normalize_clob_tokens(market.get("clobTokenIds"))
+            if token_str in clob_tokens:
+                matches.append(market)
+        if not matches:
+            return None
+        for market in matches:
+            if market.get("active") is True and market.get("closed") is False:
+                return market
+        return matches[0]
+
+    for param_name in ("clob_token_ids", "clobTokenIds"):
+        params = {param_name: str(token_id), "limit": 50}
+        data = _http_json(f"{GAMMA_ROOT}/markets", params=params)
+        markets = []
+        if isinstance(data, dict) and "data" in data:
+            markets = data["data"]
+        elif isinstance(data, list):
+            markets = data
+        if isinstance(markets, list):
+            match = _select_market(markets)
+            if match is not None:
+                return match
+    return None
+
 def _pick_market_subquestion(markets: List[dict]) -> dict:
     print("[CHOICE] 该事件下存在多个子问题，请选择其一，或直接粘贴具体子问题URL：")
     for i, m in enumerate(markets):
@@ -1680,6 +1732,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         or token_id
     )
     market_meta = _maybe_fetch_market_meta_from_source(source) if source else {}
+    if not market_meta and token_id:
+        print("[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。")
+        token_market = _fetch_market_by_token_id(str(token_id))
+        if token_market:
+            market_meta = _market_meta_from_obj(token_market)
+        else:
+            print("[WARN] 未能通过 token_id 获取市场元数据，可能无法识别截止时间或价格精度。")
     raw_meta = market_meta.get("raw") if isinstance(market_meta, dict) else None
     if isinstance(raw_meta, dict):
         title = raw_meta.get("title") or raw_meta.get("question") or title
@@ -1720,6 +1779,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return None
         dt = datetime.fromtimestamp(ts_f, tz=timezone.utc)
         return dt.isoformat()
+
+    def _snapshot_ts(snap: Dict[str, Any]) -> float:
+        for key in ("ts", "timestamp", "time"):
+            ts_val = _coerce_float(snap.get(key))
+            if ts_val is not None:
+                return ts_val
+        return time.time()
 
     end_ts = market_meta.get("end_ts") if isinstance(market_meta, dict) else None
     resolved_ts = market_meta.get("resolved_ts") if isinstance(market_meta, dict) else None
@@ -1816,9 +1882,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             market_deadline_ts = None
 
     if not manual_deadline_disabled and _should_offer_common_deadline_options(market_meta):
+        override_spec = {
+            "hour": 23,
+            "minute": 59,
+            "timezone": "America/New_York",
+            "fallback_offset": -240,
+        }
+        default_deadline_spec = dict(default_deadline_spec or {})
+        default_deadline_spec.update(override_spec)
         _apply_default_deadline("自动获取的截止日期缺少具体时刻")
     if not manual_deadline_disabled and not market_deadline_ts:
-        _apply_default_deadline("未能自动获取市场结束时间")
+        print("[WARN] 未能自动获取市场结束时间，将进入无截止日期模式继续运行。")
+        manual_deadline_disabled = True
+        market_meta = dict(market_meta or {})
+        market_meta.pop("end_ts", None)
+        market_meta.pop("resolved_ts", None)
+        market_deadline_ts = None
     if market_deadline_ts:
         dt_deadline = datetime.fromtimestamp(market_deadline_ts, tz=timezone.utc)
         print(
@@ -1907,6 +1986,28 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         )
     else:
         print("[INIT] 未启用递增跌幅阈值，保持固定阈值运行。")
+
+    stagnation_window_minutes = _coerce_float(run_cfg.get("stagnation_window_minutes"))
+    if stagnation_window_minutes is None:
+        stagnation_window_minutes = 120.0
+    stagnation_pct = _normalize_ratio(run_cfg.get("stagnation_pct"), 0.0)
+    no_event_exit_minutes = _coerce_float(run_cfg.get("no_event_exit_minutes"))
+    if no_event_exit_minutes is None:
+        no_event_exit_minutes = 10.0
+    if stagnation_window_minutes <= 0:
+        print("[INIT] 价格停滞监控已禁用。")
+    else:
+        print(
+            "[INIT] 价格停滞监控窗口 "
+            f"{stagnation_window_minutes:.1f} 分钟，阈值 {stagnation_pct * 100:.4f}%。"
+        )
+    if no_event_exit_minutes <= 0:
+        print("[INIT] 启动后无行情自动退出已禁用。")
+    else:
+        print(
+            "[INIT] 启动后无行情自动退出阈值 "
+            f"{no_event_exit_minutes:.1f} 分钟。"
+        )
 
     sell_only_start_ts: Optional[float] = None
     countdown_cfg = run_cfg.get("countdown") if isinstance(run_cfg, dict) else {}
@@ -2440,6 +2541,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     exit_after_sell_only_clear: bool = False
     min_loop_interval = 1.0
     next_loop_after = 0.0
+    stagnation_window_seconds = max(float(stagnation_window_minutes), 0.0) * 60.0
+    no_event_exit_seconds = max(float(no_event_exit_minutes), 0.0) * 60.0
+    stagnation_history: Deque[Tuple[float, float]] = deque()
+    stagnation_triggered: bool = False
+    run_started_at = time.time()
 
     def _reconcile_empty_long_state(reason: str) -> None:
         nonlocal position_size
@@ -2832,6 +2938,57 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 f"price={display_price:.4f} size={sold_display:.4f} status={sell_status}{dust_note}"
             )
 
+    def _handle_stagnation_exit(change_ratio: float, window_span: float) -> None:
+        nonlocal exit_after_sell_only_clear, stagnation_triggered
+        if stagnation_triggered:
+            return
+        stagnation_triggered = True
+        print(
+            "[STAGNANT] 价格在 "
+            f"{_fmt_minutes(window_span)} 内波动 {_fmt_pct(change_ratio)} "
+            f"≤ 阈值 {_fmt_pct(stagnation_pct)}，触发退出。"
+        )
+        _maybe_refresh_position_size("[STAGNANT][SYNC]", force=True)
+        if _has_actionable_position():
+            sell_only_event.set()
+            strategy.enable_sell_only("price stagnation")
+            exit_after_sell_only_clear = True
+            floor_hint = _latest_best_bid()
+            if floor_hint is None:
+                floor_hint = _latest_best_ask()
+            if floor_hint is None:
+                floor_hint = _latest_price()
+            _execute_sell(position_size, floor_hint=floor_hint, source="[STAGNANT]")
+        else:
+            strategy.stop("price stagnation")
+            print("[QUEUE] 释放队列：价格停滞且无持仓，已退出。")
+            stop_event.set()
+
+    def _handle_no_feed_exit(idle_seconds: float) -> None:
+        nonlocal exit_after_sell_only_clear, stagnation_triggered
+        if stagnation_triggered:
+            return
+        stagnation_triggered = True
+        print(
+            "[STAGNANT] "
+            f"{_fmt_minutes(idle_seconds)} 未收到行情更新，触发退出。"
+        )
+        _maybe_refresh_position_size("[STAGNANT][NO-FEED][SYNC]", force=True)
+        if _has_actionable_position():
+            sell_only_event.set()
+            strategy.enable_sell_only("price stagnation (no feed)")
+            exit_after_sell_only_clear = True
+            floor_hint = _latest_best_bid()
+            if floor_hint is None:
+                floor_hint = _latest_best_ask()
+            if floor_hint is None:
+                floor_hint = _latest_price()
+            _execute_sell(position_size, floor_hint=floor_hint, source="[STAGNANT][NO-FEED]")
+        else:
+            strategy.stop("price stagnation (no feed)")
+            print("[QUEUE] 释放队列：长时间无行情且无持仓，已退出。")
+            stop_event.set()
+
     try:
         while not stop_event.is_set():
             now = time.time()
@@ -2885,6 +3042,52 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 _reconcile_empty_long_state("[LOOP]")
 
+                if no_event_exit_seconds > 0 and not stagnation_triggered:
+                    with ws_state_lock:
+                        last_event_ts = float(ws_state.get("last_event_ts") or 0.0)
+                    if last_event_ts <= 0:
+                        idle_seconds = now - run_started_at
+                        if idle_seconds >= no_event_exit_seconds:
+                            _handle_no_feed_exit(idle_seconds)
+                            if stop_event.is_set():
+                                break
+                            continue
+
+                if stagnation_window_seconds > 0 and not stagnation_triggered:
+                    with ws_state_lock:
+                        last_event_ts = float(ws_state.get("last_event_ts") or 0.0)
+                    if last_event_ts > 0:
+                        idle_seconds = now - last_event_ts
+                        if idle_seconds >= stagnation_window_seconds:
+                            _handle_no_feed_exit(idle_seconds)
+                            if stop_event.is_set():
+                                break
+                            continue
+                    snap = latest.get(token_id) or {}
+                    last_px = float(snap.get("price") or 0.0)
+                    if last_px > 0:
+                        snap_ts = _snapshot_ts(snap)
+                        stagnation_history.append((snap_ts, last_px))
+                        while (
+                            stagnation_history
+                            and snap_ts - stagnation_history[0][0]
+                            > stagnation_window_seconds
+                        ):
+                            stagnation_history.popleft()
+                        if len(stagnation_history) >= 2:
+                            window_span = snap_ts - stagnation_history[0][0]
+                            if window_span >= stagnation_window_seconds:
+                                prices = [p for _, p in stagnation_history]
+                                high = max(prices)
+                                low = min(prices)
+                                if high > 0:
+                                    change_ratio = (high - low) / high
+                                    if change_ratio <= stagnation_pct:
+                                        _handle_stagnation_exit(change_ratio, window_span)
+                                        if stop_event.is_set():
+                                            break
+                                        continue
+
                 if sell_only_event.is_set() and exit_after_sell_only_clear:
                     status = strategy.status()
                     awaiting = status.get("awaiting")
@@ -2892,6 +3095,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     awaiting_is_sell = awaiting_val == ActionType.SELL
                     if not _has_actionable_position(status) and not awaiting_is_sell:
                         print("[COUNTDOWN] 倒计时仅卖出模式下已清仓，脚本将退出。")
+                        if stagnation_triggered:
+                            print("[QUEUE] 释放队列：停滞清仓完成，已退出。")
                         strategy.stop("countdown sell-only cleared position")
                         stop_event.set()
                         break
