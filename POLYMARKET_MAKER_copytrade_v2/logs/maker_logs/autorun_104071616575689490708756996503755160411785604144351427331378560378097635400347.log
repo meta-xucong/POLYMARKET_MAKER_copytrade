@@ -1,0 +1,22 @@
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/data/run_params_104071616575689490708756996503755160411785604144351427331378560378097635400347.json
+[INIT] API 凭证已验证。
+[INIT] ClobClient 就绪。
+[INFO] 市场/子问题标题: 104071616575689490708756996503755160411785604144351427331378560378097635400347
+[INFO] 使用 token_id: 104071616575689490708756996503755160411785604144351427331378560378097635400347
+[INFO] 市场标注时区: America/New_York
+[WARN] 未能自动获取市场结束时间，已按默认配置设置截止时间为 2026-01-17T12:59:00-05:00 (America/New_York)。
+[INFO] 监控目标结束时间 (UTC): 2026-01-17T17:59:00+00:00
+[INFO] 未能识别市场价格精度，默认按盈利百分比下限 0.300% 执行。
+[INIT] 目标 token_id: 104071616575689490708756996503755160411785604144351427331378560378097635400347
+[INIT] 已读取手动份数 10.0，模式：总持仓目标。
+[INIT] 卖出挂单模式：aggressive
+[INIT] 卖出后递增买入阈值已启用，步长 0.0200%。
+[INFO] 倒计时卖出模式将在市场结束前 300 分钟开启。
+[RUN] 监听行情中… 输入 stop / exit 可手动停止。
+[WS] 连接已建立，等待行情推送…
+[WAIT] 尚未收到行情，继续等待… | ws=open age=4s
+[WAIT] 尚未收到行情，继续等待… | ws=open age=9s
+[COUNTDOWN] 已进入仅卖出模式：倒计时窗口内不再买入。
+[COUNTDOWN] 当前无持仓，倒计时仅卖出模式下直接停止脚本。
+[EXIT] 最终状态: {'state': 'FLAT', 'awaiting': None, 'entry_price': None, 'sell_trigger': None, 'position_size': None, 'last_signal': None, 'last_buy_price': None, 'last_sell_price': None, 'price_history_len': 2, 'manual_stop': True, 'manual_stop_reason': 'countdown sell-only window (flat)', 'sell_only': True, 'sell_only_reason': 'countdown window', 'last_reject_reason': None, 'last_tick': {'ts': 1768654810.578, 'best_ask': 0.42, 'best_bid': 0.41}, 'drop_stats': {'window_high': 0.415, 'window_low': 0.415, 'max_drop_ratio': 0.0, 'current_drop_ratio': 0.0, 'window_seconds': 3600.0}, 'config': {'token_id': '104071616575689490708756996503755160411785604144351427331378560378097635400347', 'buy_price_threshold': None, 'profit_ratio': 0.005, 'drop_window_minutes': 60.0, 'drop_pct': 0.001, 'profit_pct': 0.005, 'max_history_points': 600, 'price_band': (0.0, 1.0), 'disable_duplicate_signal': True, 'enable_incremental_drop_pct': True, 'incremental_drop_pct_step': 0.0002, 'incremental_drop_pct_cap': 0.2, 'min_market_order_size': None}}
+[CLAIM] 未检测到需要 claim 的仓位，脚本结束。
