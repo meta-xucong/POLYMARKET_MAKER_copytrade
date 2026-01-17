@@ -5,7 +5,7 @@
     "copytrade_poll_seconds": 30.0
   },
   "paths": {
-    "log_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logs",
+    "log_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/logs/autorun",
     "data_directory": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/data",
     "run_state_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/data/autorun_status.json",
     "copytrade_tokens_file": "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/copytrade/tokens_from_copytrade.json",
