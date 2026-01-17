@@ -1874,9 +1874,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             market_deadline_ts = None
 
     if not manual_deadline_disabled and _should_offer_common_deadline_options(market_meta):
+        override_spec = {
+            "hour": 23,
+            "minute": 59,
+            "timezone": "America/New_York",
+            "fallback_offset": -240,
+        }
+        default_deadline_spec = dict(default_deadline_spec or {})
+        default_deadline_spec.update(override_spec)
         _apply_default_deadline("自动获取的截止日期缺少具体时刻")
     if not manual_deadline_disabled and not market_deadline_ts:
-        _apply_default_deadline("未能自动获取市场结束时间")
+        print("[WARN] 未能自动获取市场结束时间，将进入无截止日期模式继续运行。")
+        manual_deadline_disabled = True
+        market_meta = dict(market_meta or {})
+        market_meta.pop("end_ts", None)
+        market_meta.pop("resolved_ts", None)
+        market_deadline_ts = None
     if market_deadline_ts:
         dt_deadline = datetime.fromtimestamp(market_deadline_ts, tz=timezone.utc)
         print(
