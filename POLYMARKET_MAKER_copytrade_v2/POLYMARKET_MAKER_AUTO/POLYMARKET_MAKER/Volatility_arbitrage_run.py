@@ -1511,6 +1511,20 @@ def _list_markets_under_event(event_slug: str) -> List[dict]:
 def _fetch_market_by_slug(market_slug: str) -> Optional[dict]:
     return _http_json(f"{GAMMA_ROOT}/markets/slug/{market_slug}")
 
+def _fetch_market_by_token_id(token_id: str) -> Optional[dict]:
+    if not token_id:
+        return None
+    params = {"clob_token_ids": str(token_id), "limit": 1}
+    data = _http_json(f"{GAMMA_ROOT}/markets", params=params)
+    markets = []
+    if isinstance(data, dict) and "data" in data:
+        markets = data["data"]
+    elif isinstance(data, list):
+        markets = data
+    if isinstance(markets, list) and markets:
+        return markets[0]
+    return None
+
 def _pick_market_subquestion(markets: List[dict]) -> dict:
     print("[CHOICE] 该事件下存在多个子问题，请选择其一，或直接粘贴具体子问题URL：")
     for i, m in enumerate(markets):
@@ -1680,6 +1694,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         or token_id
     )
     market_meta = _maybe_fetch_market_meta_from_source(source) if source else {}
+    if not market_meta and token_id:
+        token_market = _fetch_market_by_token_id(str(token_id))
+        if token_market:
+            market_meta = _market_meta_from_obj(token_market)
     raw_meta = market_meta.get("raw") if isinstance(market_meta, dict) else None
     if isinstance(raw_meta, dict):
         title = raw_meta.get("title") or raw_meta.get("question") or title
