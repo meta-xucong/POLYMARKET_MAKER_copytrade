@@ -1511,6 +1511,57 @@ def _list_markets_under_event(event_slug: str) -> List[dict]:
 def _fetch_market_by_slug(market_slug: str) -> Optional[dict]:
     return _http_json(f"{GAMMA_ROOT}/markets/slug/{market_slug}")
 
+def _fetch_market_by_token_id(token_id: str) -> Optional[dict]:
+    if not token_id:
+        return None
+
+    def _normalize_clob_tokens(raw_value: Any) -> List[str]:
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, (list, tuple)):
+            return [str(item) for item in raw_value if item is not None]
+        if isinstance(raw_value, str):
+            trimmed = raw_value.strip()
+            if trimmed.startswith("[") and trimmed.endswith("]"):
+                try:
+                    parsed = json.loads(trimmed)
+                except JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed if item is not None]
+            return [trimmed]
+        return [str(raw_value)]
+
+    def _select_market(markets: List[dict]) -> Optional[dict]:
+        if not markets:
+            return None
+        token_str = str(token_id)
+        matches = []
+        for market in markets:
+            clob_tokens = _normalize_clob_tokens(market.get("clobTokenIds"))
+            if token_str in clob_tokens:
+                matches.append(market)
+        if not matches:
+            return None
+        for market in matches:
+            if market.get("active") is True and market.get("closed") is False:
+                return market
+        return matches[0]
+
+    for param_name in ("clob_token_ids", "clobTokenIds"):
+        params = {param_name: str(token_id), "limit": 50}
+        data = _http_json(f"{GAMMA_ROOT}/markets", params=params)
+        markets = []
+        if isinstance(data, dict) and "data" in data:
+            markets = data["data"]
+        elif isinstance(data, list):
+            markets = data
+        if isinstance(markets, list):
+            match = _select_market(markets)
+            if match is not None:
+                return match
+    return None
+
 def _pick_market_subquestion(markets: List[dict]) -> dict:
     print("[CHOICE] 该事件下存在多个子问题，请选择其一，或直接粘贴具体子问题URL：")
     for i, m in enumerate(markets):
@@ -1680,6 +1731,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         or token_id
     )
     market_meta = _maybe_fetch_market_meta_from_source(source) if source else {}
+    if not market_meta and token_id:
+        print("[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。")
+        token_market = _fetch_market_by_token_id(str(token_id))
+        if token_market:
+            market_meta = _market_meta_from_obj(token_market)
+        else:
+            print("[WARN] 未能通过 token_id 获取市场元数据，可能无法识别截止时间或价格精度。")
     raw_meta = market_meta.get("raw") if isinstance(market_meta, dict) else None
     if isinstance(raw_meta, dict):
         title = raw_meta.get("title") or raw_meta.get("question") or title
