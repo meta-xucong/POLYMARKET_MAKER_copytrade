@@ -2009,6 +2009,18 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             f"{no_event_exit_minutes:.1f} 分钟。"
         )
 
+    sell_inactive_hours = _coerce_float(run_cfg.get("sell_inactive_hours"))
+    if sell_inactive_hours is None:
+        sell_inactive_hours = 5.0
+    sell_inactive_timeout_sec = max(float(sell_inactive_hours or 0.0), 0.0) * 3600.0
+    if sell_inactive_timeout_sec <= 0:
+        print("[INIT] 卖出挂单空窗释放已禁用。")
+    else:
+        print(
+            "[INIT] 卖出挂单空窗释放阈值 "
+            f"{sell_inactive_hours:.1f} 小时。"
+        )
+
     sell_only_start_ts: Optional[float] = None
     countdown_cfg = run_cfg.get("countdown") if isinstance(run_cfg, dict) else {}
     countdown_timezone_hint = (
@@ -2076,6 +2088,41 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         "open": False,
         "last_error": "",
     }
+    exit_only = bool(run_cfg.get("exit_only", False))
+
+    def _exit_cleanup_only(reason: str) -> None:
+        print(f"[EXIT] 收到清仓信号: {reason}")
+        canceled = _cancel_open_orders_for_token(client, token_id)
+        if canceled:
+            print(f"[EXIT] 已尝试撤销挂单数量={canceled}")
+        snapshot, _ = _fetch_position_snapshot_with_cache(
+            client=client,
+            token_id=token_id,
+            cache=None,
+            cache_ts=0.0,
+            log_errors=True,
+            force=True,
+        )
+        total_pos = snapshot[1] if snapshot else None
+        if total_pos is None or total_pos <= 0:
+            print("[EXIT] 未检测到持仓，直接退出。")
+            strategy.stop("sell signal")
+            stop_event.set()
+            return
+        exit_price = 0.01
+        try:
+            _place_sell_fok(client, token_id=token_id, price=exit_price, size=total_pos)
+            print(
+                f"[EXIT] 已发出清仓卖单 token_id={token_id} size={total_pos:.4f} price={exit_price:.4f}"
+            )
+        except Exception as exc:
+            print(f"[EXIT] 清仓卖单失败: {exc}")
+        strategy.stop("sell signal")
+        stop_event.set()
+
+    if exit_only:
+        _exit_cleanup_only("exit-only cleanup")
+        return
 
     slug_for_refresh = ""
     if isinstance(market_meta, dict):
@@ -2827,6 +2874,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 best_ask_fn=_latest_best_ask,
                 stop_check=stop_event.is_set,
                 sell_mode=sell_mode,
+                inactive_timeout_sec=sell_inactive_timeout_sec,
                 progress_probe=_sell_progress_probe,
                 progress_probe_interval=60.0,
                 position_fetcher=_position_size_fetcher,
@@ -2840,6 +2888,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
         print(f"[TRADE][SELL][MAKER] resp={sell_resp}")
         sell_status = str(sell_resp.get("status") or "").upper()
+        if sell_status == "ABANDONED":
+            print(
+                "[RELEASE] 卖出挂单长期无动作，停止做市逻辑但保留挂单。"
+            )
+            strategy.stop("sell inactive release")
+            stop_event.set()
+            return
         sell_filled = float(sell_resp.get("filled") or 0.0)
         sell_avg = sell_resp.get("avg_price")
         eps = 1e-4

@@ -503,6 +503,8 @@ class AutoRunManager:
             merged["topic_name"] = topic_info.get("title")
         if topic_info.get("token_id"):
             merged["token_id"] = topic_info.get("token_id")
+        if not merged.get("token_id"):
+            merged["token_id"] = topic_id
         merged["exit_signal_path"] = str(self._exit_signal_path(topic_id))
         if topic_info.get("yes_token"):
             merged["yes_token"] = topic_info.get("yes_token")
@@ -592,6 +594,61 @@ class AutoRunManager:
         self._update_handled_topics([topic_id])
         print(f"[START] topic={topic_id} pid={proc.pid} log={log_path}")
         return True
+
+    def _start_exit_cleanup(self, token_id: str) -> None:
+        task = self.tasks.get(token_id)
+        if task and task.is_running():
+            return
+        if token_id in self.pending_topics:
+            try:
+                self.pending_topics.remove(token_id)
+            except ValueError:
+                pass
+
+        config_data = self._build_run_config(token_id)
+        config_data["exit_only"] = True
+        config_data["token_id"] = config_data.get("token_id") or token_id
+        cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(token_id)}.json"
+        _dump_json_file(cfg_path, config_data)
+
+        log_path = self.config.log_dir / f"autorun_exit_{_safe_topic_filename(token_id)}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            log_file = log_path.open("a", encoding="utf-8")
+        except OSError as exc:  # pragma: no cover - 文件系统异常
+            print(f"[ERROR] 无法创建清仓日志文件 {log_path}: {exc}")
+            return
+
+        cmd = [
+            sys.executable,
+            str(MAKER_ROOT / "Volatility_arbitrage_run.py"),
+            str(cfg_path),
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except Exception as exc:  # pragma: no cover - 子进程异常
+            log_file.close()
+            print(f"[ERROR] 启动清仓进程失败 token={token_id}: {exc}")
+            return
+        log_file.close()
+
+        task = task or TopicTask(topic_id=token_id)
+        task.process = proc
+        task.config_path = cfg_path
+        task.log_path = log_path
+        task.status = "running"
+        task.no_restart = True
+        task.end_reason = "sell signal cleanup"
+        task.heartbeat("sell signal cleanup started")
+        self.tasks[token_id] = task
+        self._update_handled_topics([token_id])
+        print(f"[EXIT-CLEAN] token={token_id} pid={proc.pid} log={log_path}")
 
     # ========== 历史记录 ==========
     def _load_handled_topics(self) -> None:
@@ -868,6 +925,8 @@ class AutoRunManager:
                 task.end_reason = "sell signal"
                 task.heartbeat("sell signal received")
             self._issue_exit_signal(token_id)
+            if not (task and task.is_running()):
+                self._start_exit_cleanup(token_id)
 
     def _cleanup_all_tasks(self) -> None:
         for task in list(self.tasks.values()):
