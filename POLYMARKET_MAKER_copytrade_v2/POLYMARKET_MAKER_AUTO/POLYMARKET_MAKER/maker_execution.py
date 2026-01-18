@@ -851,6 +851,7 @@ def maker_sell_follow_ask_with_floor_wait(
     sell_mode: str = "conservative",
     aggressive_step: float = 0.01,
     aggressive_timeout: float = 300.0,
+    inactive_timeout_sec: float = 0.0,
     progress_probe: Optional[Callable[[], None]] = None,
     progress_probe_interval: float = 60.0,
     position_fetcher: Optional[Callable[[], Optional[float]]] = None,
@@ -947,6 +948,8 @@ def maker_sell_follow_ask_with_floor_wait(
     next_probe_at = 0.0
     next_position_refresh = 0.0
     next_ask_validation = 0.0
+    last_activity_ts = time.time()
+    last_reported_filled = 0.0
 
     def _active_reserved_size() -> float:
         if not active_order:
@@ -961,6 +964,10 @@ def maker_sell_follow_ask_with_floor_wait(
         filled_so_far = accounted.get(active_order, 0.0)
         return max(total_size - filled_so_far, 0.0)
 
+    def _touch_activity() -> None:
+        nonlocal last_activity_ts
+        last_activity_ts = time.time()
+
     while True:
         if stop_check and stop_check():
             if active_order:
@@ -974,6 +981,9 @@ def maker_sell_follow_ask_with_floor_wait(
             break
 
         now = time.time()
+        if inactive_timeout_sec and now - last_activity_ts >= inactive_timeout_sec:
+            final_status = "ABANDONED"
+            break
         if (
             position_fetcher
             and now >= max(next_position_refresh, 0.0)
@@ -1008,6 +1018,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             "[MAKER][SELL] 仓位更新 -> "
                             f"{change}目标至 {goal_size:.{SELL_SIZE_DP}f}"
                         )
+                        _touch_activity()
                         if remaining <= _MIN_FILL_EPS:
                             if active_order:
                                 _cancel_order(client, active_order)
@@ -1030,6 +1041,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             aggressive_timer_anchor_fill = None
                             aggressive_next_price_override = None
                             next_price_override = None
+                            _touch_activity()
                             continue
 
         if api_min_qty and remaining + _MIN_FILL_EPS < api_min_qty:
@@ -1084,6 +1096,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_timer_anchor_fill = None
                     aggressive_next_price_override = None
                     next_price_override = None
+                    _touch_activity()
                 sleep_fn(poll_sec)
                 continue
             if ask < floor_float - 1e-12:
@@ -1103,6 +1116,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_timer_anchor_fill = None
                     aggressive_next_price_override = None
                     next_price_override = None
+                    _touch_activity()
                 sleep_fn(poll_sec)
                 continue
             if waiting_for_floor and ask >= floor_float:
@@ -1296,6 +1310,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_floor_locked = False
                     aggressive_timer_start = time.time()
                     aggressive_timer_anchor_fill = 0.0
+            _touch_activity()
             print(
                 f"[MAKER][SELL] 挂单 -> price={px:.{price_dp}f} qty={qty:.{SELL_SIZE_DP}f} remaining={remaining:.{SELL_SIZE_DP}f}"
             )
@@ -1366,6 +1381,9 @@ def maker_sell_follow_ask_with_floor_wait(
                     f"sold={filled_amount:.{SELL_SIZE_DP}f} remaining={remaining_slice:.{SELL_SIZE_DP}f} "
                     f"status={status_text_upper}"
                 )
+        if filled_total > last_reported_filled + _MIN_FILL_EPS:
+            last_reported_filled = filled_total
+            _touch_activity()
 
         if api_min_qty and remaining < api_min_qty:
             if active_order:
@@ -1379,6 +1397,7 @@ def maker_sell_follow_ask_with_floor_wait(
                 aggressive_timer_anchor_fill = None
                 aggressive_next_price_override = None
                 next_price_override = None
+                _touch_activity()
             final_status = "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
             break
 
@@ -1393,6 +1412,7 @@ def maker_sell_follow_ask_with_floor_wait(
                 aggressive_timer_anchor_fill = None
                 aggressive_next_price_override = None
                 next_price_override = None
+                _touch_activity()
             final_status = "FILLED"
             break
 
@@ -1464,6 +1484,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             active_price = None
                             aggressive_next_price_override = floor_float
                             next_price_override = floor_float
+                            _touch_activity()
                         continue
                     next_px = max(
                         _round_down_to_dp(target_price, price_dp),
@@ -1483,6 +1504,7 @@ def maker_sell_follow_ask_with_floor_wait(
                         aggressive_next_price_override = next_px
                         aggressive_timer_start = None
                         aggressive_timer_anchor_fill = current_filled
+                        _touch_activity()
                         continue
 
         if active_price is not None and ask <= active_price - tick - 1e-12:
@@ -1508,6 +1530,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_timer_anchor_fill = None
                     aggressive_next_price_override = floor_float
                     next_price_override = floor_float
+                    _touch_activity()
                     continue
             print(
                 f"[MAKER][SELL] 卖一下行 -> 撤单重挂 | old={active_price:.{price_dp}f} new={new_px:.{price_dp}f}"
@@ -1525,6 +1548,7 @@ def maker_sell_follow_ask_with_floor_wait(
             aggressive_timer_anchor_fill = None
             aggressive_next_price_override = new_px if aggressive_mode else None
             next_price_override = new_px
+            _touch_activity()
             continue
 
         final_states = {"FILLED", "MATCHED", "COMPLETED", "EXECUTED"}
