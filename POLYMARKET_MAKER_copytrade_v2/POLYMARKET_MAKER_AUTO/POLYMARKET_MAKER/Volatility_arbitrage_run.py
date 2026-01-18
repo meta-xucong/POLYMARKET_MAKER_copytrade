@@ -2300,8 +2300,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             price_val,
         )
 
+    last_event_processed_ts = 0.0
+
     def _on_event(ev: Dict[str, Any]):
         nonlocal market_closed_detected
+        nonlocal last_event_processed_ts
         if stop_event.is_set():
             return
         if not isinstance(ev, dict):
@@ -2322,6 +2325,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         ts = _extract_ts(ev.get("timestamp") or ev.get("ts") or ev.get("time"))
         with ws_state_lock:
             ws_state["last_event_ts"] = time.time()
+        now = time.time()
+        if now - last_event_processed_ts < 60.0:
+            return
+        last_event_processed_ts = now
+
         for pc in pcs:
             if str(pc.get("asset_id")) != str(token_id):
                 continue
@@ -3160,7 +3168,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         stop_event.set()
                         break
 
-                if last_log is None or now - last_log >= 1.0:
+                if last_log is None or now - last_log >= 60.0:
                     snap = latest.get(token_id) or {}
                     bid = float(snap.get("best_bid") or 0.0)
                     ask = float(snap.get("best_ask") or 0.0)
