@@ -216,7 +216,7 @@ def _collect_trades(
     logger: logging.Logger,
 ) -> Tuple[List[Dict[str, Any]], int]:
     start_dt = datetime.fromtimestamp(max(since_ms, 0) / 1000.0, tz=timezone.utc)
-    trades = client.fetch_trades(account, start_time=start_dt, page_size=500, max_pages=20)
+    trades = client.fetch_trades(account, start_time=start_dt, page_size=500, max_pages=5)
     actions: List[Dict[str, Any]] = []
     latest_ms = since_ms
 

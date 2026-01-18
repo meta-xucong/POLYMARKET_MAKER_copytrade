@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import queue
 import select
@@ -28,6 +29,8 @@ from typing import Any, Dict, List, Optional
 # =====================
 PROJECT_ROOT = Path(__file__).resolve().parent
 MAKER_ROOT = PROJECT_ROOT / "POLYMARKET_MAKER"
+if str(MAKER_ROOT) not in sys.path:
+    sys.path.insert(0, str(MAKER_ROOT))
 
 DEFAULT_GLOBAL_CONFIG = {
     "copytrade_poll_sec": 30.0,
@@ -247,8 +250,7 @@ class GlobalConfig:
                 or merged.get("command_poll_sec", DEFAULT_GLOBAL_CONFIG["command_poll_sec"])
             ),
             max_concurrent_tasks=int(
-                scheduler.get("max_concurrent_jobs")
-                or merged.get(
+                scheduler.get(
                     "max_concurrent_tasks", DEFAULT_GLOBAL_CONFIG["max_concurrent_tasks"]
                 )
             ),
@@ -330,6 +332,15 @@ class AutoRunManager:
         self._next_status_dump: float = 0.0
         self._next_topic_start_at: float = 0.0
         self.status_path = self.config.runtime_status_path
+        self._ws_cache_path = self.config.data_dir / "ws_cache.json"
+        self._ws_cache_lock = threading.Lock()
+        self._ws_cache: Dict[str, Dict[str, Any]] = {}
+        self._ws_cache_dirty = False
+        self._ws_cache_last_flush = 0.0
+        self._ws_thread: Optional[threading.Thread] = None
+        self._ws_thread_stop: Optional[threading.Event] = None
+        self._ws_token_ids: List[str] = []
+        self._ws_aggregator_thread: Optional[threading.Thread] = None
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -337,6 +348,7 @@ class AutoRunManager:
         self._load_handled_topics()
         self._restore_runtime_status()
         print(f"[INIT] autorun start | copytrade_poll={self.config.copytrade_poll_sec}s")
+        self._start_ws_aggregator()
         try:
             while not self.stop_event.is_set():
                 try:
@@ -360,9 +372,132 @@ class AutoRunManager:
                     traceback.print_exc()
                     time.sleep(max(1.0, self.config.command_poll_sec))
         finally:
+            self._stop_ws_aggregator()
             self._cleanup_all_tasks()
             self._dump_runtime_status()
             print("[DONE] autorun stopped")
+
+    def _start_ws_aggregator(self) -> None:
+        if self._ws_aggregator_thread and self._ws_aggregator_thread.is_alive():
+            return
+        self._ws_aggregator_thread = threading.Thread(
+            target=self._ws_aggregator_loop,
+            daemon=True,
+        )
+        self._ws_aggregator_thread.start()
+
+    def _stop_ws_aggregator(self) -> None:
+        self._stop_ws_subscription()
+        if self._ws_aggregator_thread and self._ws_aggregator_thread.is_alive():
+            self._ws_aggregator_thread.join(timeout=3)
+
+    def _desired_ws_token_ids(self) -> List[str]:
+        token_ids = [
+            topic_id
+            for topic_id, task in self.tasks.items()
+            if task.is_running()
+        ]
+        return sorted({tid for tid in token_ids if tid})
+
+    def _ws_aggregator_loop(self) -> None:
+        while not self.stop_event.is_set():
+            desired = self._desired_ws_token_ids()
+            if desired != self._ws_token_ids:
+                self._restart_ws_subscription(desired)
+            self._flush_ws_cache_if_needed()
+            time.sleep(1.0)
+
+    def _restart_ws_subscription(self, token_ids: List[str]) -> None:
+        self._stop_ws_subscription()
+        self._ws_token_ids = token_ids
+        if not token_ids:
+            return
+        self._start_ws_subscription(token_ids)
+
+    def _start_ws_subscription(self, token_ids: List[str]) -> None:
+        try:
+            from Volatility_arbitrage_main_ws import ws_watch_by_ids
+        except Exception as exc:
+            print(f"[WARN] 无法启动 WS 聚合器: {exc}")
+            return
+        stop_event = threading.Event()
+        self._ws_thread_stop = stop_event
+        self._ws_thread = threading.Thread(
+            target=ws_watch_by_ids,
+            kwargs={
+                "asset_ids": token_ids,
+                "label": "autorun-aggregator",
+                "on_event": self._on_ws_event,
+                "verbose": False,
+                "stop_event": stop_event,
+            },
+            daemon=True,
+        )
+        self._ws_thread.start()
+        print(f"[WS] 聚合订阅启动，tokens={len(token_ids)}")
+
+    def _stop_ws_subscription(self) -> None:
+        if self._ws_thread_stop is not None:
+            self._ws_thread_stop.set()
+        if self._ws_thread and self._ws_thread.is_alive():
+            self._ws_thread.join(timeout=3)
+        self._ws_thread = None
+        self._ws_thread_stop = None
+
+    def _on_ws_event(self, ev: Dict[str, Any]) -> None:
+        if not isinstance(ev, dict):
+            return
+        if ev.get("event_type") == "price_change":
+            pcs = ev.get("price_changes", [])
+        elif "price_changes" in ev:
+            pcs = ev.get("price_changes", [])
+        else:
+            return
+        ts = ev.get("timestamp") or ev.get("ts") or ev.get("time")
+        for pc in pcs:
+            token_id = str(pc.get("asset_id") or "")
+            if not token_id:
+                continue
+            bid = _coerce_float(pc.get("best_bid")) or 0.0
+            ask = _coerce_float(pc.get("best_ask")) or 0.0
+            last = _coerce_float(
+                pc.get("last_trade_price")
+                or pc.get("last_price")
+                or pc.get("mark_price")
+                or pc.get("price")
+            )
+            if last is None:
+                last = (bid + ask) / 2.0 if bid and ask else (bid or ask or 0.0)
+            payload = {
+                "price": last,
+                "best_bid": bid,
+                "best_ask": ask,
+                "ts": ts,
+                "updated_at": time.time(),
+            }
+            with self._ws_cache_lock:
+                self._ws_cache[token_id] = payload
+                self._ws_cache_dirty = True
+
+    def _flush_ws_cache_if_needed(self) -> None:
+        now = time.time()
+        if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 1.0:
+            return
+        with self._ws_cache_lock:
+            if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 1.0:
+                return
+            data = {
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "tokens": self._ws_cache,
+            }
+            self._ws_cache_dirty = False
+            self._ws_cache_last_flush = now
+        try:
+            self._ws_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._ws_cache_path.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            print(f"[WARN] 写入 WS 聚合缓存失败: {exc}")
 
     def _poll_tasks(self) -> None:
         for task in list(self.tasks.values()):
@@ -557,6 +692,8 @@ class AutoRunManager:
         ]
         proc: Optional[subprocess.Popen] = None
         attempts = max(1, int(self.config.process_start_retries))
+        env = os.environ.copy()
+        env["POLY_WS_SHARED_CACHE"] = str(self._ws_cache_path)
         for attempt in range(1, attempts + 1):
             try:
                 proc = subprocess.Popen(
@@ -565,6 +702,7 @@ class AutoRunManager:
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
+                    env=env,
                 )
                 log_file.close()
                 break
@@ -624,6 +762,8 @@ class AutoRunManager:
             str(MAKER_ROOT / "Volatility_arbitrage_run.py"),
             str(cfg_path),
         ]
+        env = os.environ.copy()
+        env["POLY_WS_SHARED_CACHE"] = str(self._ws_cache_path)
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -631,6 +771,7 @@ class AutoRunManager:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                env=env,
             )
         except Exception as exc:  # pragma: no cover - 子进程异常
             log_file.close()
