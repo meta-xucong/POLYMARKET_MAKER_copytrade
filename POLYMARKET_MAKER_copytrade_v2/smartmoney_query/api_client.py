@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Any, Dict, List
 
 import requests
 
 from .models import Trade
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_datetime(value: Any) -> dt.datetime | None:
@@ -91,7 +94,14 @@ class DataApiClient:
                 resp = self.session.get(url, params=params, timeout=self.timeout)
                 resp.raise_for_status()
                 payload = resp.json()
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "fetch_trades request failed: user=%s offset=%s page_size=%s error=%s",
+                    user,
+                    offset,
+                    page_size,
+                    exc,
+                )
                 break
 
             items: List[Dict[str, Any]] = []

@@ -79,6 +79,8 @@ def _deep_find_first(value: Any, keys: Tuple[str, ...], max_depth: int = 4) -> A
 def _normalize_trade(trade: Any) -> Optional[Dict[str, Any]]:
     raw_side = str(getattr(trade, "side", "") or "").upper()
     side = raw_side if raw_side in {"BUY", "SELL"} else None
+    if side is None:
+        return None
     size = float(getattr(trade, "size", 0.0) or 0.0)
     if size <= 0:
         return None
@@ -219,6 +221,13 @@ def _collect_trades(
     latest_ms = since_ms
 
     for trade in trades:
+        raw_side = str(getattr(trade, "side", "") or "").upper()
+        if raw_side and raw_side not in {"BUY", "SELL"}:
+            logger.warning(
+                "skip trade with unsupported side: account=%s side=%s",
+                account,
+                raw_side,
+            )
         normalized = _normalize_trade(trade)
         if normalized is None:
             continue
