@@ -330,6 +330,7 @@ class AutoRunManager:
         self.topic_details: Dict[str, Dict[str, Any]] = {}
         self.handled_topics: set[str] = set()
         self.pending_topics: List[str] = []
+        self.pending_exit_topics: List[str] = []
         self._next_topics_refresh: float = 0.0
         self._next_status_dump: float = 0.0
         self._next_topic_start_at: float = 0.0
@@ -357,6 +358,7 @@ class AutoRunManager:
                     now = time.time()
                     self._process_commands()
                     self._poll_tasks()
+                    self._schedule_pending_exit_cleanup()
                     self._schedule_pending_topics()
                     self._purge_inactive_tasks()
                     if now >= self._next_topics_refresh:
@@ -628,6 +630,18 @@ class AutoRunManager:
                 )
             running = sum(1 for t in self.tasks.values() if t.is_running())
 
+    def _schedule_pending_exit_cleanup(self) -> None:
+        running = sum(1 for t in self.tasks.values() if t.is_running())
+        while (
+            self.pending_exit_topics
+            and running < max(1, int(self.config.max_concurrent_tasks))
+        ):
+            token_id = self.pending_exit_topics.pop(0)
+            if token_id in self.tasks and self.tasks[token_id].is_running():
+                continue
+            self._start_exit_cleanup(token_id)
+            running = sum(1 for t in self.tasks.values() if t.is_running())
+
     def _get_order_base_volume(self) -> Optional[float]:
         return None
 
@@ -759,6 +773,11 @@ class AutoRunManager:
         if token_id in self.pending_topics:
             try:
                 self.pending_topics.remove(token_id)
+            except ValueError:
+                pass
+        if token_id in self.pending_exit_topics:
+            try:
+                self.pending_exit_topics.remove(token_id)
             except ValueError:
                 pass
 
@@ -1086,7 +1105,11 @@ class AutoRunManager:
                 task.heartbeat("sell signal received")
             self._issue_exit_signal(token_id)
             if not (task and task.is_running()):
-                self._start_exit_cleanup(token_id)
+                if (
+                    token_id not in self.pending_exit_topics
+                    and token_id not in self.pending_topics
+                ):
+                    self.pending_exit_topics.append(token_id)
 
     def _cleanup_all_tasks(self) -> None:
         for task in list(self.tasks.values()):
@@ -1144,12 +1167,20 @@ class AutoRunManager:
             preview = ", ".join(restored_topics[:5])
             print(f"[RESTORE] 已从运行状态恢复 {len(restored_topics)} 个话题：{preview}")
 
+        pending_exit_topics = payload.get("pending_exit_topics") or []
+        for topic_id in pending_exit_topics:
+            topic_id = str(topic_id)
+            if topic_id in self.pending_exit_topics:
+                continue
+            self.pending_exit_topics.append(topic_id)
+
     def _dump_runtime_status(self) -> None:
         payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "handled_topics_total": len(self.handled_topics),
             "handled_topics": sorted(self.handled_topics),
             "pending_topics": list(self.pending_topics),
+            "pending_exit_topics": list(self.pending_exit_topics),
             "tasks": {},
         }
         for topic_id, task in self.tasks.items():
