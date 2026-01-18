@@ -3160,7 +3160,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         stop_event.set()
                         break
 
-                if last_log is None or now - last_log >= 1.0:
+                if last_log is None or now - last_log >= 60.0:
                     snap = latest.get(token_id) or {}
                     bid = float(snap.get("best_bid") or 0.0)
                     ask = float(snap.get("best_ask") or 0.0)
