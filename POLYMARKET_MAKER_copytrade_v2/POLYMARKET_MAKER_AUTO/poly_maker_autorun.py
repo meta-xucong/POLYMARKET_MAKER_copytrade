@@ -454,6 +454,16 @@ class AutoRunManager:
         else:
             return
         ts = ev.get("timestamp") or ev.get("ts") or ev.get("time")
+        status_keys = (
+            "status",
+            "market_status",
+            "marketStatus",
+            "is_closed",
+            "market_closed",
+            "closed",
+            "isMarketClosed",
+        )
+        event_status = {k: ev.get(k) for k in status_keys if k in ev}
         for pc in pcs:
             token_id = str(pc.get("asset_id") or "")
             if not token_id:
@@ -474,7 +484,14 @@ class AutoRunManager:
                 "best_ask": ask,
                 "ts": ts,
                 "updated_at": time.time(),
+                "event_type": ev.get("event_type"),
             }
+            for key in status_keys:
+                val = pc.get(key)
+                if val is None:
+                    val = event_status.get(key)
+                if val is not None:
+                    payload[key] = val
             with self._ws_cache_lock:
                 self._ws_cache[token_id] = payload
                 self._ws_cache_dirty = True

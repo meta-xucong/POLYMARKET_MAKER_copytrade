@@ -2206,13 +2206,31 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     def _extract_ts(raw: Optional[Any]) -> float:
         if raw is None:
             return time.time()
-        try:
+        if isinstance(raw, (int, float)):
             ts = float(raw)
-        except Exception:
-            return time.time()
-        if ts > 1e12:
-            ts = ts / 1000.0
-        return ts
+            if ts > 1e12:
+                ts = ts / 1000.0
+            return ts
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return time.time()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.timestamp()
+            except ValueError:
+                try:
+                    ts = float(text)
+                    if ts > 1e12:
+                        ts = ts / 1000.0
+                    return ts
+                except Exception:
+                    return time.time()
+        return time.time()
 
     def _is_market_closed(payload: Dict[str, Any]) -> bool:
         status_keys = ["status", "market_status", "marketStatus"]
@@ -2395,6 +2413,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         nonlocal last_shared_ts
         snapshot = _load_shared_ws_snapshot()
         if not snapshot:
+            return
+        if _is_market_closed(snapshot):
+            print("[MARKET] 收到市场关闭事件，准备退出…")
+            strategy.stop("market closed")
+            stop_event.set()
             return
         ts = _extract_ts(snapshot.get("ts"))
         if ts is None:
