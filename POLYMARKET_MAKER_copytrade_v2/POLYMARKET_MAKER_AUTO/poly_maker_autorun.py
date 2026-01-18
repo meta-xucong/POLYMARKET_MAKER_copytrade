@@ -39,9 +39,11 @@ DEFAULT_GLOBAL_CONFIG = {
     "log_dir": str(Path("logs") / "autorun"),
     "data_dir": str(Path("data")),
     "handled_topics_path": str(Path("data") / "handled_topics.json"),
-    "copytrade_tokens_path": str(Path("..") / "copytrade" / "tokens_from_copytrade.json"),
+    "copytrade_tokens_path": str(
+        PROJECT_ROOT.parent / "copytrade" / "tokens_from_copytrade.json"
+    ),
     "copytrade_sell_signals_path": str(
-        Path("..") / "copytrade" / "copytrade_sell_signals.json"
+        PROJECT_ROOT.parent / "copytrade" / "copytrade_sell_signals.json"
     ),
     "process_start_retries": 1,
     "process_retry_delay_sec": 2.0,
