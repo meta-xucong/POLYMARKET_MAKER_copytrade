@@ -2206,13 +2206,31 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     def _extract_ts(raw: Optional[Any]) -> float:
         if raw is None:
             return time.time()
-        try:
+        if isinstance(raw, (int, float)):
             ts = float(raw)
-        except Exception:
-            return time.time()
-        if ts > 1e12:
-            ts = ts / 1000.0
-        return ts
+            if ts > 1e12:
+                ts = ts / 1000.0
+            return ts
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return time.time()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.timestamp()
+            except ValueError:
+                try:
+                    ts = float(text)
+                    if ts > 1e12:
+                        ts = ts / 1000.0
+                    return ts
+                except Exception:
+                    return time.time()
+        return time.time()
 
     def _is_market_closed(payload: Dict[str, Any]) -> bool:
         status_keys = ["status", "market_status", "marketStatus"]
@@ -2300,8 +2318,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             price_val,
         )
 
+    last_event_processed_ts = 0.0
+
     def _on_event(ev: Dict[str, Any]):
         nonlocal market_closed_detected
+        nonlocal last_event_processed_ts
         if stop_event.is_set():
             return
         if not isinstance(ev, dict):
@@ -2322,6 +2343,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         ts = _extract_ts(ev.get("timestamp") or ev.get("ts") or ev.get("time"))
         with ws_state_lock:
             ws_state["last_event_ts"] = time.time()
+        now = time.time()
+        if now - last_event_processed_ts < 60.0:
+            return
+        last_event_processed_ts = now
+
         for pc in pcs:
             if str(pc.get("asset_id")) != str(token_id):
                 continue
@@ -2366,6 +2392,49 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         return
                     time.sleep(1)
 
+    shared_ws_cache_path = os.getenv("POLY_WS_SHARED_CACHE")
+    use_shared_ws = bool(shared_ws_cache_path)
+    last_shared_ts = 0.0
+
+    def _load_shared_ws_snapshot() -> Optional[Dict[str, Any]]:
+        if not shared_ws_cache_path:
+            return None
+        try:
+            with open(shared_ws_cache_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            tokens = payload.get("tokens") if isinstance(payload, dict) else None
+            if not isinstance(tokens, dict):
+                return None
+            return tokens.get(str(token_id))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _apply_shared_ws_snapshot() -> None:
+        nonlocal last_shared_ts
+        snapshot = _load_shared_ws_snapshot()
+        if not snapshot:
+            return
+        if _is_market_closed(snapshot):
+            print("[MARKET] 收到市场关闭事件，准备退出…")
+            strategy.stop("market closed")
+            stop_event.set()
+            return
+        ts = _extract_ts(snapshot.get("ts"))
+        if ts is None:
+            ts = time.time()
+        if ts <= last_shared_ts:
+            return
+        last_shared_ts = ts
+        bid = float(snapshot.get("best_bid") or 0.0)
+        ask = float(snapshot.get("best_ask") or 0.0)
+        last_px = float(snapshot.get("price") or 0.0)
+        latest[token_id] = {"price": last_px, "best_bid": bid, "best_ask": ask, "ts": ts}
+        action = strategy.on_tick(best_ask=ask, best_bid=bid, ts=ts)
+        if action and action.action in (ActionType.BUY, ActionType.SELL):
+            action_queue.put(action)
+        with ws_state_lock:
+            ws_state["last_event_ts"] = time.time()
+
     def _on_ws_state(state: str, info: Dict[str, Any]):
         ts_now = time.time()
         with ws_state_lock:
@@ -2390,19 +2459,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             status_code = info.get("status_code")
             print(f"[WS] 连接关闭（code={status_code}），等待重连…")
 
-    ws_thread = threading.Thread(
-        target=ws_watch_by_ids,
-        kwargs={
-            "asset_ids": [token_id],
-            "label": f"{title} ({token_id})",
-            "on_event": _on_event,
-            "on_state": _on_ws_state,
-            "verbose": False,
-            "stop_event": stop_event,
-        },
-        daemon=True,
-    )
-    ws_thread.start()
+    if not use_shared_ws:
+        ws_thread = threading.Thread(
+            target=ws_watch_by_ids,
+            kwargs={
+                "asset_ids": [token_id],
+                "label": f"{title} ({token_id})",
+                "on_event": _on_event,
+                "on_state": _on_ws_state,
+                "verbose": False,
+                "stop_event": stop_event,
+            },
+            daemon=True,
+        )
+        ws_thread.start()
 
     print("[RUN] 监听行情中… 输入 stop / exit 可手动停止。")
 
@@ -2429,6 +2499,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 state_note = " | " + " ".join(parts)
             print(f"[WAIT] 尚未收到行情，继续等待…{state_note}")
             start_wait = time.time()
+        if use_shared_ws:
+            _apply_shared_ws_snapshot()
         time.sleep(0.2)
 
     if stop_event.is_set():
@@ -3058,6 +3130,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             now = time.time()
             loop_started = now
             try:
+                if use_shared_ws:
+                    _apply_shared_ws_snapshot()
                 if _exit_signal_active():
                     _force_exit("sell signal file detected")
                     break
@@ -3160,7 +3234,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         stop_event.set()
                         break
 
-                if last_log is None or now - last_log >= 1.0:
+                if last_log is None or now - last_log >= 60.0:
                     snap = latest.get(token_id) or {}
                     bid = float(snap.get("best_bid") or 0.0)
                     ask = float(snap.get("best_ask") or 0.0)
