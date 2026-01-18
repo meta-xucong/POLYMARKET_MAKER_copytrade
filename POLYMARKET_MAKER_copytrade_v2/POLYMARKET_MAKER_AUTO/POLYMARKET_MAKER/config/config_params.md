@@ -29,6 +29,7 @@
 | `stagnation_window_minutes` | 价格停滞检测窗口（分钟）；窗口内价格波动低于阈值时触发退出/清仓。 | 浮点数 | 默认 120；设为 `<=0` 可禁用。 |
 | `stagnation_pct` | 价格停滞阈值（波动比例）；>1 会按百分比换算。 | 浮点比例 | 默认 0；例如 `0.001`（0.1%）。 |
 | `no_event_exit_minutes` | 启动后 N 分钟内完全无行情时自动退出。 | 浮点数 | 默认 10；设为 `<=0` 可禁用。 |
+| `sell_inactive_hours` | 卖出挂单空窗时间（小时），超过该时长未产生卖出动作则释放做市进程但保留挂单。 | 浮点数 | 默认 5；设为 `<=0` 可禁用。 |
 | `countdown.minutes_before_end` | 距离市场结束 N 分钟时切换为“仅卖出”模式。 | 浮点数 | 常用 60~360；为空则尝试用绝对时间。 |
 | `countdown.absolute_time` | 直接指定倒计时开始的绝对时间，支持时间戳、ISO 字符串（`YYYY-MM-DDTHH:MM:SSZ`）或简单日期/日期时间文本。【F:POLYMARKET_MAKER/Volatility_arbitrage_run.py†L436-L476】【F:POLYMARKET_MAKER/Volatility_arbitrage_run.py†L1981-L2019】 | 数字或字符串 | 优先写 UTC/带时区的 ISO 格式。 |
 | `countdown.timezone` | 当 `absolute_time` 只写日期/无时区时，用于推断时区。 | IANA 时区名称 | 与市场时区一致即可。 |

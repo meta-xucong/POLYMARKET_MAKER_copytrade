@@ -2012,7 +2012,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     sell_inactive_hours = _coerce_float(run_cfg.get("sell_inactive_hours"))
     if sell_inactive_hours is None:
-        sell_inactive_hours = 5.0
+        sell_inactive_hours = 0.0
     sell_inactive_timeout_sec = max(float(sell_inactive_hours or 0.0), 0.0) * 3600.0
     if sell_inactive_timeout_sec <= 0:
         print("[INIT] 卖出挂单空窗释放已禁用。")

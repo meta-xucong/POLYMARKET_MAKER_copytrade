@@ -25,6 +25,7 @@
   "stagnation_window_minutes": 120,
   "stagnation_pct": 0.0,
   "no_event_exit_minutes": 10,
+  "sell_inactive_hours": 5,
   "countdown": {
     "minutes_before_end": 300,
     "absolute_time": null,
