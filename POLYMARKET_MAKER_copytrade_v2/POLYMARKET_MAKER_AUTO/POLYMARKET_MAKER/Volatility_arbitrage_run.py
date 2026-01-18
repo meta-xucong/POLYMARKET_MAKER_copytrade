@@ -43,6 +43,7 @@ from Volatility_arbitrage_strategy import (
 from maker_execution import (
     maker_buy_follow_bid,
     maker_sell_follow_ask_with_floor_wait,
+    _fetch_best_price,
 )
 
 # ========== 1) Client：优先 ws 版，回退 rest 版 ==========
@@ -2110,6 +2111,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             stop_event.set()
             return
         exit_price = 0.01
+        best_bid = _fetch_best_price(client, str(token_id), "bid")
+        if best_bid is not None and best_bid.price and best_bid.price > 0:
+            exit_price = float(best_bid.price)
         try:
             _place_sell_fok(client, token_id=token_id, price=exit_price, size=total_pos)
             print(
