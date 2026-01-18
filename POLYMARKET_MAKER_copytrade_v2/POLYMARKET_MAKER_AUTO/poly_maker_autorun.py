@@ -247,8 +247,7 @@ class GlobalConfig:
                 or merged.get("command_poll_sec", DEFAULT_GLOBAL_CONFIG["command_poll_sec"])
             ),
             max_concurrent_tasks=int(
-                scheduler.get("max_concurrent_jobs")
-                or merged.get(
+                scheduler.get(
                     "max_concurrent_tasks", DEFAULT_GLOBAL_CONFIG["max_concurrent_tasks"]
                 )
             ),
