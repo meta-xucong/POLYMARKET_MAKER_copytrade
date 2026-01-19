@@ -3,12 +3,5 @@
     "max_concurrent_tasks": 10,
     "command_poll_seconds": 5.0,
     "copytrade_poll_seconds": 30.0
-  },
-  "paths": {
-    "log_directory": "logs/autorun",
-    "data_directory": "data",
-    "run_state_file": "data/autorun_status.json",
-    "copytrade_tokens_file": "../copytrade/tokens_from_copytrade.json",
-    "copytrade_sell_signals_file": "../copytrade/copytrade_sell_signals.json"
   }
 }
