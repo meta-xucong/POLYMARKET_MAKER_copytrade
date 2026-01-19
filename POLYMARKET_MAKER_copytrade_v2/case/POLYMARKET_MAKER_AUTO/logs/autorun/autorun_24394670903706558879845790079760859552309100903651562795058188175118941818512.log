@@ -1,0 +1,2212 @@
+[CONFIG] 使用配置文件: /root/data/run_params_24394670903706558879845790079760859552309100903651562795058188175118941818512.json
+[INIT] API 凭证已验证。
+[INIT] ClobClient 就绪。
+[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。
+[INFO] 市场/子问题标题: Russia x Ukraine ceasefire by March 31, 2026?
+[INFO] 使用 token_id: 24394670903706558879845790079760859552309100903651562795058188175118941818512
+[INFO] 市场标注时区: America/New_York
+[INFO] 市场计划截止时间 (UTC): 2026-03-31T00:00:00+00:00
+[WARN] 自动获取的截止日期缺少具体时刻，已按默认配置设置截止时间为 2026-03-31T23:59:00-04:00 (America/New_York)。
+[INFO] 监控目标结束时间 (UTC): 2026-04-01T03:59:00+00:00
+[INFO] 未能识别市场价格精度，默认按盈利百分比下限 0.300% 执行。
+[INIT] 目标 token_id: 24394670903706558879845790079760859552309100903651562795058188175118941818512
+[INIT] 已读取手动份数 10.0，模式：总持仓目标。
+[INIT] 卖出挂单模式：aggressive
+[INIT] 卖出后递增买入阈值已启用，步长 0.0200%。
+[INIT] 价格停滞监控窗口 120.0 分钟，阈值 0.0000%。
+[INIT] 启动后无行情自动退出阈值 10.0 分钟。
+[INIT] 卖出挂单空窗释放阈值 6.0 小时。
+[INFO] 倒计时卖出模式将在市场结束前 300 分钟开启。
+[RUN] 监听行情中… 输入 stop / exit 可手动停止。
+[WAIT] 尚未收到行情，继续等待… | ws=init age=5s
+[WAIT] 尚未收到行情，继续等待… | ws=init age=10s
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 27
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 74
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 96
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 118
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 142
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 165
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 186
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 210
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 234
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 261
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 287
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 315
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 340
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 363
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 360
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 364
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 365
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 371
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 375
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 377
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 372
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 355
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 332
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 333
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 287
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 275
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 261
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 261
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 202
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 179
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 150
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 135
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 102
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 79
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 44
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 40
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 43
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 43
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 44
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 95
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 96
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 98
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 100
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 101
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 102
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.4300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 102
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 105
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 108
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 109
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 109
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 109
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 108
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 113
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 96
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 68
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 75
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 76
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 77
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 75
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 71
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 72
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 72
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 74
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 73
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 62
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 65
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 77
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 101
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 113
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 127
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 141
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 156
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 170
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 186
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 202
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 215
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 234
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 252
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 276
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 297
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 320
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 318
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 316
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 316
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 316
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 313
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 318
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 319
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 317
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 312
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 311
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 305
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 302
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 298
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 300
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 295
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 296
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 292
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 299
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 307
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 317
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 324
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 331
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 339
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 350
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 357
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 348
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0600 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 342
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 325
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 299
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 281
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 263
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 233
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 216
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 196
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 177
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 166
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 168
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 164
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 165
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 171
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 195
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 216
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 236
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 259
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 283
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 304
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 310
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 308
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 300
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 299
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 291
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 263
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 242
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 219
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 193
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 169
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 145
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 120
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 104
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 82
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 46
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 45
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.4700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 43
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 44
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 47
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1400 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 68
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 68
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 71
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 62
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 62
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1000 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 62
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 62
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 52
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 51
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 62
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 65
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 65
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 72
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 75
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 76
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 74
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 72
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 73
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 74
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.7200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 74
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 76
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 71
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 56
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 55
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.9800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 61
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 68
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 71
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 68
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 68
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1500 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 71
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 71
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8700 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 72
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 67
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0800 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 64
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 62
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.0900 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1100 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格: 高 0.1250 / 低 0.1250
+[PX] bid=0.1200 ask=0.1300 last=0.1200 | state=FLAT awaiting=None entry=None
+    时间窗口: 15.0m | 采样点数: 58
