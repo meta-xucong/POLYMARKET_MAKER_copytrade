@@ -404,11 +404,19 @@ class AutoRunManager:
         return sorted({tid for tid in token_ids if tid})
 
     def _ws_aggregator_loop(self) -> None:
+        last_health_check = 0.0
         while not self.stop_event.is_set():
             desired = self._desired_ws_token_ids()
             if desired != self._ws_token_ids:
                 self._restart_ws_subscription(desired)
             self._flush_ws_cache_if_needed()
+
+            # 定期健康检查（每60秒）
+            now = time.time()
+            if now - last_health_check >= 60.0:
+                self._health_check()
+                last_health_check = now
+
             time.sleep(1.0)
 
     def _restart_ws_subscription(self, token_ids: List[str]) -> None:
@@ -419,11 +427,24 @@ class AutoRunManager:
         self._start_ws_subscription(token_ids)
 
     def _start_ws_subscription(self, token_ids: List[str]) -> None:
+        # 验证 WS 模块导入
         try:
             from Volatility_arbitrage_main_ws import ws_watch_by_ids
         except Exception as exc:
-            print(f"[WARN] 无法启动 WS 聚合器: {exc}")
+            print(f"[ERROR] 无法导入 WS 模块: {exc}")
+            print("[ERROR] WS 聚合器启动失败，子进程将使用独立 WS 连接")
+            # 不抛出异常，让系统继续运行（子进程会fallback到独立WS）
             return
+
+        # 验证 websocket-client 依赖
+        try:
+            import websocket
+        except ImportError:
+            print("[ERROR] 缺少依赖 websocket-client")
+            print("[ERROR] 请运行: pip install websocket-client")
+            print("[ERROR] WS 聚合器启动失败，子进程将使用独立 WS 连接")
+            return
+
         stop_event = threading.Event()
         self._ws_thread_stop = stop_event
         self._ws_thread = threading.Thread(
@@ -439,6 +460,14 @@ class AutoRunManager:
         )
         self._ws_thread.start()
         print(f"[WS] 聚合订阅启动，tokens={len(token_ids)}")
+
+        # 验证线程是否成功启动
+        time.sleep(2)
+        if not self._ws_thread.is_alive():
+            print("[ERROR] WS 聚合器线程启动后立即退出")
+            print("[ERROR] 子进程将使用独立 WS 连接")
+            self._ws_thread = None
+            self._ws_thread_stop = None
 
     def _stop_ws_subscription(self) -> None:
         if self._ws_thread_stop is not None:
@@ -458,6 +487,10 @@ class AutoRunManager:
         else:
             return
         ts = ev.get("timestamp") or ev.get("ts") or ev.get("time")
+        # 确保时间戳总是有效的
+        if ts is None:
+            ts = time.time()
+
         status_keys = (
             "status",
             "market_status",
@@ -482,6 +515,12 @@ class AutoRunManager:
             )
             if last is None:
                 last = (bid + ask) / 2.0 if bid and ask else (bid or ask or 0.0)
+
+            # 获取当前序列号并递增（用于去重）
+            with self._ws_cache_lock:
+                old_data = self._ws_cache.get(token_id, {})
+                seq = old_data.get("seq", 0) + 1
+
             payload = {
                 "price": last,
                 "best_bid": bid,
@@ -489,6 +528,7 @@ class AutoRunManager:
                 "ts": ts,
                 "updated_at": time.time(),
                 "event_type": ev.get("event_type"),
+                "seq": seq,  # 单调递增的序列号
             }
             for key in status_keys:
                 val = pc.get(key)
@@ -515,10 +555,67 @@ class AutoRunManager:
             self._ws_cache_last_flush = now
         try:
             self._ws_cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._ws_cache_path.open("w", encoding="utf-8") as f:
+
+            # 使用原子写入：先写临时文件，再重命名
+            tmp_path = self._ws_cache_path.with_suffix('.tmp')
+            with tmp_path.open("w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+
+            # 原子操作：重命名（在 Unix 系统上是原子的）
+            tmp_path.replace(self._ws_cache_path)
+
         except OSError as exc:
-            print(f"[WARN] 写入 WS 聚合缓存失败: {exc}")
+            print(f"[ERROR] 写入 WS 聚合缓存失败: {exc}")
+            # 清理临时文件
+            try:
+                tmp_path = self._ws_cache_path.with_suffix('.tmp')
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+
+    def _health_check(self) -> None:
+        """WS 聚合器健康检查"""
+        # 检查 WS 线程是否运行
+        if self._ws_token_ids and (not self._ws_thread or not self._ws_thread.is_alive()):
+            print("[WARN] WS 聚合器线程已停止，尝试重启...")
+            self._restart_ws_subscription(self._ws_token_ids)
+
+        # 检查缓存数据
+        with self._ws_cache_lock:
+            token_count = len(self._ws_cache)
+            subscribed_count = len(self._ws_token_ids)
+
+            if subscribed_count > 0 and token_count == 0:
+                print(f"[WARN] WS 聚合器订阅了 {subscribed_count} 个token，但缓存为空")
+                print("[WARN] 可能尚未接收到数据，或连接异常")
+
+            # 检查数据新鲜度
+            now = time.time()
+            stale_tokens = []
+            for token_id, data in self._ws_cache.items():
+                updated_at = data.get("updated_at", 0)
+                age = now - updated_at
+                if age > 300:  # 5分钟没更新
+                    stale_tokens.append((token_id, age))
+
+            if stale_tokens:
+                print(f"[WARN] {len(stale_tokens)} 个token数据过期：")
+                for token_id, age in stale_tokens[:3]:  # 只显示前3个
+                    print(f"  - {token_id}: {age:.0f}秒前")
+
+        # 检查文件状态
+        if self._ws_cache_path.exists():
+            try:
+                stat = self._ws_cache_path.stat()
+                age = time.time() - stat.st_mtime
+                if age > 120:  # 2分钟没更新
+                    print(f"[WARN] ws_cache.json 文件过期，最后修改: {age:.0f}秒前")
+            except OSError:
+                pass
+        else:
+            if self._ws_token_ids:
+                print(f"[WARN] ws_cache.json 文件不存在: {self._ws_cache_path}")
 
     def _poll_tasks(self) -> None:
         for task in list(self.tasks.values()):
@@ -733,7 +830,14 @@ class AutoRunManager:
         proc: Optional[subprocess.Popen] = None
         attempts = max(1, int(self.config.process_start_retries))
         env = os.environ.copy()
-        env["POLY_WS_SHARED_CACHE"] = str(self._ws_cache_path)
+
+        # 只在 WS 聚合器真正运行时才设置共享 WS 环境变量
+        # 否则子进程会 fallback 到独立 WS 连接
+        if self._ws_thread and self._ws_thread.is_alive():
+            env["POLY_WS_SHARED_CACHE"] = str(self._ws_cache_path)
+            print(f"[WS] topic={topic_id} 将使用共享 WS 模式")
+        else:
+            print(f"[WS] topic={topic_id} 将使用独立 WS 模式（聚合器未运行）")
         for attempt in range(1, attempts + 1):
             try:
                 proc = subprocess.Popen(
