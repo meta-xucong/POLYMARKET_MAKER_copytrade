@@ -36,9 +36,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "copytrade_poll_sec": 30.0,
     "command_poll_sec": 5.0,
     "max_concurrent_tasks": 10,
-    "log_dir": str(Path("logs") / "autorun"),
-    "data_dir": str(Path("data")),
-    "handled_topics_path": str(Path("data") / "handled_topics.json"),
+    "log_dir": str(PROJECT_ROOT / "logs" / "autorun"),
+    "data_dir": str(PROJECT_ROOT / "data"),
+    "handled_topics_path": str(PROJECT_ROOT / "data" / "handled_topics.json"),
     "copytrade_tokens_path": str(
         PROJECT_ROOT.parent / "copytrade" / "tokens_from_copytrade.json"
     ),
@@ -51,7 +51,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "process_stagger_max_sec": 3.0,
     "topic_start_cooldown_sec": 5.0,
     "log_excerpt_interval_sec": 15.0,
-    "runtime_status_path": str(Path("data") / "autorun_status.json"),
+    "runtime_status_path": str(PROJECT_ROOT / "data" / "autorun_status.json"),
 }
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 
