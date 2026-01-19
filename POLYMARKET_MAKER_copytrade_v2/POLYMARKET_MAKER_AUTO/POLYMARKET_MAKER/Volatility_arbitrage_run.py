@@ -2412,19 +2412,41 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     def _apply_shared_ws_snapshot() -> None:
         nonlocal last_shared_ts
         snapshot = _load_shared_ws_snapshot()
+
+        # 首次读取失败的警告（只打印一次）
         if not snapshot:
+            if not hasattr(_apply_shared_ws_snapshot, "_warned_missing"):
+                if not os.path.exists(shared_ws_cache_path):
+                    print(f"[WARN] 共享WS缓存文件不存在: {shared_ws_cache_path}")
+                _apply_shared_ws_snapshot._warned_missing = True
             return
+
+        # 重置警告标志
+        if hasattr(_apply_shared_ws_snapshot, "_warned_missing"):
+            print(f"[INFO] 共享WS缓存文件已就绪")
+            delattr(_apply_shared_ws_snapshot, "_warned_missing")
+
         if _is_market_closed(snapshot):
             print("[MARKET] 收到市场关闭事件，准备退出…")
             strategy.stop("market closed")
             stop_event.set()
             return
+
         ts = _extract_ts(snapshot.get("ts"))
         if ts is None:
             ts = time.time()
-        if ts <= last_shared_ts:
-            return
-        last_shared_ts = ts
+
+        # 使用序列号去重，而不是时间戳
+        seq = snapshot.get("seq", 0)
+        if not hasattr(_apply_shared_ws_snapshot, "_last_seq"):
+            _apply_shared_ws_snapshot._last_seq = 0
+
+        if seq <= _apply_shared_ws_snapshot._last_seq:
+            return  # 序列号没变，确实是旧数据
+
+        _apply_shared_ws_snapshot._last_seq = seq
+        last_shared_ts = ts  # 保留用于日志
+
         bid = float(snapshot.get("best_bid") or 0.0)
         ask = float(snapshot.get("best_ask") or 0.0)
         last_px = float(snapshot.get("price") or 0.0)
@@ -2434,6 +2456,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             action_queue.put(action)
         with ws_state_lock:
             ws_state["last_event_ts"] = time.time()
+
+        # 定期打印调试信息（每5分钟）
+        if not hasattr(_apply_shared_ws_snapshot, "_last_debug_log"):
+            _apply_shared_ws_snapshot._last_debug_log = 0
+        now = time.time()
+        if now - _apply_shared_ws_snapshot._last_debug_log >= 300:
+            print(f"[DEBUG] 共享WS: seq={seq}, ts={ts}, bid={bid}, ask={ask}, price={last_px}")
+            _apply_shared_ws_snapshot._last_debug_log = now
 
     def _on_ws_state(state: str, info: Dict[str, Any]):
         ts_now = time.time()
@@ -2458,6 +2488,27 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         elif state == "closed":
             status_code = info.get("status_code")
             print(f"[WS] 连接关闭（code={status_code}），等待重连…")
+
+    # 健康检查：即使设置了共享 WS，也要验证文件是否存在
+    if use_shared_ws:
+        print(f"[WS] 使用共享 WS 模式，缓存路径: {shared_ws_cache_path}")
+        if not os.path.exists(shared_ws_cache_path):
+            print(f"[WARN] 共享 WS 缓存文件不存在: {shared_ws_cache_path}")
+            print("[WARN] 切换到独立 WS 模式")
+            use_shared_ws = False
+        else:
+            # 检查文件是否过期（超过5分钟未更新）
+            try:
+                import os.path
+                file_age = time.time() - os.path.getmtime(shared_ws_cache_path)
+                if file_age > 300:
+                    print(f"[WARN] 共享 WS 缓存文件过期（{file_age:.0f}秒未更新）")
+                    print("[WARN] 切换到独立 WS 模式")
+                    use_shared_ws = False
+            except OSError:
+                print("[WARN] 无法读取共享 WS 缓存文件状态")
+                print("[WARN] 切换到独立 WS 模式")
+                use_shared_ws = False
 
     if not use_shared_ws:
         ws_thread = threading.Thread(
