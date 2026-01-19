@@ -557,6 +557,13 @@ class AutoRunManager:
         if rc != 0:
             max_retries = max(0, int(self.config.process_start_retries))
             if task.restart_attempts < max_retries:
+                running = sum(1 for t in self.tasks.values() if t.is_running())
+                if running >= max(1, int(self.config.max_concurrent_tasks)):
+                    if task.topic_id not in self.pending_topics:
+                        self.pending_topics.append(task.topic_id)
+                    task.status = "pending"
+                    task.heartbeat("restart deferred due to max concurrency")
+                    return
                 task.restart_attempts += 1
                 task.status = "restarting"
                 task.heartbeat(
