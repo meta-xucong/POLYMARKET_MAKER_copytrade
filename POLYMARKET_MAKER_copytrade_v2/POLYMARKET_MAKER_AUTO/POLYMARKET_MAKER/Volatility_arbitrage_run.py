@@ -2436,15 +2436,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         if ts is None:
             ts = time.time()
 
-        # 使用序列号去重，而不是时间戳
-        seq = snapshot.get("seq", 0)
-        if not hasattr(_apply_shared_ws_snapshot, "_last_seq"):
-            _apply_shared_ws_snapshot._last_seq = 0
+        # 使用 updated_at 时间戳去重，避免 WS 重连导致 seq 重置的问题
+        updated_at = snapshot.get("updated_at", 0.0)
+        seq = snapshot.get("seq", 0)  # 保留用于日志
 
-        if seq <= _apply_shared_ws_snapshot._last_seq:
-            return  # 序列号没变，确实是旧数据
+        if not hasattr(_apply_shared_ws_snapshot, "_last_updated_at"):
+            _apply_shared_ws_snapshot._last_updated_at = 0.0
 
-        _apply_shared_ws_snapshot._last_seq = seq
+        if updated_at <= _apply_shared_ws_snapshot._last_updated_at:
+            return  # 缓存数据未更新
+
+        _apply_shared_ws_snapshot._last_updated_at = updated_at
         last_shared_ts = ts  # 保留用于日志
 
         bid = float(snapshot.get("best_bid") or 0.0)
