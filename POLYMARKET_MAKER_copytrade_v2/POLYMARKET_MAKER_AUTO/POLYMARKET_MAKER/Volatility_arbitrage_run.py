@@ -2392,7 +2392,23 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         return
                     time.sleep(1)
 
-    shared_ws_cache_path = os.getenv("POLY_WS_SHARED_CACHE")
+    # 从命令行参数获取共享 WS 缓存路径（不再使用环境变量 POLY_WS_SHARED_CACHE）
+    shared_ws_cache_path = os.getenv("_POLY_WS_CACHE_ARG")
+
+    # Fallback: 如果没有通过命令行传递，尝试使用固定路径约定
+    if not shared_ws_cache_path:
+        # 约定路径：../data/ws_cache.json（相对于当前脚本）
+        default_cache_path = Path(__file__).parent.parent / "data" / "ws_cache.json"
+        if default_cache_path.exists():
+            try:
+                # 检查文件是否在最近2分钟内更新过
+                cache_age = time.time() - default_cache_path.stat().st_mtime
+                if cache_age < 120:
+                    shared_ws_cache_path = str(default_cache_path)
+                    print(f"[WS] 使用默认共享缓存路径: {shared_ws_cache_path}")
+            except OSError:
+                pass
+
     use_shared_ws = bool(shared_ws_cache_path)
     last_shared_ts = 0.0
 
@@ -3759,6 +3775,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
 
 if __name__ == "__main__":
+    # 解析命令行参数：
+    # python Volatility_arbitrage_run.py <config_path> [--shared-ws-cache=<path>]
     cfg_path = sys.argv[1] if len(sys.argv) > 1 else None
+
+    # 解析共享 WS 缓存路径参数（替代环境变量）
+    shared_ws_cache_arg = None
+    for arg in sys.argv[2:]:
+        if arg.startswith("--shared-ws-cache="):
+            shared_ws_cache_arg = arg.split("=", 1)[1]
+            break
+
+    # 存储到全局变量供后续使用
+    if shared_ws_cache_arg:
+        os.environ["_POLY_WS_CACHE_ARG"] = shared_ws_cache_arg
+
     cfg = _load_run_config(cfg_path)
     main(cfg)

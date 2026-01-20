@@ -427,20 +427,20 @@ class AutoRunManager:
                 self._restart_ws_subscription(desired)
             self._flush_ws_cache_if_needed()
 
-            # 定期健康检查（每60秒）
+            # 定期健康检查（每10秒，加快故障检测和恢复）
             now = time.time()
-            if now - last_health_check >= 60.0:
+            if now - last_health_check >= 10.0:
                 current_count = getattr(self, '_ws_event_count', 0)
 
                 # 检查数据流是否停滞
                 if current_count == last_event_count and self._ws_token_ids:
-                    print(f"[WARN] WS 聚合器60秒内未收到任何新事件（订阅了 {len(self._ws_token_ids)} 个token）")
+                    print(f"[WARN] WS 聚合器10秒内未收到任何新事件（订阅了 {len(self._ws_token_ids)} 个token）")
                 elif current_count > last_event_count:
                     # 数据流正常，每小时打印一次统计（避免刷屏）
                     if not hasattr(self, '_last_flow_log'):
                         self._last_flow_log = 0.0
                     if now - self._last_flow_log >= 3600.0:
-                        print(f"[WS][FLOW] 数据流正常，60秒内收到 {current_count - last_event_count} 个事件")
+                        print(f"[WS][FLOW] 数据流正常，10秒内收到 {current_count - last_event_count} 个事件")
                         self._last_flow_log = now
 
                 last_event_count = current_count
@@ -863,6 +863,41 @@ class AutoRunManager:
             merged["order_size"] = scaled_size
         return merged
 
+    def _should_use_shared_ws(self) -> bool:
+        """
+        判断是否应该使用共享 WS 模式（基于缓存文件新鲜度，而非线程状态）
+
+        优势：
+        - 避免启动时的竞态条件（线程可能正在初始化）
+        - 避免运行时的竞态条件（线程重启过程中）
+        - 更可靠：只要缓存数据新鲜就能用，不管线程是否临时崩溃
+
+        Returns:
+            bool: True 表示应该使用共享 WS 缓存
+        """
+        # 优先检查缓存文件新鲜度（最可靠的判断方式）
+        try:
+            if not self._ws_cache_path.exists():
+                return False
+
+            # 检查缓存文件是否在最近2分钟内更新过
+            cache_age = time.time() - self._ws_cache_path.stat().st_mtime
+            if cache_age < 120:  # 2分钟
+                return True
+        except OSError:
+            # 文件访问失败，继续下面的备用检查
+            pass
+
+        # 备用检查：聚合器线程和 WS 线程都存活
+        # （只在缓存文件检查失败时才使用，作为双重保险）
+        aggregator_alive = (
+            self._ws_aggregator_thread
+            and self._ws_aggregator_thread.is_alive()
+        )
+        ws_alive = self._ws_thread and self._ws_thread.is_alive()
+
+        return aggregator_alive and ws_alive
+
     def _start_topic_process(self, topic_id: str) -> bool:
         config_data = self._build_run_config(topic_id)
         cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(topic_id)}.json"
@@ -885,22 +920,24 @@ class AutoRunManager:
                 )
                 time.sleep(delay)
 
+        # 构建命令行参数（不再使用环境变量）
         cmd = [
             sys.executable,
             str(MAKER_ROOT / "Volatility_arbitrage_run.py"),
             str(cfg_path),
         ]
+
+        # 基于缓存新鲜度判断是否使用共享 WS 模式
+        if self._should_use_shared_ws():
+            # 通过命令行参数传递共享缓存路径
+            cmd.append(f"--shared-ws-cache={self._ws_cache_path}")
+            print(f"[WS] topic={topic_id} 将使用共享 WS 模式 (缓存: {self._ws_cache_path})")
+        else:
+            print(f"[WS] topic={topic_id} 将使用独立 WS 模式（共享缓存不可用）")
+
         proc: Optional[subprocess.Popen] = None
         attempts = max(1, int(self.config.process_start_retries))
         env = os.environ.copy()
-
-        # 只在 WS 聚合器真正运行时才设置共享 WS 环境变量
-        # 否则子进程会 fallback 到独立 WS 连接
-        if self._ws_thread and self._ws_thread.is_alive():
-            env["POLY_WS_SHARED_CACHE"] = str(self._ws_cache_path)
-            print(f"[WS] topic={topic_id} 将使用共享 WS 模式")
-        else:
-            print(f"[WS] topic={topic_id} 将使用独立 WS 模式（聚合器未运行）")
         for attempt in range(1, attempts + 1):
             try:
                 proc = subprocess.Popen(
@@ -969,13 +1006,21 @@ class AutoRunManager:
             print(f"[ERROR] 无法创建清仓日志文件 {log_path}: {exc}")
             return
 
+        # 构建命令行参数（不再使用环境变量）
         cmd = [
             sys.executable,
             str(MAKER_ROOT / "Volatility_arbitrage_run.py"),
             str(cfg_path),
         ]
+
+        # 清仓进程总是尝试使用共享缓存（如果可用）
+        if self._should_use_shared_ws():
+            cmd.append(f"--shared-ws-cache={self._ws_cache_path}")
+            print(f"[WS] 清仓进程将使用共享 WS 模式")
+        else:
+            print(f"[WS] 清仓进程将使用独立 WS 模式")
+
         env = os.environ.copy()
-        env["POLY_WS_SHARED_CACHE"] = str(self._ws_cache_path)
         try:
             proc = subprocess.Popen(
                 cmd,
