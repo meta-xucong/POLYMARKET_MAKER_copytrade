@@ -2499,7 +2499,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         else:
             # 检查文件是否过期（超过5分钟未更新）
             try:
-                import os.path
                 file_age = time.time() - os.path.getmtime(shared_ws_cache_path)
                 if file_age > 300:
                     print(f"[WARN] 共享 WS 缓存文件过期（{file_age:.0f}秒未更新）")
