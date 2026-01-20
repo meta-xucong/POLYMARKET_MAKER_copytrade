@@ -489,15 +489,18 @@ class AutoRunManager:
             daemon=True,
         )
         self._ws_thread.start()
-        print(f"[WS] 聚合订阅启动，tokens={len(token_ids)}")
+        print(f"[WS][AGGREGATOR] 聚合订阅启动，tokens={len(token_ids)}")
+        print(f"[WS][AGGREGATOR] 缓存文件: {self._ws_cache_path}")
 
         # 验证线程是否成功启动
         time.sleep(2)
         if not self._ws_thread.is_alive():
-            print("[ERROR] WS 聚合器线程启动后立即退出")
-            print("[ERROR] 子进程将使用独立 WS 连接")
+            print("[WS][AGGREGATOR] ✗ WS线程启动后立即退出")
+            print("[WS][AGGREGATOR] 子进程将使用独立 WS 连接")
             self._ws_thread = None
             self._ws_thread_stop = None
+        else:
+            print(f"[WS][AGGREGATOR] ✓ WS线程运行正常")
 
     def _stop_ws_subscription(self) -> None:
         if self._ws_thread_stop is not None:
@@ -602,6 +605,18 @@ class AutoRunManager:
             with self._ws_cache_lock:
                 self._ws_cache[token_id] = payload
                 self._ws_cache_dirty = True
+
+                # 定期打印缓存更新统计（每分钟）
+                if not hasattr(self, '_cache_update_log_ts'):
+                    self._cache_update_log_ts = 0
+                    self._cache_update_count = 0
+                self._cache_update_count += 1
+                now = time.time()
+                if now - self._cache_update_log_ts >= 60:
+                    print(f"[WS][AGGREGATOR] 缓存更新统计: {self._cache_update_count} 次/分钟, "
+                          f"tokens={len(self._ws_cache)}, last_seq={seq}")
+                    self._cache_update_log_ts = now
+                    self._cache_update_count = 0
 
     def _flush_ws_cache_if_needed(self) -> None:
         now = time.time()
@@ -878,13 +893,22 @@ class AutoRunManager:
         # 优先检查缓存文件新鲜度（最可靠的判断方式）
         try:
             if not self._ws_cache_path.exists():
+                if hasattr(self, '_debug_shared_ws_check'):
+                    print(f"[WS][CHECK] 缓存文件不存在: {self._ws_cache_path}")
                 return False
 
             # 检查缓存文件是否在最近2分钟内更新过
             cache_age = time.time() - self._ws_cache_path.stat().st_mtime
             if cache_age < 120:  # 2分钟
+                if hasattr(self, '_debug_shared_ws_check'):
+                    print(f"[WS][CHECK] ✓ 缓存文件新鲜 (age={cache_age:.1f}s)")
                 return True
-        except OSError:
+            else:
+                if hasattr(self, '_debug_shared_ws_check'):
+                    print(f"[WS][CHECK] 缓存文件过期 (age={cache_age:.1f}s)")
+        except OSError as e:
+            if hasattr(self, '_debug_shared_ws_check'):
+                print(f"[WS][CHECK] 文件访问失败: {e}")
             # 文件访问失败，继续下面的备用检查
             pass
 
@@ -895,6 +919,9 @@ class AutoRunManager:
             and self._ws_aggregator_thread.is_alive()
         )
         ws_alive = self._ws_thread and self._ws_thread.is_alive()
+
+        if hasattr(self, '_debug_shared_ws_check'):
+            print(f"[WS][CHECK] 备用检查: aggregator={aggregator_alive}, ws={ws_alive}")
 
         return aggregator_alive and ws_alive
 
@@ -928,12 +955,23 @@ class AutoRunManager:
         ]
 
         # 基于缓存新鲜度判断是否使用共享 WS 模式
-        if self._should_use_shared_ws():
+        # 启用调试输出（首次子进程启动时）
+        if not hasattr(self, '_first_child_started'):
+            self._debug_shared_ws_check = True
+            self._first_child_started = True
+
+        should_use_shared = self._should_use_shared_ws()
+
+        # 禁用调试输出（避免刷屏）
+        if hasattr(self, '_debug_shared_ws_check'):
+            delattr(self, '_debug_shared_ws_check')
+
+        if should_use_shared:
             # 通过命令行参数传递共享缓存路径
             cmd.append(f"--shared-ws-cache={self._ws_cache_path}")
-            print(f"[WS] topic={topic_id} 将使用共享 WS 模式 (缓存: {self._ws_cache_path})")
+            print(f"[WS][CHILD] topic={topic_id[:8]}... → 共享 WS 模式 ✓")
         else:
-            print(f"[WS] topic={topic_id} 将使用独立 WS 模式（共享缓存不可用）")
+            print(f"[WS][CHILD] topic={topic_id[:8]}... → 独立 WS 模式 ✗")
 
         proc: Optional[subprocess.Popen] = None
         attempts = max(1, int(self.config.process_start_retries))
