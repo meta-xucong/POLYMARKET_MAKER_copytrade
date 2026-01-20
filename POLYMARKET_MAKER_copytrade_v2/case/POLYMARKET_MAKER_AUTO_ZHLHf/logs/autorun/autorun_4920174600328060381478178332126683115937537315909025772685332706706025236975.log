@@ -1,0 +1,4 @@
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/run_params_4920174600328060381478178332126683115937537315909025772685332706706025236975.json
+[ERR] 无法导入 get_client： cannot import name 'get_client' from 'Volatility_arbitrage_main_ws' (/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_main_ws.py) | PolyApiException[status_code=None, error_message=Request exception!]
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/run_params_4920174600328060381478178332126683115937537315909025772685332706706025236975.json
+[ERR] 无法导入 get_client： cannot import name 'get_client' from 'Volatility_arbitrage_main_ws' (/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_main_ws.py) | PolyApiException[status_code=None, error_message=Request exception!]

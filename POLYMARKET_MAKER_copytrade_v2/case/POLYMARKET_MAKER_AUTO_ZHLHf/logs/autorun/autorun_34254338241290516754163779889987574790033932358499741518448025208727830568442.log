@@ -1,0 +1,50 @@
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/run_params_34254338241290516754163779889987574790033932358499741518448025208727830568442.json
+[INIT] API 凭证已验证。
+[INIT] ClobClient 就绪。
+[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。
+[INFO] 市场/子问题标题: Will Russia capture Lyman by March 31, 2026?
+[INFO] 使用 token_id: 34254338241290516754163779889987574790033932358499741518448025208727830568442
+[INFO] 市场标注时区: America/New_York
+[INFO] 市场计划截止时间 (UTC): 2025-12-31T23:55:00+00:00
+[INFO] 监控目标结束时间 (UTC): 2025-12-31T23:55:00+00:00
+[INFO] 未能识别市场价格精度，默认按盈利百分比下限 0.300% 执行。
+[INIT] 目标 token_id: 34254338241290516754163779889987574790033932358499741518448025208727830568442
+[INIT] 已读取手动份数 10.0，模式：总持仓目标。
+[INIT] 卖出挂单模式：aggressive
+[INIT] 卖出后递增买入阈值已启用，步长 0.0200%。
+[INIT] 价格停滞监控窗口 120.0 分钟，阈值 0.0000%。
+[INIT] 启动后无行情自动退出阈值 10.0 分钟。
+[INIT] 卖出挂单空窗释放阈值 6.0 小时。
+[INFO] 倒计时卖出模式将在市场结束前 300 分钟开启。
+Traceback (most recent call last):
+  File "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_run.py", line 3763, in <module>
+    main(cfg)
+  File "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_run.py", line 2395, in main
+    shared_ws_cache_path = os.getenv("POLY_WS_SHARED_CACHE")
+                           ^^
+UnboundLocalError: cannot access local variable 'os' where it is not associated with a value
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/run_params_34254338241290516754163779889987574790033932358499741518448025208727830568442.json
+[INIT] API 凭证已验证。
+[INIT] ClobClient 就绪。
+[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。
+[INFO] 市场/子问题标题: Will Russia capture Lyman by March 31, 2026?
+[INFO] 使用 token_id: 34254338241290516754163779889987574790033932358499741518448025208727830568442
+[INFO] 市场标注时区: America/New_York
+[INFO] 市场计划截止时间 (UTC): 2025-12-31T23:55:00+00:00
+[INFO] 监控目标结束时间 (UTC): 2025-12-31T23:55:00+00:00
+[INFO] 未能识别市场价格精度，默认按盈利百分比下限 0.300% 执行。
+[INIT] 目标 token_id: 34254338241290516754163779889987574790033932358499741518448025208727830568442
+[INIT] 已读取手动份数 10.0，模式：总持仓目标。
+[INIT] 卖出挂单模式：aggressive
+[INIT] 卖出后递增买入阈值已启用，步长 0.0200%。
+[INIT] 价格停滞监控窗口 120.0 分钟，阈值 0.0000%。
+[INIT] 启动后无行情自动退出阈值 10.0 分钟。
+[INIT] 卖出挂单空窗释放阈值 6.0 小时。
+[INFO] 倒计时卖出模式将在市场结束前 300 分钟开启。
+Traceback (most recent call last):
+  File "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_run.py", line 3763, in <module>
+    main(cfg)
+  File "/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_run.py", line 2395, in main
+    shared_ws_cache_path = os.getenv("POLY_WS_SHARED_CACHE")
+                           ^^
+UnboundLocalError: cannot access local variable 'os' where it is not associated with a value
