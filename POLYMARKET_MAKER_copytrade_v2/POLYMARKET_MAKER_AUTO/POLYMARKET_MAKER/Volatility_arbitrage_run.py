@@ -2353,6 +2353,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 continue
             bid, ask, last = _parse_price_change(pc)
             latest[token_id] = {"price": last, "best_bid": bid, "best_ask": ask, "ts": ts}
+
+            # 添加独立WS的调试日志（与共享WS对应）
+            if not hasattr(_on_event, "_last_debug_log"):
+                _on_event._last_debug_log = 0
+                _on_event._event_count = 0
+                print(f"[WS][INDEPENDENT] 开始接收独立WS事件 (token={token_id})")
+
+            _on_event._event_count += 1
+            now = time.time()
+            if now - _on_event._last_debug_log >= 30:  # 每30秒打印一次
+                print(f"[WS][INDEPENDENT] events={_on_event._event_count}, "
+                      f"bid={bid}, ask={ask}, price={last}")
+                _on_event._last_debug_log = now
+
             action = strategy.on_tick(best_ask=ask, best_bid=bid, ts=ts)
             if action and action.action in (ActionType.BUY, ActionType.SELL):
                 action_queue.put(action)
@@ -2420,9 +2434,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 payload = json.load(f)
             tokens = payload.get("tokens") if isinstance(payload, dict) else None
             if not isinstance(tokens, dict):
+                if not hasattr(_load_shared_ws_snapshot, "_warned_format"):
+                    print(f"[WS][SHARED] ✗ 缓存文件格式错误（缺少 tokens 字段）")
+                    _load_shared_ws_snapshot._warned_format = True
                 return None
-            return tokens.get(str(token_id))
-        except (OSError, json.JSONDecodeError):
+            snapshot = tokens.get(str(token_id))
+            if snapshot is None and not hasattr(_load_shared_ws_snapshot, "_warned_missing_token"):
+                print(f"[WS][SHARED] ✗ 缓存中未找到 token {token_id} 的数据")
+                print(f"[WS][SHARED] 缓存中的 tokens: {list(tokens.keys())[:5]}...")
+                _load_shared_ws_snapshot._warned_missing_token = True
+            return snapshot
+        except (OSError, json.JSONDecodeError) as e:
+            if not hasattr(_load_shared_ws_snapshot, "_warned_error"):
+                print(f"[WS][SHARED] ✗ 读取缓存文件失败: {e}")
+                _load_shared_ws_snapshot._warned_error = True
             return None
 
     def _apply_shared_ws_snapshot() -> None:
@@ -2475,12 +2500,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         with ws_state_lock:
             ws_state["last_event_ts"] = time.time()
 
-        # 定期打印调试信息（每5分钟）
+        # 定期打印调试信息（每30秒，便于观察seq变化）
         if not hasattr(_apply_shared_ws_snapshot, "_last_debug_log"):
             _apply_shared_ws_snapshot._last_debug_log = 0
+            _apply_shared_ws_snapshot._update_count = 0
+            print(f"[WS][SHARED] 开始从共享缓存读取数据 (token={token_id})")
+
+        _apply_shared_ws_snapshot._update_count += 1
         now = time.time()
-        if now - _apply_shared_ws_snapshot._last_debug_log >= 300:
-            print(f"[DEBUG] 共享WS: seq={seq}, ts={ts}, bid={bid}, ask={ask}, price={last_px}")
+        if now - _apply_shared_ws_snapshot._last_debug_log >= 30:  # 从300秒改为30秒
+            print(f"[WS][SHARED] seq={seq}, updates={_apply_shared_ws_snapshot._update_count}, "
+                  f"bid={bid}, ask={ask}, price={last_px}")
             _apply_shared_ws_snapshot._last_debug_log = now
 
     def _on_ws_state(state: str, info: Dict[str, Any]):
@@ -2509,25 +2539,30 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     # 健康检查：即使设置了共享 WS，也要验证文件是否存在
     if use_shared_ws:
-        print(f"[WS] 使用共享 WS 模式，缓存路径: {shared_ws_cache_path}")
+        print(f"[WS][SHARED] ✓ 将使用共享 WS 缓存模式")
+        print(f"[WS][SHARED] 缓存路径: {shared_ws_cache_path}")
         if not os.path.exists(shared_ws_cache_path):
-            print(f"[WARN] 共享 WS 缓存文件不存在: {shared_ws_cache_path}")
-            print("[WARN] 切换到独立 WS 模式")
+            print(f"[WS][SHARED] ✗ 缓存文件不存在")
+            print(f"[WS][FALLBACK] 切换到独立 WS 模式")
             use_shared_ws = False
         else:
             # 检查文件是否过期（超过5分钟未更新）
             try:
                 file_age = time.time() - os.path.getmtime(shared_ws_cache_path)
                 if file_age > 300:
-                    print(f"[WARN] 共享 WS 缓存文件过期（{file_age:.0f}秒未更新）")
-                    print("[WARN] 切换到独立 WS 模式")
+                    print(f"[WS][SHARED] ✗ 缓存文件过期（{file_age:.0f}秒未更新）")
+                    print(f"[WS][FALLBACK] 切换到独立 WS 模式")
                     use_shared_ws = False
+                else:
+                    print(f"[WS][SHARED] ✓ 缓存文件新鲜（{file_age:.0f}秒前更新）")
             except OSError:
                 print("[WARN] 无法读取共享 WS 缓存文件状态")
                 print("[WARN] 切换到独立 WS 模式")
                 use_shared_ws = False
 
     if not use_shared_ws:
+        print(f"[WS][INDEPENDENT] ✓ 将使用独立 WS 连接模式")
+        print(f"[WS][INDEPENDENT] 为 token {token_id} 创建专用连接")
         ws_thread = threading.Thread(
             target=ws_watch_by_ids,
             kwargs={
@@ -2541,6 +2576,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             daemon=True,
         )
         ws_thread.start()
+        print(f"[WS][INDEPENDENT] 独立 WS 线程已启动，等待连接建立...")
 
     print("[RUN] 监听行情中… 输入 stop / exit 可手动停止。")
 
@@ -2565,7 +2601,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if last_error:
                     parts.append(f"err={last_error}")
                 state_note = " | " + " ".join(parts)
-            print(f"[WAIT] 尚未收到行情，继续等待…{state_note}")
+            mode_tag = "[SHARED]" if use_shared_ws else "[INDEPENDENT]"
+            print(f"[WAIT]{mode_tag} 尚未收到行情，继续等待…{state_note}")
             start_wait = time.time()
         if use_shared_ws:
             _apply_shared_ws_snapshot()
