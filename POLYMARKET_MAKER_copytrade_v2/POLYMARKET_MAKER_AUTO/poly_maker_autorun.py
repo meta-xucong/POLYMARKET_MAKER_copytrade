@@ -405,6 +405,8 @@ class AutoRunManager:
 
     def _ws_aggregator_loop(self) -> None:
         last_health_check = 0.0
+        last_event_count = 0  # 跟踪上次检查时的事件数
+
         while not self.stop_event.is_set():
             desired = self._desired_ws_token_ids()
             if desired != self._ws_token_ids:
@@ -414,6 +416,20 @@ class AutoRunManager:
             # 定期健康检查（每60秒）
             now = time.time()
             if now - last_health_check >= 60.0:
+                current_count = getattr(self, '_ws_event_count', 0)
+
+                # 检查数据流是否停滞
+                if current_count == last_event_count and self._ws_token_ids:
+                    print(f"[WARN] WS 聚合器60秒内未收到任何新事件（订阅了 {len(self._ws_token_ids)} 个token）")
+                elif current_count > last_event_count:
+                    # 数据流正常，每小时打印一次统计（避免刷屏）
+                    if not hasattr(self, '_last_flow_log'):
+                        self._last_flow_log = 0.0
+                    if now - self._last_flow_log >= 3600.0:
+                        print(f"[WS][FLOW] 数据流正常，60秒内收到 {current_count - last_event_count} 个事件")
+                        self._last_flow_log = now
+
+                last_event_count = current_count
                 self._health_check()
                 last_health_check = now
 
@@ -478,13 +494,40 @@ class AutoRunManager:
         self._ws_thread_stop = None
 
     def _on_ws_event(self, ev: Dict[str, Any]) -> None:
+        # 统计事件接收和过滤情况
+        if not hasattr(self, '_ws_event_count'):
+            self._ws_event_count = 0
+            self._ws_filtered_count = 0
+            self._ws_filtered_types: Dict[str, int] = {}
+            self._ws_last_stats_log = 0.0
+
+        self._ws_event_count += 1
+
         if not isinstance(ev, dict):
+            self._ws_filtered_count += 1
             return
+
         if ev.get("event_type") == "price_change":
             pcs = ev.get("price_changes", [])
         elif "price_changes" in ev:
             pcs = ev.get("price_changes", [])
         else:
+            # 记录被过滤的事件类型
+            self._ws_filtered_count += 1
+            evt_type = ev.get("event_type", "unknown")
+            self._ws_filtered_types[evt_type] = self._ws_filtered_types.get(evt_type, 0) + 1
+
+            # 每60秒打印一次统计
+            now = time.time()
+            if now - self._ws_last_stats_log >= 60.0:
+                print(
+                    f"[WS][STATS] 总事件: {self._ws_event_count}, "
+                    f"已处理: {self._ws_event_count - self._ws_filtered_count}, "
+                    f"已过滤: {self._ws_filtered_count}"
+                )
+                if self._ws_filtered_types:
+                    print(f"[WS][STATS] 过滤事件类型: {self._ws_filtered_types}")
+                self._ws_last_stats_log = now
             return
         ts = ev.get("timestamp") or ev.get("ts") or ev.get("time")
         # 确保时间戳总是有效的
