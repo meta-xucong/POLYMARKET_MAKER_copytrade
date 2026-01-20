@@ -1204,12 +1204,20 @@ class AutoRunManager:
         if not sell_signals:
             return
         for token_id in sell_signals:
+            task = self.tasks.get(token_id)
+            has_running_task = bool(task and task.is_running())
+            has_history = token_id in self.handled_topics
+            if not has_running_task and not has_history:
+                print(
+                    "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
+                    f"token_id={token_id}"
+                )
+                continue
             if token_id in self.pending_topics:
                 try:
                     self.pending_topics.remove(token_id)
                 except ValueError:
                     pass
-            task = self.tasks.get(token_id)
             if task and task.is_running():
                 task.no_restart = True
                 task.end_reason = "sell signal"
