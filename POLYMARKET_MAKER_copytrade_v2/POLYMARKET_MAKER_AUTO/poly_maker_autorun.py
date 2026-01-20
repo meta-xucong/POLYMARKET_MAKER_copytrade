@@ -1176,16 +1176,22 @@ class AutoRunManager:
             print(f"[WARN] copytrade sell_signal 文件格式异常：{path}")
             return set()
         signals: set[str] = set()
+        skipped = 0
         for item in raw_tokens:
             if not isinstance(item, dict):
                 continue
             token_id = item.get("token_id") or item.get("tokenId")
             if not token_id:
                 continue
+            if not item.get("introduced_by_buy", False):
+                skipped += 1
+                continue
             signals.add(str(token_id))
         if signals:
             preview = ", ".join(list(signals)[:5])
             print(f"[COPYTRADE] 已读取 sell 信号 {len(signals)} 条 preview={preview}")
+        if skipped:
+            print(f"[COPYTRADE] 已跳过未引入的 sell 信号 {skipped} 条")
         return signals
 
     def _exit_signal_path(self, token_id: str) -> Path:
@@ -1204,12 +1210,20 @@ class AutoRunManager:
         if not sell_signals:
             return
         for token_id in sell_signals:
+            task = self.tasks.get(token_id)
+            has_running_task = bool(task and task.is_running())
+            has_history = token_id in self.handled_topics
+            if not has_running_task and not has_history:
+                print(
+                    "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
+                    f"token_id={token_id}"
+                )
+                continue
             if token_id in self.pending_topics:
                 try:
                     self.pending_topics.remove(token_id)
                 except ValueError:
                     pass
-            task = self.tasks.get(token_id)
             if task and task.is_running():
                 task.no_restart = True
                 task.end_reason = "sell signal"
