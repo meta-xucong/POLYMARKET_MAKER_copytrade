@@ -325,13 +325,16 @@ def run_once(
             last_seen = action["timestamp"].astimezone(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
             )
+            existing = token_map.get(key)
             new_entry = {
                 "token_id": token_id,
                 "source_account": account,
                 "last_seen": last_seen,
             }
+            # 保留 existing 的 introduced_by_buy 标记，避免被覆盖丢失
+            if existing and existing.get("introduced_by_buy", False):
+                new_entry["introduced_by_buy"] = True
 
-            existing = token_map.get(key)
             if existing:
                 existing_ts = _parse_last_seen(existing.get("last_seen"))
                 new_ts = _parse_last_seen(last_seen)
