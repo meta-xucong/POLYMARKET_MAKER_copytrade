@@ -2477,16 +2477,43 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         if ts is None:
             ts = time.time()
 
-        # 使用 updated_at 时间戳去重，避免 WS 重连导致 seq 重置的问题
+        # 使用 seq 进行去重（seq是单调递增的序列号，比updated_at更可靠）
+        # seq是聚合器为每个token单调递增的计数器，每次该token有新事件就+1
+        seq = snapshot.get("seq", 0)
         updated_at = snapshot.get("updated_at", 0.0)
-        seq = snapshot.get("seq", 0)  # 保留用于日志
 
-        if not hasattr(_apply_shared_ws_snapshot, "_last_updated_at"):
+        if not hasattr(_apply_shared_ws_snapshot, "_last_seq"):
+            _apply_shared_ws_snapshot._last_seq = 0
             _apply_shared_ws_snapshot._last_updated_at = 0.0
 
-        if updated_at <= _apply_shared_ws_snapshot._last_updated_at:
-            return  # 缓存数据未更新
+        # 判断是否是新数据：
+        # 1. seq增大 → 肯定是新数据，接受
+        # 2. seq变小 → 聚合器重启导致seq重置，接受
+        # 3. seq相同但updated_at变大 → 同一事件的数据被修正，接受
+        # 4. seq和updated_at都不变或变小 → 完全相同的旧数据，跳过
+        is_new_data = False
 
+        if seq > _apply_shared_ws_snapshot._last_seq:
+            # 正常的新数据（seq递增）
+            is_new_data = True
+        elif seq < _apply_shared_ws_snapshot._last_seq:
+            # seq变小，说明聚合器重启，重置seq
+            print(f"[WS][SHARED] ⚠ 检测到seq重置 ({_apply_shared_ws_snapshot._last_seq} → {seq})，接受新数据")
+            is_new_data = True
+        elif seq == _apply_shared_ws_snapshot._last_seq:
+            # seq相同，检查updated_at
+            if updated_at > _apply_shared_ws_snapshot._last_updated_at:
+                # 同一seq但时间戳变大，可能是数据修正
+                is_new_data = True
+            else:
+                # 完全相同的数据，跳过
+                return
+
+        if not is_new_data:
+            return
+
+        # 更新去重状态
+        _apply_shared_ws_snapshot._last_seq = seq
         _apply_shared_ws_snapshot._last_updated_at = updated_at
         last_shared_ts = ts  # 保留用于日志
 
@@ -2509,9 +2536,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         _apply_shared_ws_snapshot._update_count += 1
         now = time.time()
         if now - _apply_shared_ws_snapshot._last_debug_log >= 30:  # 从300秒改为30秒
-            print(f"[WS][SHARED] seq={seq}, updates={_apply_shared_ws_snapshot._update_count}, "
-                  f"bid={bid}, ask={ask}, price={last_px}")
+            elapsed = now - _apply_shared_ws_snapshot._last_debug_log if _apply_shared_ws_snapshot._last_debug_log > 0 else 30
+            updates_per_min = (_apply_shared_ws_snapshot._update_count / elapsed) * 60 if elapsed > 0 else 0
+            print(f"[WS][SHARED] seq={seq}, updates={_apply_shared_ws_snapshot._update_count} "
+                  f"({updates_per_min:.1f}/min), bid={bid}, ask={ask}, price={last_px}")
             _apply_shared_ws_snapshot._last_debug_log = now
+            _apply_shared_ws_snapshot._update_count = 0  # 重置计数器
 
     def _on_ws_state(state: str, info: Dict[str, Any]):
         ts_now = time.time()
