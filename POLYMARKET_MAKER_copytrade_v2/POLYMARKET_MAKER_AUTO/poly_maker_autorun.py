@@ -1176,16 +1176,22 @@ class AutoRunManager:
             print(f"[WARN] copytrade sell_signal 文件格式异常：{path}")
             return set()
         signals: set[str] = set()
+        skipped = 0
         for item in raw_tokens:
             if not isinstance(item, dict):
                 continue
             token_id = item.get("token_id") or item.get("tokenId")
             if not token_id:
                 continue
+            if not item.get("introduced_by_buy", False):
+                skipped += 1
+                continue
             signals.add(str(token_id))
         if signals:
             preview = ", ".join(list(signals)[:5])
             print(f"[COPYTRADE] 已读取 sell 信号 {len(signals)} 条 preview={preview}")
+        if skipped:
+            print(f"[COPYTRADE] 已跳过未引入的 sell 信号 {skipped} 条")
         return signals
 
     def _exit_signal_path(self, token_id: str) -> Path:

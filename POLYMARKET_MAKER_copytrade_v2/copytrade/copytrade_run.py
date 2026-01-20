@@ -162,7 +162,9 @@ def _load_token_map(path: Path) -> Dict[str, Dict[str, Any]]:
         if not token_id:
             continue
         key = str(token_id)
-        mapping[key] = dict(item)
+        entry = dict(item)
+        entry.setdefault("introduced_by_buy", False)
+        mapping[key] = entry
     return mapping
 
 
@@ -178,7 +180,9 @@ def _load_sell_signals(path: Path) -> Dict[str, Dict[str, Any]]:
         token_id = item.get("token_id") or item.get("tokenId")
         if not token_id:
             continue
-        mapping[str(token_id)] = dict(item)
+        entry = dict(item)
+        entry.setdefault("introduced_by_buy", False)
+        mapping[str(token_id)] = entry
     return mapping
 
 
@@ -276,6 +280,16 @@ def run_once(
     changed = False
     sell_changed = False
 
+    for token_id, entry in list(sell_map.items()):
+        token_entry = token_map.get(token_id)
+        if not token_entry or not token_entry.get("introduced_by_buy", False):
+            del sell_map[token_id]
+            sell_changed = True
+            continue
+        if not entry.get("introduced_by_buy", False):
+            entry["introduced_by_buy"] = True
+            sell_changed = True
+
     for target in poll_targets:
         if not isinstance(target, dict):
             continue
@@ -328,11 +342,24 @@ def run_once(
                 token_map[key] = new_entry
                 changed = True
 
+            if action.get("side") == "BUY":
+                if not token_map[key].get("introduced_by_buy", False):
+                    token_map[key]["introduced_by_buy"] = True
+                    changed = True
+
             if action.get("side") == "SELL":
+                if not token_map.get(key, {}).get("introduced_by_buy", False):
+                    logger.info(
+                        "skip sell signal before buy introduction: account=%s token=%s",
+                        account,
+                        token_id,
+                    )
+                    continue
                 sell_entry = {
                     "token_id": token_id,
                     "source_account": account,
                     "last_seen": last_seen,
+                    "introduced_by_buy": True,
                 }
                 existing_sell = sell_map.get(key)
                 existing_ts = _parse_last_seen(
