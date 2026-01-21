@@ -2613,8 +2613,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 _apply_shared_ws_snapshot._warned_missing = True
                 _apply_shared_ws_snapshot._first_missing_at = time.time()
             # ✅ 增加：如果长时间无数据，主动退出避免卡死
-            elif time.time() - _apply_shared_ws_snapshot._first_missing_at > 120:  # 2分钟超时
-                print(f"[ERROR] 共享WS缓存中持续2分钟无此token数据，可能聚合器未订阅")
+            elif time.time() - _apply_shared_ws_snapshot._first_missing_at > 600:  # 10分钟超时
+                print(f"[ERROR] 共享WS缓存中持续10分钟无此token数据，可能聚合器未订阅")
                 print(f"[EXIT] 释放队列：token {token_id} 无法从聚合器获取数据")
                 _log_error("AGGREGATOR_NO_DATA", {
                     "token_id": token_id,
