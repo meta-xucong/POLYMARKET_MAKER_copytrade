@@ -46,6 +46,37 @@ from maker_execution import (
     _fetch_best_price,
 )
 
+# ========== 错误日志记录函数 ==========
+def _log_error(error_type: str, error_data: Dict[str, Any]) -> None:
+    """
+    记录错误到独立的错误日志文件。
+
+    :param error_type: 错误类型标识（如 STARTUP_TIMEOUT, WS_ERROR 等）
+    :param error_data: 错误相关数据（字典格式）
+    """
+    try:
+        # 确定错误日志文件路径
+        script_dir = Path(__file__).parent.parent
+        log_dir = script_dir / "logs" / "autorun"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        error_log_path = log_dir / "error_log.txt"
+
+        # 构建日志条目
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        log_entry = {
+            "timestamp": timestamp,
+            "error_type": error_type,
+            "data": error_data
+        }
+
+        # 追加写入日志文件
+        with open(error_log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+    except Exception as e:
+        # 错误日志记录失败时，仅打印到控制台，不中断程序
+        print(f"[ERROR_LOG] 写入错误日志失败: {e}")
+
 # ========== 1) Client：优先 ws 版，回退 rest 版 ==========
 def _get_client():
     try:
@@ -57,6 +88,12 @@ def _get_client():
             return get_client()
         except Exception as e2:
             print("[ERR] 无法导入 get_client：", e1, "|", e2)
+            _log_error("IMPORT_ERROR", {
+                "module": "get_client",
+                "error_ws": str(e1),
+                "error_rest": str(e2),
+                "message": "无法导入 get_client 模块"
+            })
             sys.exit(1)
 
 # ========== 2) 行情订阅（未动） ==========
@@ -64,6 +101,11 @@ try:
     from Volatility_arbitrage_main_ws import ws_watch_by_ids
 except Exception as e:
     print("[ERR] 无法从 Volatility_arbitrage_main_ws 导入 ws_watch_by_ids：", e)
+    _log_error("IMPORT_ERROR", {
+        "module": "ws_watch_by_ids",
+        "error": str(e),
+        "message": "无法导入 ws_watch_by_ids 模块"
+    })
     sys.exit(1)
 
 CLOB_API_HOST = "https://clob.polymarket.com"
@@ -1695,6 +1737,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     creds_check = _extract_api_creds(client)
     if not creds_check or not creds_check.get("key") or not creds_check.get("secret"):
         print("[ERR] 无法获取完整 API 凭证，请检查配置后重试。")
+        _log_error("API_CREDS_ERROR", {
+            "message": "无法获取完整 API 凭证",
+            "has_creds": bool(creds_check),
+            "has_key": bool(creds_check.get("key") if creds_check else False),
+            "has_secret": bool(creds_check.get("secret") if creds_check else False)
+        })
         return
     print("[INIT] API 凭证已验证。")
     print("[INIT] ClobClient 就绪。")
@@ -1711,6 +1759,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     )
     if not token_id:
         print("[ERR] 配置未提供 token_id，无法下单。")
+        _log_error("CONFIG_ERROR", {
+            "message": "配置未提供 token_id",
+            "config_keys": list(run_cfg.keys()) if run_cfg else []
+        })
         return
     exit_signal_path = run_cfg.get("exit_signal_path") or run_cfg.get("exit_signal_file")
     exit_signal_path = Path(exit_signal_path) if exit_signal_path else None
@@ -1909,6 +1961,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print("[WARN] 未设定结束时间点：跳过截止时间校验和倒计时。")
     else:
         print("[ERR] 未能获取市场结束时间，程序终止。")
+        _log_error("MARKET_DEADLINE_ERROR", {
+            "message": "未能获取市场结束时间",
+            "token_id": token_id,
+            "source": source,
+            "manual_deadline_disabled": manual_deadline_disabled
+        })
         return
 
     def _calc_profit_floor(meta: Dict[str, Any]) -> Tuple[float, Optional[int]]:
@@ -1953,6 +2011,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     )
     if manual_order_size is not None and manual_order_size <= 0:
         print("[ERR] 配置的份数必须大于 0，退出。")
+        _log_error("CONFIG_ERROR", {
+            "message": "配置的份数必须大于 0",
+            "order_size": manual_order_size,
+            "token_id": token_id
+        })
         return
     if manual_order_size is not None:
         mode_note = "总持仓目标" if manual_size_is_target else "单笔下单量"
@@ -2057,9 +2120,21 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 parsed_ts = _parse_timestamp(str(countdown_in), countdown_timezone_hint)
             if not parsed_ts:
                 print("[ERR] 倒计时开始时间解析失败，程序终止。")
+                _log_error("COUNTDOWN_CONFIG_ERROR", {
+                    "message": "倒计时开始时间解析失败",
+                    "countdown_input": str(countdown_in),
+                    "countdown_timezone": countdown_timezone_hint,
+                    "token_id": token_id
+                })
                 return
             if parsed_ts >= market_deadline_ts:
                 print("[ERR] 倒计时开始时间必须早于市场结束时间，程序终止。")
+                _log_error("COUNTDOWN_CONFIG_ERROR", {
+                    "message": "倒计时开始时间必须早于市场结束时间",
+                    "countdown_ts": parsed_ts,
+                    "market_deadline_ts": market_deadline_ts,
+                    "token_id": token_id
+                })
                 return
             sell_only_start_ts = parsed_ts
             if used_minutes:
@@ -2651,22 +2726,38 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     print("[RUN] 监听行情中… 输入 stop / exit 可手动停止。")
 
     start_wait = time.time()
-    wait_timeout = 60.0  # 最长等待60秒
+    wait_timeout = 600.0  # 最长等待600秒（10分钟），避免API响应慢导致的误伤
+    last_progress_log = start_wait
+    progress_log_interval = 30.0  # 等待进度日志打印间隔（秒）
     while not latest.get(token_id) and not stop_event.is_set():
         now_ts = time.time()
         elapsed_wait = now_ts - start_wait
 
         # 超时检查
         if elapsed_wait > wait_timeout:
-            print(f"[WAIT][TIMEOUT] 等待{elapsed_wait:.0f}秒后仍未收到行情，退出")
+            timeout_msg = f"[WAIT][TIMEOUT] 等待{elapsed_wait:.0f}秒后仍未收到行情，退出"
+            print(timeout_msg)
             if use_shared_ws:
-                print(f"[WAIT][TIMEOUT] 共享WS缓存路径: {shared_ws_cache_path}")
-                print(f"[WAIT][TIMEOUT] 可能原因：(1)聚合器未订阅该token (2)该token无行情数据")
-            print("[QUEUE] 释放队列：启动后无法获取行情数据，已退出。")
+                cache_info = f"共享WS缓存路径: {shared_ws_cache_path}"
+                reason_info = "可能原因：(1)聚合器未订阅该token (2)该token无行情数据"
+                print(f"[WAIT][TIMEOUT] {cache_info}")
+                print(f"[WAIT][TIMEOUT] {reason_info}")
+            queue_info = "[QUEUE] 释放队列：启动后无法获取行情数据，已退出。"
+            print(queue_info)
+
+            # 记录到错误日志文件
+            _log_error("STARTUP_TIMEOUT", {
+                "token_id": token_id,
+                "elapsed_seconds": elapsed_wait,
+                "use_shared_ws": use_shared_ws,
+                "shared_ws_cache_path": shared_ws_cache_path if use_shared_ws else None,
+                "message": "启动后等待行情超时"
+            })
+
             stop_event.set()
             return
 
-        if now_ts - start_wait > 5:
+        if now_ts - last_progress_log >= progress_log_interval:
             state_note = ""
             with ws_state_lock:
                 last_state = ws_state.get("last_state")
@@ -2688,7 +2779,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(f"[WAIT]{mode_tag} 尚未收到行情，继续等待({elapsed_wait:.0f}s / {wait_timeout:.0f}s)…{state_note}")
 
             # 共享WS模式下，额外打印缓存诊断信息
-            if use_shared_ws and elapsed_wait > 10:
+            if use_shared_ws and elapsed_wait > 30:
                 try:
                     snapshot = _load_shared_ws_snapshot()
                     if snapshot is None:
@@ -2703,7 +2794,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 except Exception as e:
                     print(f"[WAIT][DEBUG] 读取缓存诊断信息失败: {e}")
 
-            start_wait = now_ts
+            last_progress_log = now_ts
         if use_shared_ws:
             _apply_shared_ws_snapshot()
         time.sleep(0.2)
