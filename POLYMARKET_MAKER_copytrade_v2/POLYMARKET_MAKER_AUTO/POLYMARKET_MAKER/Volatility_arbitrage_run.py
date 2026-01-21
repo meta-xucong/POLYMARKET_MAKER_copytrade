@@ -2482,9 +2482,25 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         seq = snapshot.get("seq", 0)
         updated_at = snapshot.get("updated_at", 0.0)
 
+        # 初始化去重状态和调试计数器
         if not hasattr(_apply_shared_ws_snapshot, "_last_seq"):
             _apply_shared_ws_snapshot._last_seq = 0
             _apply_shared_ws_snapshot._last_updated_at = 0.0
+            _apply_shared_ws_snapshot._read_count = 0  # 总读取次数
+            _apply_shared_ws_snapshot._skip_count = 0  # 跳过次数
+            _apply_shared_ws_snapshot._last_detailed_log = 0  # 详细日志时间戳
+
+        # 累计读取次数
+        _apply_shared_ws_snapshot._read_count += 1
+
+        # 每10秒打印一次详细的调试信息
+        now = time.time()
+        if now - _apply_shared_ws_snapshot._last_detailed_log >= 10:
+            print(f"[WS][SHARED][DEBUG] 读取统计: read={_apply_shared_ws_snapshot._read_count}, "
+                  f"skip={_apply_shared_ws_snapshot._skip_count}, "
+                  f"当前seq={seq} (last={_apply_shared_ws_snapshot._last_seq}), "
+                  f"updated_at={updated_at:.2f} (last={_apply_shared_ws_snapshot._last_updated_at:.2f})")
+            _apply_shared_ws_snapshot._last_detailed_log = now
 
         # 判断是否是新数据：
         # 1. seq增大 → 肯定是新数据，接受
@@ -2492,6 +2508,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         # 3. seq相同但updated_at变大 → 同一事件的数据被修正，接受
         # 4. seq和updated_at都不变或变小 → 完全相同的旧数据，跳过
         is_new_data = False
+        skip_reason = ""
 
         if seq > _apply_shared_ws_snapshot._last_seq:
             # 正常的新数据（seq递增）
@@ -2507,9 +2524,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 is_new_data = True
             else:
                 # 完全相同的数据，跳过
+                _apply_shared_ws_snapshot._skip_count += 1
+                skip_reason = f"seq和updated_at都未变化 (seq={seq}, updated_at={updated_at:.2f})"
                 return
 
         if not is_new_data:
+            _apply_shared_ws_snapshot._skip_count += 1
+            skip_reason = "未识别为新数据"
             return
 
         # 更新去重状态
