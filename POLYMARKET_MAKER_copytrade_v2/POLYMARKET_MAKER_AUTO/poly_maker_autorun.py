@@ -579,6 +579,30 @@ class AutoRunManager:
         self._ws_thread = None
         self._ws_thread_stop = None
 
+    def _update_token_timestamp_from_trade(self, ev: Dict[str, Any]) -> None:
+        """
+        处理 last_trade_price 事件，仅更新时间戳以避免假僵尸token。
+        这类事件表明市场有交易活动，即使价格未显著变化。
+        """
+        # 获取asset_id（可能在不同字段）
+        asset_id = ev.get("asset_id") or ev.get("token_id") or ev.get("tokenId")
+        if not asset_id:
+            return
+
+        token_id = str(asset_id)
+
+        # 仅更新缓存中的时间戳，保留其他字段
+        with self._ws_cache_lock:
+            if token_id in self._ws_cache:
+                # token已存在，仅更新时间戳
+                self._ws_cache[token_id]["updated_at"] = time.time()
+                self._ws_cache_dirty = True
+
+                # 可选：更新last_trade_price字段
+                trade_price = _coerce_float(ev.get("price") or ev.get("last_trade_price"))
+                if trade_price is not None and trade_price > 0:
+                    self._ws_cache[token_id]["price"] = trade_price
+
     def _on_ws_event(self, ev: Dict[str, Any]) -> None:
         # 统计事件接收和过滤情况
         if not hasattr(self, '_ws_event_count'):
@@ -599,10 +623,15 @@ class AutoRunManager:
             self._ws_filtered_count += 1
             return
 
+        # 处理 price_change 事件（完整更新）
         if ev.get("event_type") == "price_change":
             pcs = ev.get("price_changes", [])
         elif "price_changes" in ev:
             pcs = ev.get("price_changes", [])
+        # 处理 last_trade_price 事件（仅更新时间戳，避免假僵尸）
+        elif ev.get("event_type") == "last_trade_price":
+            self._update_token_timestamp_from_trade(ev)
+            return
         else:
             # 记录被过滤的事件类型
             self._ws_filtered_count += 1
@@ -728,7 +757,12 @@ class AutoRunManager:
                 pass
 
     def _health_check(self) -> None:
-        """WS 聚合器健康检查"""
+        """
+        WS 聚合器健康检查（增强版）
+        - 分级阈值：正常(10min) / 警告(30min) / 清理(60min)
+        - 市场状态检测：自动清理已关闭市场
+        - 日志优化：减少刷屏频率
+        """
         # 检查 WS 线程是否运行
         if self._ws_token_ids and (not self._ws_thread or not self._ws_thread.is_alive()):
             print("[WARN] WS 聚合器线程已停止，尝试重启...")
@@ -743,19 +777,60 @@ class AutoRunManager:
                 print(f"[WARN] WS 聚合器订阅了 {subscribed_count} 个token，但缓存为空")
                 print("[WARN] 可能尚未接收到数据，或连接异常")
 
-            # 检查数据新鲜度
+            # 分级阈值检查（秒）
+            THRESHOLD_WARNING = 1800  # 30分钟 - 警告
+            THRESHOLD_CLEANUP = 3600  # 60分钟 - 清理
+
             now = time.time()
-            stale_tokens = []
-            for token_id, data in self._ws_cache.items():
+            warning_tokens = []  # 30分钟未更新
+            cleanup_tokens = []  # 60分钟未更新或市场已关闭
+            closed_market_tokens = []  # 市场已关闭
+
+            for token_id, data in list(self._ws_cache.items()):
                 updated_at = data.get("updated_at", 0)
                 age = now - updated_at
-                if age > 300:  # 5分钟没更新
-                    stale_tokens.append((token_id, age))
 
-            if stale_tokens:
-                print(f"[WARN] {len(stale_tokens)} 个token数据过期：")
-                for token_id, age in stale_tokens[:3]:  # 只显示前3个
-                    print(f"  - {token_id}: {age:.0f}秒前")
+                # 检查市场状态
+                is_closed = (
+                    data.get("market_closed")
+                    or data.get("is_closed")
+                    or data.get("closed")
+                )
+
+                if is_closed:
+                    closed_market_tokens.append((token_id, age))
+                    cleanup_tokens.append((token_id, age, "市场已关闭"))
+                elif age > THRESHOLD_CLEANUP:
+                    cleanup_tokens.append((token_id, age, f"{age/60:.0f}分钟无更新"))
+                elif age > THRESHOLD_WARNING:
+                    warning_tokens.append((token_id, age))
+
+            # 清理过期/关闭的token
+            if cleanup_tokens:
+                for token_id, age, reason in cleanup_tokens:
+                    del self._ws_cache[token_id]
+                    # 记录到日志
+                    _log_error("TOKEN_CLEANUP", {
+                        "token_id": token_id,
+                        "age_seconds": age,
+                        "reason": reason,
+                        "message": "从缓存中清理token"
+                    })
+                print(f"[CLEANUP] 清理 {len(cleanup_tokens)} 个过期/关闭的token:")
+                for token_id, age, reason in cleanup_tokens[:3]:
+                    print(f"  - {token_id[:20]}...: {reason}")
+                self._ws_cache_dirty = True
+
+            # 警告日志（降低频率：每60秒才打印一次）
+            if not hasattr(self, '_last_warning_log'):
+                self._last_warning_log = 0
+
+            if warning_tokens and (now - self._last_warning_log >= 60):
+                print(f"[HEALTH] {len(warning_tokens)} 个token数据超过30分钟未更新（将在60分钟后清理）")
+                # 只显示前2个
+                for token_id, age in warning_tokens[:2]:
+                    print(f"  - {token_id[:20]}...: {age/60:.0f}分钟前")
+                self._last_warning_log = now
 
         # 检查文件状态
         if self._ws_cache_path.exists():
@@ -763,7 +838,12 @@ class AutoRunManager:
                 stat = self._ws_cache_path.stat()
                 age = time.time() - stat.st_mtime
                 if age > 120:  # 2分钟没更新
-                    print(f"[WARN] ws_cache.json 文件过期，最后修改: {age:.0f}秒前")
+                    # 降低日志频率
+                    if not hasattr(self, '_last_file_warn'):
+                        self._last_file_warn = 0
+                    if time.time() - self._last_file_warn >= 60:
+                        print(f"[WARN] ws_cache.json 文件过期，最后修改: {age:.0f}秒前")
+                        self._last_file_warn = time.time()
             except OSError:
                 pass
         else:
