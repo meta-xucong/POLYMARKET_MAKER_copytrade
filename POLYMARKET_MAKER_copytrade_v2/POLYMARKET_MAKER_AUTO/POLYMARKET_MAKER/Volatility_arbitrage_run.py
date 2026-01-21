@@ -2608,7 +2608,23 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if not hasattr(_apply_shared_ws_snapshot, "_warned_missing"):
                 if not os.path.exists(shared_ws_cache_path):
                     print(f"[WARN] 共享WS缓存文件不存在: {shared_ws_cache_path}")
+                else:
+                    print(f"[WARN] 共享WS缓存中未找到token {token_id}，可能聚合器未订阅此token")
                 _apply_shared_ws_snapshot._warned_missing = True
+                _apply_shared_ws_snapshot._first_missing_at = time.time()
+            # ✅ 增加：如果长时间无数据，主动退出避免卡死
+            elif time.time() - _apply_shared_ws_snapshot._first_missing_at > 120:  # 2分钟超时
+                print(f"[ERROR] 共享WS缓存中持续2分钟无此token数据，可能聚合器未订阅")
+                print(f"[EXIT] 释放队列：token {token_id} 无法从聚合器获取数据")
+                _log_error("AGGREGATOR_NO_DATA", {
+                    "token_id": token_id,
+                    "message": "聚合器缓存中持续无此token数据"
+                })
+                _record_exit_token(token_id, "AGGREGATOR_NO_DATA", {
+                    "duration_seconds": time.time() - _apply_shared_ws_snapshot._first_missing_at
+                })
+                strategy.stop("aggregator no data")
+                stop_event.set()
             return
 
         # 重置警告标志
@@ -3735,6 +3751,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         stop_event.set()
                         break
 
+                # ✅ 增加：主循环心跳检测，避免卡死时无输出
+                if not hasattr(loop_started, '__name__'):  # 确保loop_started是时间戳而不是函数
+                    loop_heartbeat_msg = f"[HEARTBEAT] 主循环运行中... (use_shared_ws={use_shared_ws})"
+                    if last_log is None:
+                        print(loop_heartbeat_msg + " (首次心跳)")
+
                 if last_log is None or now - last_log >= 30.0:  # 从60秒改为30秒，更频繁的心跳日志
                     snap = latest.get(token_id) or {}
                     bid = float(snap.get("best_bid") or 0.0)
@@ -3745,6 +3767,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     awaiting = st.get("awaiting")
                     awaiting_s = awaiting.value if hasattr(awaiting, "value") else awaiting
                     entry_price = st.get("entry_price")
+
+                    # ✅ 增加：检测latest数据是否长时间未更新（可能卡在获取数据）
+                    if not snap:
+                        print(f"[WARN] latest中无token {token_id} 数据，可能聚合器未提供更新")
+
                     print(
                         f"[PX] bid={bid:.4f} ask={ask:.4f} mid={mid_px:.4f} last={last_px:.4f} | "
                         f"state={st.get('state')} awaiting={awaiting_s} entry={entry_price}"
