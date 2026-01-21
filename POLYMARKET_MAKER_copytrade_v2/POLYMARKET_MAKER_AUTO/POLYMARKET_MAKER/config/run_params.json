@@ -17,7 +17,7 @@
   "order_size_is_target": true,
   "sell_mode": "aggressive",
   "buy_price_threshold": null,
-  "drop_window_minutes": 60,
+  "drop_window_minutes": 5,
   "drop_pct": 0.001,
   "profit_pct": 0.005,
   "enable_incremental_drop_pct": true,

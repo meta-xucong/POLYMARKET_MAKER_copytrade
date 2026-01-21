@@ -647,6 +647,16 @@ class AutoRunManager:
                         "best_ask": ask,
                         "last_trade_price": last or ((bid + ask) / 2.0 if bid and ask else (bid or ask))
                     }]
+                    # ✅ 调试日志：确认book/tick事件被处理
+                    if not hasattr(self, '_book_tick_log_count'):
+                        self._book_tick_log_count = 0
+                        self._book_tick_last_log = 0.0
+                    self._book_tick_log_count += 1
+                    now = time.time()
+                    if now - self._book_tick_last_log >= 60:
+                        print(f"[WS][AGGREGATOR] ✅ 处理book/tick事件: {self._book_tick_log_count} 次/分钟")
+                        self._book_tick_last_log = now
+                        self._book_tick_log_count = 0
                 else:
                     pcs = []
             else:
