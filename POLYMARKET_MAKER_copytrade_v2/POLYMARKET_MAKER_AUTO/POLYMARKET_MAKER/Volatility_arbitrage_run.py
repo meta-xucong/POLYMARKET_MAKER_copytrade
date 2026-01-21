@@ -2687,11 +2687,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         # 1. seq增大 → 肯定是新数据，必须喂给策略
         # 2. seq变小 → 聚合器重启导致seq重置，必须喂给策略
         # 3. seq相同但updated_at变大 → 同一事件的数据被修正，必须喂给策略
-        # 4. seq和updated_at都不变 + 距离上次on_tick超过5秒 → 周期性喂给策略（让横盘数据也能累积）
-        # 5. 其他情况 → 跳过（避免过于频繁调用）
+        # 4. 初始化阶段(latest为空) → 必须至少更新一次latest，即使数据重复
+        # 5. seq和updated_at都不变 + 距离上次on_tick超过10秒 → 周期性喂给策略（让横盘数据也能累积）
+        # 6. 其他情况 → 跳过策略调用但仍更新latest（确保latest始终有最新快照）
         should_feed_strategy = False
         is_new_data = False
         skip_reason = ""
+
+        # 检查是否在初始化阶段（latest尚未设置）
+        is_initializing = not latest.get(token_id)
 
         if seq > _apply_shared_ws_snapshot._last_seq:
             # 正常的新数据（seq递增）
@@ -2702,6 +2706,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(f"[WS][SHARED] ⚠ 检测到seq重置 ({_apply_shared_ws_snapshot._last_seq} → {seq})，接受新数据")
             is_new_data = True
             should_feed_strategy = True
+        elif is_initializing:
+            # 初始化阶段，即使seq和updated_at都不变，也要至少更新一次
+            should_feed_strategy = True
+            print(f"[WS][SHARED] 初始化: 首次读取到数据 (seq={seq})")
         elif seq == _apply_shared_ws_snapshot._last_seq:
             # seq相同，检查updated_at
             if updated_at > _apply_shared_ws_snapshot._last_updated_at:
@@ -2711,20 +2719,24 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             else:
                 # seq和updated_at都不变，检查是否需要周期性喂给策略
                 time_since_last_tick = now - _apply_shared_ws_snapshot._last_tick_ts
-                if time_since_last_tick >= 5.0:  # 5秒间隔
+                if time_since_last_tick >= 10.0:  # 从5秒改为10秒，避免过于频繁
                     # 即使数据不变，也周期性喂给策略（让横盘价格也能累积历史）
                     should_feed_strategy = True
                     if time_since_last_tick >= 30.0:  # 超过30秒才打印日志
                         print(f"[WS][SHARED] 市场横盘 {time_since_last_tick:.0f}秒，周期性喂价格给策略 (seq={seq})")
                 else:
-                    # 距离上次on_tick不到5秒，跳过
+                    # 距离上次on_tick不到10秒，跳过策略调用
                     _apply_shared_ws_snapshot._skip_count += 1
                     skip_reason = f"seq和updated_at都未变化且距上次tick仅{time_since_last_tick:.1f}秒"
-                    return
+                    # 注意：即使跳过策略调用，仍然更新latest快照（见下文）
 
         if not should_feed_strategy:
+            # 即使不调用策略，也要更新latest快照（确保初始化能完成）
+            bid = float(snapshot.get("best_bid") or 0.0)
+            ask = float(snapshot.get("best_ask") or 0.0)
+            last_px = float(snapshot.get("price") or 0.0)
+            latest[token_id] = {"price": last_px, "best_bid": bid, "best_ask": ask, "ts": ts}
             _apply_shared_ws_snapshot._skip_count += 1
-            skip_reason = "未满足喂给策略的条件"
             return
 
         # 更新去重状态（只在真正有新数据时更新）
@@ -2833,7 +2845,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     start_wait = time.time()
     wait_timeout = 600.0  # 最长等待600秒（10分钟），避免API响应慢导致的误伤
     last_progress_log = start_wait
-    progress_log_interval = 30.0  # 等待进度日志打印间隔（秒）
+    progress_log_interval = 10.0  # 等待进度日志打印间隔（从30秒改为10秒，更快发现卡死问题）
     while not latest.get(token_id) and not stop_event.is_set():
         now_ts = time.time()
         elapsed_wait = now_ts - start_wait
@@ -2933,8 +2945,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             mode_tag = "[SHARED]" if use_shared_ws else "[INDEPENDENT]"
             print(f"[WAIT]{mode_tag} 尚未收到行情，继续等待({elapsed_wait:.0f}s / {wait_timeout:.0f}s)…{state_note}")
 
+            # 显示去重统计信息
+            if use_shared_ws and hasattr(_apply_shared_ws_snapshot, "_read_count"):
+                read_count = _apply_shared_ws_snapshot._read_count
+                skip_count = _apply_shared_ws_snapshot._skip_count
+                last_seq = _apply_shared_ws_snapshot._last_seq
+                print(f"[WAIT][DEBUG] 读取统计: read={read_count}, skip={skip_count}, last_seq={last_seq}, latest_set={'是' if latest.get(token_id) else '否'}")
+
             # 共享WS模式下，额外打印缓存诊断信息
-            if use_shared_ws and elapsed_wait > 30:
+            if use_shared_ws and elapsed_wait > 15:  # 从30秒改为15秒
                 try:
                     snapshot = _load_shared_ws_snapshot()
                     if snapshot is None:
@@ -3716,17 +3735,18 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         stop_event.set()
                         break
 
-                if last_log is None or now - last_log >= 60.0:
+                if last_log is None or now - last_log >= 30.0:  # 从60秒改为30秒，更频繁的心跳日志
                     snap = latest.get(token_id) or {}
                     bid = float(snap.get("best_bid") or 0.0)
                     ask = float(snap.get("best_ask") or 0.0)
                     last_px = float(snap.get("price") or 0.0)
+                    mid_px = (bid + ask) / 2 if (bid > 0 and ask > 0) else 0.0  # 策略使用的中间价
                     st = strategy.status()
                     awaiting = st.get("awaiting")
                     awaiting_s = awaiting.value if hasattr(awaiting, "value") else awaiting
                     entry_price = st.get("entry_price")
                     print(
-                        f"[PX] bid={bid:.4f} ask={ask:.4f} last={last_px:.4f} | "
+                        f"[PX] bid={bid:.4f} ask={ask:.4f} mid={mid_px:.4f} last={last_px:.4f} | "
                         f"state={st.get('state')} awaiting={awaiting_s} entry={entry_price}"
                     )
 
@@ -3751,7 +3771,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     extra_lines.append(drop_line)
 
                     price_line = (
-                        "    窗口价格: 高 "
+                        "    窗口价格(mid): 高 "
                         f"{_fmt_price(drop_stats.get('window_high'))} / 低 "
                         f"{_fmt_price(drop_stats.get('window_low'))}"
                     )
