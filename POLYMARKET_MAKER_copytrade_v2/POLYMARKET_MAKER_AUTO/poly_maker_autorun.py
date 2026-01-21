@@ -410,11 +410,19 @@ class AutoRunManager:
             self._ws_aggregator_thread.join(timeout=3)
 
     def _desired_ws_token_ids(self) -> List[str]:
-        token_ids = [
-            topic_id
-            for topic_id, task in self.tasks.items()
-            if task.is_running()
-        ]
+        """获取需要订阅的token列表（包括运行中的和待启动的）"""
+        token_ids = []
+
+        # 1. 运行中的任务
+        for topic_id, task in self.tasks.items():
+            if task.is_running():
+                token_ids.append(topic_id)
+
+        # 2. 待启动的pending tokens（提前订阅，避免启动后等待）
+        for topic_id in self.pending_topics:
+            if topic_id not in token_ids:
+                token_ids.append(topic_id)
+
         return sorted({tid for tid in token_ids if tid})
 
     def _ws_aggregator_loop(self) -> None:
@@ -450,9 +458,20 @@ class AutoRunManager:
             time.sleep(1.0)
 
     def _restart_ws_subscription(self, token_ids: List[str]) -> None:
+        old_ids = set(self._ws_token_ids)
+        new_ids = set(token_ids)
+        added = new_ids - old_ids
+        removed = old_ids - new_ids
+
+        if added:
+            print(f"[WS][AGGREGATOR] ✓ 新增订阅 {len(added)} 个token: {list(added)[:3]}{'...' if len(added) > 3 else ''}")
+        if removed:
+            print(f"[WS][AGGREGATOR] ✗ 移除订阅 {len(removed)} 个token: {list(removed)[:3]}{'...' if len(removed) > 3 else ''}")
+
         self._stop_ws_subscription()
         self._ws_token_ids = token_ids
         if not token_ids:
+            print("[WS][AGGREGATOR] 无token需要订阅，WS连接已停止")
             return
         self._start_ws_subscription(token_ids)
 
