@@ -491,7 +491,7 @@ class AutoRunManager:
                 self._health_check()
                 last_health_check = now
 
-            time.sleep(1.0)
+            time.sleep(0.1)  # 从1.0秒改为0.1秒，提高缓存写入频率
 
     def _restart_ws_subscription(self, token_ids: List[str]) -> None:
         old_ids = set(self._ws_token_ids)
@@ -757,10 +757,11 @@ class AutoRunManager:
 
     def _flush_ws_cache_if_needed(self) -> None:
         now = time.time()
-        if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 1.0:
+        # ✅ 从1.0秒改为0.1秒：提高缓存写入频率，让子进程能更快看到seq更新
+        if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 0.1:
             return
         with self._ws_cache_lock:
-            if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 1.0:
+            if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 0.1:
                 return
             data = {
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
