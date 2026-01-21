@@ -280,36 +280,43 @@ class VolArbStrategy:
             self._reset_drop_metrics()
             return
 
-        high_price: Optional[float] = None
-        low_price: Optional[float] = None
-        for _, px in self._price_history:
-            if high_price is None or px > high_price:
-                high_price = px
-            if low_price is None or px < low_price:
-                low_price = px
+        # ✅ 修复：使用滚动最大值法，确保"跌幅"真的是从高点跌到低点，而不是涨幅
+        # 遍历价格历史，维护滚动最高价，只计算从历史高点到之后的低点的跌幅
+        running_max: Optional[float] = None
+        max_drop = 0.0
+        window_high: Optional[float] = None
+        window_low: Optional[float] = None
 
-        if high_price is None:
+        for _, px in self._price_history:
+            # 更新窗口最高价和最低价（用于显示）
+            if window_high is None or px > window_high:
+                window_high = px
+            if window_low is None or px < window_low:
+                window_low = px
+
+            # 更新滚动最高价
+            if running_max is None or px > running_max:
+                running_max = px
+
+            # 计算从历史最高点到当前价格的跌幅
+            if running_max is not None and running_max > 0:
+                drop = (running_max - px) / running_max
+                if drop > max_drop:
+                    max_drop = drop
+
+        if window_high is None:
             self._reset_drop_metrics()
             return
 
+        # 当前跌幅：从窗口最高价到当前价格
         current_price = self._price_history[-1][1]
-        if high_price > 0:
-            max_drop = (
-                (high_price - low_price) / high_price
-                if low_price is not None and low_price <= high_price
-                else 0.0
-            )
-            current_drop = (
-                (high_price - current_price) / high_price
-                if current_price is not None
-                else None
-            )
+        if window_high > 0 and current_price is not None:
+            current_drop = (window_high - current_price) / window_high
         else:
-            max_drop = 0.0
-            current_drop = 0.0 if current_price is not None else None
+            current_drop = 0.0
 
-        self._window_high_price = high_price
-        self._window_low_price = low_price
+        self._window_high_price = window_high
+        self._window_low_price = window_low
         self._max_drop_ratio = max_drop
         self._current_drop_ratio = current_drop
 
