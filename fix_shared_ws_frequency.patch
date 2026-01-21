@@ -1,0 +1,371 @@
+# 修复共享WS模式下单频率低的补丁
+
+## 问题诊断
+根据日志分析：
+- WS聚合器：每分钟4474次更新（40个tokens）
+- 子进程实际：每分钟2次更新（30秒1次）
+- **巨大断层：** 聚合器的更新没有有效传递给子进程
+
+## 根本原因
+1. seq只在price_change事件时递增，其他WS事件被忽略
+2. 去重逻辑要求seq不变时等待10秒才周期性更新
+3. 导致即使有WS事件流，策略更新频率也极低
+
+---
+
+## 修复方案（分级，可逐步应用）
+
+### 🔥 方案1：快速修复 - 降低去重周期（推荐立即应用）
+
+**影响文件：**
+- `POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_run.py`
+
+**修改位置：** 第2722行
+
+**修改前：**
+```python
+if time_since_last_tick >= 10.0:  # 从5秒改为10秒，避免过于频繁
+    # 即使数据不变，也周期性喂给策略（让横盘价格也能累积历史）
+    should_feed_strategy = True
+    if time_since_last_tick >= 30.0:  # 超过30秒才打印日志
+        print(f"[WS][SHARED] 市场横盘 {time_since_last_tick:.0f}秒，周期性喂价格给策略 (seq={seq})")
+```
+
+**修改后：**
+```python
+if time_since_last_tick >= 2.0:  # ✅ 改为2秒，提高策略更新频率
+    # 即使数据不变，也周期性喂给策略（让横盘价格也能累积历史）
+    should_feed_strategy = True
+    if time_since_last_tick >= 30.0:  # 超过30秒才打印日志
+        print(f"[WS][SHARED] 市场横盘 {time_since_last_tick:.0f}秒，周期性喂价格给策略 (seq={seq})")
+```
+
+**预期效果：**
+- 更新频率从 2.0/min 提升到约 30/min（每2秒1次）
+- 5分钟窗口内数据点从10个增加到150个
+- 更准确地捕捉短期波动
+
+**风险：** 低。只是提高了已有的周期性更新频率。
+
+---
+
+### 🔥 方案2：优化seq更新机制（根本性解决）
+
+**影响文件：**
+- `POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/poly_maker_autorun.py`
+
+**修改位置1：** 第606-650行（`_on_ws_event` 函数开头）
+
+**修改前：**
+```python
+def _on_ws_event(self, ev: Dict[str, Any]) -> None:
+    # 统计事件接收和过滤情况
+    if not hasattr(self, '_ws_event_count'):
+        self._ws_event_count = 0
+        self._ws_filtered_count = 0
+        self._ws_filtered_types: Dict[str, int] = {}
+        self._ws_last_stats_log = 0.0
+
+    self._ws_event_count += 1
+
+    if self._ws_debug_raw:
+        print(f"[WS][RAW] {ev}")
+
+    # 检查事件类型
+    event_type = ev.get("event_type")
+    if event_type != "price_change":
+        # 记录被过滤的事件类型
+        self._ws_filtered_count += 1
+        self._ws_filtered_types[event_type or "unknown"] = \
+            self._ws_filtered_types.get(event_type or "unknown", 0) + 1
+
+        # 定期打印过滤统计（每60秒）
+        now = time.time()
+        if now - self._ws_last_stats_log >= 60:
+            total_events = self._ws_event_count
+            filtered_events = self._ws_filtered_count
+            if total_events > 0:
+                filtered_pct = (filtered_events / total_events) * 100
+                print(f"[WS][AGGREGATOR] 事件过滤统计: 总计={total_events}, "
+                      f"过滤={filtered_events} ({filtered_pct:.1f}%), "
+                      f"类型分布={dict(self._ws_filtered_types)}")
+            self._ws_last_stats_log = now
+            self._ws_event_count = 0
+            self._ws_filtered_count = 0
+            self._ws_filtered_types = {}
+
+        # 处理 last_trade_price 更新（仅时间戳）
+        if event_type == "last_trade_price":
+            self._on_ws_last_trade(ev)
+        return  # ❌ 这里直接return，导致其他事件被忽略
+```
+
+**修改后：**
+```python
+def _on_ws_event(self, ev: Dict[str, Any]) -> None:
+    # 统计事件接收和过滤情况
+    if not hasattr(self, '_ws_event_count'):
+        self._ws_event_count = 0
+        self._ws_processed_count = 0  # ✅ 改名：从filtered改为processed
+        self._ws_event_types: Dict[str, int] = {}  # ✅ 记录所有事件类型
+        self._ws_last_stats_log = 0.0
+
+    self._ws_event_count += 1
+
+    if self._ws_debug_raw:
+        print(f"[WS][RAW] {ev}")
+
+    # 检查事件类型
+    event_type = ev.get("event_type")
+    self._ws_event_types[event_type or "unknown"] = \
+        self._ws_event_types.get(event_type or "unknown", 0) + 1
+
+    # 定期打印事件统计（每60秒）
+    now = time.time()
+    if now - self._ws_last_stats_log >= 60:
+        total_events = self._ws_event_count
+        processed_events = self._ws_processed_count
+        if total_events > 0:
+            processed_pct = (processed_events / total_events) * 100
+            print(f"[WS][AGGREGATOR] 事件统计: 总计={total_events}, "
+                  f"已处理={processed_events} ({processed_pct:.1f}%), "
+                  f"类型分布={dict(self._ws_event_types)}")
+        self._ws_last_stats_log = now
+        self._ws_event_count = 0
+        self._ws_processed_count = 0
+        self._ws_event_types = {}
+
+    # ✅ 扩展处理的事件类型
+    should_process = False
+    lightweight_update = False  # 是否只更新时间戳
+
+    if event_type == "price_change":
+        should_process = True
+        lightweight_update = False  # 完整更新bid/ask/price
+    elif event_type in ("book", "tick"):
+        should_process = True
+        lightweight_update = False  # 也尝试从event中提取bid/ask
+    elif event_type == "last_trade_price":
+        should_process = True
+        lightweight_update = True  # 只更新时间戳和last_trade_price
+
+    if not should_process:
+        return  # 只过滤掉真正无用的事件
+
+    self._ws_processed_count += 1
+```
+
+**修改位置2：** 第650-718行（处理逻辑）
+
+在 `price_changes` 处理之后，添加对其他事件的处理：
+
+```python
+    # 处理 price_change 事件（原有逻辑保持不变）
+    if event_type == "price_change":
+        pcs = ev.get("price_changes", [])
+        if not isinstance(pcs, list):
+            pcs = []
+        # ... 原有的处理逻辑 ...
+
+    # ✅ 新增：处理 book 和 tick 事件
+    elif event_type in ("book", "tick"):
+        # 尝试从event根级别提取价格信息
+        asset_id = ev.get("asset_id") or ev.get("token_id")
+        if not asset_id:
+            return
+
+        token_id = str(asset_id)
+
+        # 提取bid/ask
+        bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
+        ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
+        last = _coerce_float(ev.get("last_price") or ev.get("price") or ev.get("mark_price"))
+
+        if last is None and bid and ask:
+            last = (bid + ask) / 2.0
+
+        # 只有在有有效价格时才更新
+        if not (bid or ask or last):
+            return
+
+        ts = _extract_ts(ev.get("timestamp") or ev.get("ts"))
+
+        # 递增seq
+        with self._ws_cache_lock:
+            old_data = self._ws_cache.get(token_id, {})
+            seq = old_data.get("seq", 0) + 1
+
+            payload = {
+                "price": last or old_data.get("price", 0.0),
+                "best_bid": bid or old_data.get("best_bid", 0.0),
+                "best_ask": ask or old_data.get("best_ask", 0.0),
+                "ts": ts,
+                "updated_at": time.time(),
+                "event_type": event_type,
+                "seq": seq,
+            }
+            self._ws_cache[token_id] = payload
+            self._ws_cache_dirty = True
+
+    # ✅ 新增：处理 last_trade_price 事件（只更新时间戳）
+    elif event_type == "last_trade_price":
+        self._on_ws_last_trade(ev)
+```
+
+**预期效果：**
+- seq更新频率大幅提升（从只依赖price_change到支持book/tick）
+- 子进程能接收到更多的价格变化通知
+- 更接近原版本的高频更新
+
+**风险：** 中。需要测试book/tick事件的数据格式是否与price_change一致。
+
+---
+
+### 🔧 方案3：增强去重逻辑（结合updated_at）
+
+**影响文件：**
+- `POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_run.py`
+
+**修改位置：** 第2713-2732行
+
+**修改前：**
+```python
+elif seq == _apply_shared_ws_snapshot._last_seq:
+    # seq相同，检查updated_at
+    if updated_at > _apply_shared_ws_snapshot._last_updated_at:
+        # 同一seq但时间戳变大，可能是数据修正
+        is_new_data = True
+        should_feed_strategy = True
+    else:
+        # seq和updated_at都不变，检查是否需要周期性喂给策略
+        time_since_last_tick = now - _apply_shared_ws_snapshot._last_tick_ts
+        if time_since_last_tick >= 10.0:
+            should_feed_strategy = True
+        else:
+            _apply_shared_ws_snapshot._skip_count += 1
+            return
+```
+
+**修改后：**
+```python
+elif seq == _apply_shared_ws_snapshot._last_seq:
+    # seq相同，检查updated_at
+    if updated_at > _apply_shared_ws_snapshot._last_updated_at:
+        # 同一seq但时间戳变大，可能是数据修正
+        is_new_data = True
+        should_feed_strategy = True
+    else:
+        # ✅ 增强逻辑：即使updated_at不变，如果距离上次更新不到5秒，也考虑喂给策略
+        # 这样可以捕捉到聚合器的lightweight更新（如last_trade_price）
+        time_since_last_update = now - _apply_shared_ws_snapshot._last_updated_at
+        time_since_last_tick = now - _apply_shared_ws_snapshot._last_tick_ts
+
+        if time_since_last_update <= 5.0 and time_since_last_tick >= 2.0:
+            # 最近5秒内有更新（即使updated_at字段不变），且距上次tick超过2秒
+            # 说明可能有新的WS事件，喂给策略
+            should_feed_strategy = True
+        elif time_since_last_tick >= 2.0:
+            # 距离上次tick超过2秒，周期性喂给策略
+            should_feed_strategy = True
+        else:
+            _apply_shared_ws_snapshot._skip_count += 1
+            return
+```
+
+**预期效果：**
+- 更敏感地检测缓存文件的变化
+- 减少误判（将有效更新当成重复数据）
+
+**风险：** 低。只是优化判断逻辑。
+
+---
+
+## 应用步骤
+
+### 快速验证（方案1）
+1. 备份原文件：
+   ```bash
+   cp Volatility_arbitrage_run.py Volatility_arbitrage_run.py.bak
+   ```
+
+2. 修改第2722行：
+   ```bash
+   sed -i 's/time_since_last_tick >= 10\.0/time_since_last_tick >= 2.0/g' \
+       POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/POLYMARKET_MAKER/Volatility_arbitrage_run.py
+   ```
+
+3. 重启运行实例，观察日志：
+   ```bash
+   # 期望看到：updates=30 (30.0/min) 或类似的更高频率
+   tail -f logs/autorun/autorun_*.log | grep "updates="
+   ```
+
+### 完整修复（方案1+2）
+1. 应用方案1（降低去重周期）
+2. 应用方案2（扩展seq更新事件类型）
+3. 重启autorun和所有子进程
+4. 对比修复前后的日志
+
+---
+
+## 验证指标
+
+### 修复前
+```
+[WS][SHARED] seq=20, updates=1 (2.0/min), bid=0.14, ask=0.17
+窗口价格(mid): 高 0.6850 / 低 0.6850
+窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+```
+
+### 修复后（期望）
+```
+[WS][SHARED] seq=25, updates=15 (30.0/min), bid=0.14, ask=0.17
+窗口价格(mid): 高 0.6900 / 低 0.6800  ← 能捕捉到更多价格变化
+窗口跌幅: 当前 0.50% / 最大 1.20% / 阈值 0.10%  ← 更准确的波动计算
+[STRATEGY] 检测到下单条件: drop_ratio=1.2% >= threshold=0.1%
+```
+
+---
+
+## 回滚方案
+如果修复后出现问题：
+
+```bash
+# 方案1回滚
+cp Volatility_arbitrage_run.py.bak Volatility_arbitrage_run.py
+
+# 方案2回滚
+git checkout poly_maker_autorun.py
+```
+
+---
+
+## 预期效果总结
+
+| 方案 | 更新频率提升 | 下单机会增加 | 实施难度 | 风险 |
+|------|-------------|-------------|---------|------|
+| 方案1 | 15倍（2→30/min） | 显著增加 | 简单 | 低 |
+| 方案2 | 取决于WS事件分布 | 根本性改善 | 中等 | 中 |
+| 方案3 | 配合方案1/2 | 减少误判 | 简单 | 低 |
+
+**推荐：** 先应用方案1进行快速验证，如果效果显著，再考虑应用方案2进行根本性优化。
+
+---
+
+## 后续优化（可选）
+
+### 性能优化
+1. 移除JSON的 `indent=2`，减少文件大小：
+   ```python
+   json.dump(data, f, ensure_ascii=False)  # 不要indent参数
+   ```
+
+2. 使用msgpack替代JSON（更快的序列化）
+
+### 监控优化
+1. 添加详细的事件类型统计日志
+2. 监控seq递增频率
+3. 监控去重逻辑的skip_count
+
+### 架构优化（长期）
+考虑引入Redis或共享内存，替代文件缓存，进一步降低延迟。
