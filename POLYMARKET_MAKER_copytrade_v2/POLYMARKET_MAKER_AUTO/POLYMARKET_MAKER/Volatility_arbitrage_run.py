@@ -2674,9 +2674,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         # 累计读取次数
         _apply_shared_ws_snapshot._read_count += 1
 
-        # 每10秒打印一次详细的调试信息
+        # 每60秒打印一次详细的调试信息
         now = time.time()
-        if now - _apply_shared_ws_snapshot._last_detailed_log >= 10:
+        if now - _apply_shared_ws_snapshot._last_detailed_log >= 60:
             print(f"[WS][SHARED][DEBUG] 读取统计: read={_apply_shared_ws_snapshot._read_count}, "
                   f"skip={_apply_shared_ws_snapshot._skip_count}, "
                   f"当前seq={seq} (last={_apply_shared_ws_snapshot._last_seq}), "
@@ -2845,7 +2845,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     start_wait = time.time()
     wait_timeout = 600.0  # 最长等待600秒（10分钟），避免API响应慢导致的误伤
     last_progress_log = start_wait
-    progress_log_interval = 10.0  # 等待进度日志打印间隔（从30秒改为10秒，更快发现卡死问题）
+    progress_log_interval = 30.0  # 等待进度日志打印间隔（秒）
     while not latest.get(token_id) and not stop_event.is_set():
         now_ts = time.time()
         elapsed_wait = now_ts - start_wait
