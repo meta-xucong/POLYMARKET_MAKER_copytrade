@@ -623,19 +623,42 @@ class AutoRunManager:
             self._ws_filtered_count += 1
             return
 
+        event_type = ev.get("event_type")
+
         # 处理 price_change 事件（完整更新）
-        if ev.get("event_type") == "price_change":
+        if event_type == "price_change":
             pcs = ev.get("price_changes", [])
         elif "price_changes" in ev:
             pcs = ev.get("price_changes", [])
+        # ✅ 新增：处理 book 和 tick 事件（订单簿更新）
+        elif event_type in ("book", "tick"):
+            # 尝试从事件中提取价格信息并转换为 price_changes 格式
+            asset_id = ev.get("asset_id") or ev.get("token_id")
+            if asset_id:
+                bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
+                ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
+                last = _coerce_float(ev.get("last_price") or ev.get("price") or ev.get("last_trade_price"))
+
+                # 如果有有效的bid/ask，就构造price_change格式
+                if bid or ask:
+                    pcs = [{
+                        "asset_id": asset_id,
+                        "best_bid": bid,
+                        "best_ask": ask,
+                        "last_trade_price": last or ((bid + ask) / 2.0 if bid and ask else (bid or ask))
+                    }]
+                else:
+                    pcs = []
+            else:
+                pcs = []
         # 处理 last_trade_price 事件（仅更新时间戳，避免假僵尸）
-        elif ev.get("event_type") == "last_trade_price":
+        elif event_type == "last_trade_price":
             self._update_token_timestamp_from_trade(ev)
             return
         else:
             # 记录被过滤的事件类型
             self._ws_filtered_count += 1
-            evt_type = ev.get("event_type", "unknown")
+            evt_type = event_type or "unknown"
             self._ws_filtered_types[evt_type] = self._ws_filtered_types.get(evt_type, 0) + 1
 
             # 每60秒打印一次统计
