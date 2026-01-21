@@ -641,11 +641,18 @@ class AutoRunManager:
 
                 # 如果有有效的bid/ask，就构造price_change格式
                 if bid or ask:
+                    # ✅ 优先使用mid=(bid+ask)/2，而不是可能异常的price字段
+                    mid = (bid + ask) / 2.0 if bid and ask else (bid or ask)
+                    # 如果last存在但偏离mid过大，使用mid替代
+                    if last is not None and mid > 0:
+                        deviation = abs(last - mid) / mid
+                        if deviation > 0.5:
+                            last = mid
                     pcs = [{
                         "asset_id": asset_id,
                         "best_bid": bid,
                         "best_ask": ask,
-                        "last_trade_price": last or ((bid + ask) / 2.0 if bid and ask else (bid or ask))
+                        "last_trade_price": last or mid
                     }]
                     # ✅ 调试日志：确认book/tick事件被处理
                     if not hasattr(self, '_book_tick_log_count'):
@@ -710,6 +717,22 @@ class AutoRunManager:
                 or pc.get("mark_price")
                 or pc.get("price")
             )
+
+            # ✅ 调试：如果price和bid/ask差距过大，打印警告并使用mid替代
+            if last is not None and bid > 0 and ask > 0:
+                mid = (bid + ask) / 2.0
+                # 如果price偏离mid超过50%，可能是错误数据
+                deviation = abs(last - mid) / mid if mid > 0 else 0
+                if deviation > 0.5:
+                    if not hasattr(self, '_price_warning_tokens'):
+                        self._price_warning_tokens = set()
+                    if token_id not in self._price_warning_tokens:
+                        print(f"[WARN] Token {token_id} price异常: bid={bid:.4f} ask={ask:.4f} "
+                              f"mid={mid:.4f} price={last:.4f} (偏离{deviation*100:.1f}%)")
+                        print(f"[WARN] 使用mid={mid:.4f}替代price字段，避免误导")
+                        self._price_warning_tokens.add(token_id)
+                    last = mid  # 使用mid替代异常的price
+
             if last is None:
                 last = (bid + ask) / 2.0 if bid and ask else (bid or ask or 0.0)
 
