@@ -1995,6 +1995,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     no_event_exit_minutes = _coerce_float(run_cfg.get("no_event_exit_minutes"))
     if no_event_exit_minutes is None:
         no_event_exit_minutes = 10.0
+    signal_timeout_minutes = _coerce_float(run_cfg.get("signal_timeout_minutes"))
+    if signal_timeout_minutes is None:
+        signal_timeout_minutes = 60.0
     if stagnation_window_minutes <= 0:
         print("[INIT] 价格停滞监控已禁用。")
     else:
@@ -2008,6 +2011,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print(
             "[INIT] 启动后无行情自动退出阈值 "
             f"{no_event_exit_minutes:.1f} 分钟。"
+        )
+    if signal_timeout_minutes <= 0:
+        print("[INIT] 交易信号超时退出已禁用。")
+    else:
+        print(
+            "[INIT] 交易信号超时退出阈值 "
+            f"{signal_timeout_minutes:.1f} 分钟（长时间无买入/卖出信号将退出）。"
         )
 
     sell_inactive_hours = _coerce_float(run_cfg.get("sell_inactive_hours"))
@@ -2321,8 +2331,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     last_event_processed_ts = 0.0
 
     def _on_event(ev: Dict[str, Any]):
-        nonlocal market_closed_detected
-        nonlocal last_event_processed_ts
+        nonlocal market_closed_detected, last_event_processed_ts, last_signal_ts
         if stop_event.is_set():
             return
         if not isinstance(ev, dict):
@@ -2370,6 +2379,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             action = strategy.on_tick(best_ask=ask, best_bid=bid, ts=ts)
             if action and action.action in (ActionType.BUY, ActionType.SELL):
                 action_queue.put(action)
+                last_signal_ts = time.time()  # 更新最后一次信号时间
             if _is_market_closed(pc):
                 print("[MARKET] 检测到市场关闭信号，准备退出…")
                 market_closed_detected = True
@@ -2436,13 +2446,21 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if not isinstance(tokens, dict):
                 if not hasattr(_load_shared_ws_snapshot, "_warned_format"):
                     print(f"[WS][SHARED] ✗ 缓存文件格式错误（缺少 tokens 字段）")
+                    print(f"[WS][SHARED] 缓存内容类型: {type(payload)}")
                     _load_shared_ws_snapshot._warned_format = True
                 return None
             snapshot = tokens.get(str(token_id))
-            if snapshot is None and not hasattr(_load_shared_ws_snapshot, "_warned_missing_token"):
-                print(f"[WS][SHARED] ✗ 缓存中未找到 token {token_id} 的数据")
-                print(f"[WS][SHARED] 缓存中的 tokens: {list(tokens.keys())[:5]}...")
-                _load_shared_ws_snapshot._warned_missing_token = True
+            if snapshot is None:
+                if not hasattr(_load_shared_ws_snapshot, "_warned_missing_token"):
+                    print(f"[WS][SHARED] ✗ 缓存中未找到 token {token_id} 的数据")
+                    print(f"[WS][SHARED] 缓存中的 tokens: {list(tokens.keys())[:5]}...")
+                    print(f"[WS][SHARED] 缓存总token数: {len(tokens)}")
+                    _load_shared_ws_snapshot._warned_missing_token = True
+                    _load_shared_ws_snapshot._first_warned_at = time.time()
+                elif time.time() - getattr(_load_shared_ws_snapshot, "_first_warned_at", 0) > 30:
+                    # 30秒后重新警告一次
+                    print(f"[WS][SHARED] ⚠ 启动30秒后仍未从缓存获取到token {token_id} 的数据")
+                    print(f"[WS][SHARED] 当前缓存包含的tokens: {list(tokens.keys())[:10]}")
             return snapshot
         except (OSError, json.JSONDecodeError) as e:
             if not hasattr(_load_shared_ws_snapshot, "_warned_error"):
@@ -2451,7 +2469,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return None
 
     def _apply_shared_ws_snapshot() -> None:
-        nonlocal last_shared_ts
+        nonlocal last_shared_ts, last_signal_ts
         snapshot = _load_shared_ws_snapshot()
 
         # 首次读取失败的警告（只打印一次）
@@ -2545,6 +2563,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         action = strategy.on_tick(best_ask=ask, best_bid=bid, ts=ts)
         if action and action.action in (ActionType.BUY, ActionType.SELL):
             action_queue.put(action)
+            last_signal_ts = time.time()  # 更新最后一次信号时间
         with ws_state_lock:
             ws_state["last_event_ts"] = time.time()
 
@@ -2632,15 +2651,28 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     print("[RUN] 监听行情中… 输入 stop / exit 可手动停止。")
 
     start_wait = time.time()
+    wait_timeout = 60.0  # 最长等待60秒
     while not latest.get(token_id) and not stop_event.is_set():
-        if time.time() - start_wait > 5:
+        now_ts = time.time()
+        elapsed_wait = now_ts - start_wait
+
+        # 超时检查
+        if elapsed_wait > wait_timeout:
+            print(f"[WAIT][TIMEOUT] 等待{elapsed_wait:.0f}秒后仍未收到行情，退出")
+            if use_shared_ws:
+                print(f"[WAIT][TIMEOUT] 共享WS缓存路径: {shared_ws_cache_path}")
+                print(f"[WAIT][TIMEOUT] 可能原因：(1)聚合器未订阅该token (2)该token无行情数据")
+            print("[QUEUE] 释放队列：启动后无法获取行情数据，已退出。")
+            stop_event.set()
+            return
+
+        if now_ts - start_wait > 5:
             state_note = ""
             with ws_state_lock:
                 last_state = ws_state.get("last_state")
                 last_state_ts = ws_state.get("last_state_ts", 0.0)
                 last_event_ts = ws_state.get("last_event_ts", 0.0)
                 last_error = ws_state.get("last_error")
-            now_ts = time.time()
             state_age = now_ts - last_state_ts if last_state_ts else None
             event_age = now_ts - last_event_ts if last_event_ts else None
             if last_state:
@@ -2653,8 +2685,25 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     parts.append(f"err={last_error}")
                 state_note = " | " + " ".join(parts)
             mode_tag = "[SHARED]" if use_shared_ws else "[INDEPENDENT]"
-            print(f"[WAIT]{mode_tag} 尚未收到行情，继续等待…{state_note}")
-            start_wait = time.time()
+            print(f"[WAIT]{mode_tag} 尚未收到行情，继续等待({elapsed_wait:.0f}s / {wait_timeout:.0f}s)…{state_note}")
+
+            # 共享WS模式下，额外打印缓存诊断信息
+            if use_shared_ws and elapsed_wait > 10:
+                try:
+                    snapshot = _load_shared_ws_snapshot()
+                    if snapshot is None:
+                        with open(shared_ws_cache_path, "r", encoding="utf-8") as f:
+                            payload = json.load(f)
+                        tokens = payload.get("tokens", {})
+                        print(f"[WAIT][DEBUG] 缓存中有 {len(tokens)} 个token: {list(tokens.keys())[:5]}...")
+                        if str(token_id) not in tokens:
+                            print(f"[WAIT][DEBUG] ✗ 目标token {token_id} 不在缓存中")
+                        else:
+                            print(f"[WAIT][DEBUG] ✓ 目标token {token_id} 已在缓存中，但可能是旧数据")
+                except Exception as e:
+                    print(f"[WAIT][DEBUG] 读取缓存诊断信息失败: {e}")
+
+            start_wait = now_ts
         if use_shared_ws:
             _apply_shared_ws_snapshot()
         time.sleep(0.2)
@@ -2822,9 +2871,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     next_loop_after = 0.0
     stagnation_window_seconds = max(float(stagnation_window_minutes), 0.0) * 60.0
     no_event_exit_seconds = max(float(no_event_exit_minutes), 0.0) * 60.0
+    signal_timeout_seconds = max(float(signal_timeout_minutes), 0.0) * 60.0
     stagnation_history: Deque[Tuple[float, float]] = deque()
     stagnation_triggered: bool = False
     run_started_at = time.time()
+    last_signal_ts = run_started_at  # 跟踪最后一次交易信号的时间
 
     def _reconcile_empty_long_state(reason: str) -> None:
         nonlocal position_size
@@ -3377,6 +3428,30 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                             break
                                         continue
 
+                # 交易信号超时检查：长时间无买入/卖出信号则退出
+                if signal_timeout_seconds > 0 and not stagnation_triggered:
+                    signal_idle_seconds = now - last_signal_ts
+                    if signal_idle_seconds >= signal_timeout_seconds:
+                        print(
+                            f"[SIGNAL_TIMEOUT] {signal_idle_seconds / 60.0:.1f} 分钟内无交易信号，释放队列退出"
+                        )
+                        print(f"[SIGNAL_TIMEOUT] 最后信号时间: {time.strftime('%H:%M:%S', time.localtime(last_signal_ts))}")
+                        # 检查是否有持仓需要清仓
+                        status = strategy.status()
+                        if _has_actionable_position(status):
+                            print("[SIGNAL_TIMEOUT] 检测到持仓，先执行清仓...")
+                            floor_hint = _latest_best_ask()
+                            if floor_hint is None:
+                                floor_hint = _latest_price()
+                            _execute_sell(position_size, floor_hint=floor_hint, source="[SIGNAL_TIMEOUT]")
+                        else:
+                            strategy.stop("signal timeout (no position)")
+                            print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
+                            stop_event.set()
+                        if stop_event.is_set():
+                            break
+                        continue
+
                 if sell_only_event.is_set() and exit_after_sell_only_clear:
                     status = strategy.status()
                     awaiting = status.get("awaiting")
@@ -3430,6 +3505,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         f"{_fmt_price(drop_stats.get('window_low'))}"
                     )
                     extra_lines.append(price_line)
+
+                    # 显示最后信号时间（如果启用了信号超时）
+                    if signal_timeout_seconds > 0:
+                        signal_idle_seconds = now - last_signal_ts
+                        signal_idle_minutes = signal_idle_seconds / 60.0
+                        timeout_minutes = signal_timeout_seconds / 60.0
+                        extra_lines.append(
+                            f"    信号超时: {signal_idle_minutes:.1f}分钟无信号 / 阈值 {timeout_minutes:.0f}分钟"
+                        )
 
                     if st.get("sell_only"):
                         extra_lines.append("    状态：倒计时仅卖出模式（禁止买入）")
