@@ -77,6 +77,62 @@ def _log_error(error_type: str, error_data: Dict[str, Any]) -> None:
         # 错误日志记录失败时，仅打印到控制台，不中断程序
         print(f"[ERROR_LOG] 写入错误日志失败: {e}")
 
+
+# ========== 退出token记录函数 ==========
+def _record_exit_token(token_id: str, exit_reason: str, exit_data: Optional[Dict[str, Any]] = None) -> None:
+    """
+    记录因各种原因退出maker交易的token。
+
+    :param token_id: token ID
+    :param exit_reason: 退出原因（如 STARTUP_TIMEOUT, MARKET_CLOSED, SIGNAL_TIMEOUT 等）
+    :param exit_data: 退出相关数据（可选）
+    """
+    try:
+        # 确定退出记录文件路径
+        script_dir = Path(__file__).parent.parent
+        data_dir = script_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        exit_record_path = data_dir / "exit_tokens.json"
+
+        # 构建记录条目
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        record = {
+            "timestamp": timestamp,
+            "token_id": token_id,
+            "exit_reason": exit_reason,
+            "exit_data": exit_data or {}
+        }
+
+        # 读取现有记录（如果存在）
+        existing_records = []
+        if exit_record_path.exists():
+            try:
+                with open(exit_record_path, "r", encoding="utf-8") as f:
+                    existing_records = json.load(f)
+                if not isinstance(existing_records, list):
+                    existing_records = []
+            except (json.JSONDecodeError, OSError):
+                existing_records = []
+
+        # 添加新记录
+        existing_records.append(record)
+
+        # 只保留最近1000条记录（避免文件过大）
+        if len(existing_records) > 1000:
+            existing_records = existing_records[-1000:]
+
+        # 原子写入
+        tmp_path = exit_record_path.with_suffix('.tmp')
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(existing_records, f, ensure_ascii=False, indent=2)
+        tmp_path.replace(exit_record_path)
+
+        print(f"[EXIT_RECORD] 已记录退出token: {token_id[:20]}... 原因: {exit_reason}")
+
+    except Exception as e:
+        # 记录失败时，仅打印到控制台，不中断程序
+        print(f"[EXIT_RECORD] 写入退出记录失败: {e}")
+
 # ========== 1) Client：优先 ws 版，回退 rest 版 ==========
 def _get_client():
     try:
@@ -2733,6 +2789,52 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         now_ts = time.time()
         elapsed_wait = now_ts - start_wait
 
+        # 快速失败检查：如果共享WS模式下缓存数据过期，提前退出
+        if use_shared_ws and elapsed_wait > 30:  # 等待30秒后开始检查
+            snapshot = _load_shared_ws_snapshot()
+            if snapshot:
+                updated_at = snapshot.get("updated_at", 0)
+                data_age = time.time() - updated_at if updated_at > 0 else 999999
+
+                # 检查市场状态
+                is_closed = (
+                    snapshot.get("market_closed")
+                    or snapshot.get("is_closed")
+                    or snapshot.get("closed")
+                )
+
+                if is_closed:
+                    print(f"[WAIT][CLOSED] 检测到市场已关闭，提前退出")
+                    print("[QUEUE] 释放队列：市场已关闭。")
+                    _log_error("MARKET_CLOSED", {
+                        "token_id": token_id,
+                        "elapsed_seconds": elapsed_wait,
+                        "message": "市场已关闭"
+                    })
+                    _record_exit_token(token_id, "MARKET_CLOSED", {
+                        "elapsed_seconds": elapsed_wait,
+                        "detected_at_startup": True
+                    })
+                    stop_event.set()
+                    return
+
+                # 数据过期超过5分钟，认为token可能无流动性
+                if data_age > 300:
+                    print(f"[WAIT][STALE] 缓存数据过期{data_age:.0f}秒，该token可能无流动性")
+                    print("[QUEUE] 释放队列：token长期无数据更新，提前退出。")
+                    _log_error("STALE_DATA_TIMEOUT", {
+                        "token_id": token_id,
+                        "elapsed_seconds": elapsed_wait,
+                        "data_age_seconds": data_age,
+                        "message": "缓存数据长期未更新，token可能无流动性"
+                    })
+                    _record_exit_token(token_id, "STALE_DATA_TIMEOUT", {
+                        "elapsed_seconds": elapsed_wait,
+                        "data_age_seconds": data_age
+                    })
+                    stop_event.set()
+                    return
+
         # 超时检查
         if elapsed_wait > wait_timeout:
             timeout_msg = f"[WAIT][TIMEOUT] 等待{elapsed_wait:.0f}秒后仍未收到行情，退出"
@@ -2752,6 +2854,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 "use_shared_ws": use_shared_ws,
                 "shared_ws_cache_path": shared_ws_cache_path if use_shared_ws else None,
                 "message": "启动后等待行情超时"
+            })
+            _record_exit_token(token_id, "STARTUP_TIMEOUT", {
+                "elapsed_seconds": elapsed_wait,
+                "use_shared_ws": use_shared_ws
             })
 
             stop_event.set()
@@ -3538,6 +3644,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         else:
                             strategy.stop("signal timeout (no position)")
                             print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
+                            _record_exit_token(token_id, "SIGNAL_TIMEOUT", {
+                                "signal_idle_minutes": signal_idle_seconds / 60.0,
+                                "timeout_threshold_minutes": signal_timeout_seconds / 60.0,
+                                "last_signal_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_signal_ts))
+                            })
                             stop_event.set()
                         if stop_event.is_set():
                             break
