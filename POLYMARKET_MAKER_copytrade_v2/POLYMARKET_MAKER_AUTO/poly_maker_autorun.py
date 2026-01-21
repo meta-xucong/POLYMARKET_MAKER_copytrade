@@ -57,6 +57,37 @@ DEFAULT_GLOBAL_CONFIG = {
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 
 
+# ========== 错误日志记录函数 ==========
+def _log_error(error_type: str, error_data: Dict[str, Any]) -> None:
+    """
+    记录错误到独立的错误日志文件。
+
+    :param error_type: 错误类型标识（如 WS_AGGREGATOR_ERROR, TASK_START_ERROR 等）
+    :param error_data: 错误相关数据（字典格式）
+    """
+    try:
+        # 确定错误日志文件路径
+        log_dir = PROJECT_ROOT / "logs" / "autorun"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        error_log_path = log_dir / "error_log.txt"
+
+        # 构建日志条目
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        log_entry = {
+            "timestamp": timestamp,
+            "error_type": error_type,
+            "data": error_data
+        }
+
+        # 追加写入日志文件
+        with open(error_log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+    except Exception as e:
+        # 错误日志记录失败时，仅打印到控制台，不中断程序
+        print(f"[ERROR_LOG] 写入错误日志失败: {e}")
+
+
 def _topic_id_from_entry(entry: Any) -> str:
     """从 copytrade token 条目中提取 token_id。"""
 
@@ -388,6 +419,11 @@ class AutoRunManager:
                 except Exception as exc:  # pragma: no cover - 防御性保护
                     print(f"[ERROR] 主循环异常已捕获，将继续运行: {exc}")
                     traceback.print_exc()
+                    _log_error("MAIN_LOOP_ERROR", {
+                        "message": "主循环异常",
+                        "error": str(exc),
+                        "traceback": traceback.format_exc()
+                    })
                     time.sleep(max(1.0, self.config.command_poll_sec))
         finally:
             self._stop_ws_aggregator()
@@ -482,6 +518,11 @@ class AutoRunManager:
         except Exception as exc:
             print(f"[ERROR] 无法导入 WS 模块: {exc}")
             print("[ERROR] WS 聚合器启动失败，子进程将使用独立 WS 连接")
+            _log_error("WS_AGGREGATOR_IMPORT_ERROR", {
+                "message": "无法导入 WS 模块",
+                "error": str(exc),
+                "tokens_count": len(token_ids)
+            })
             # 不抛出异常，让系统继续运行（子进程会fallback到独立WS）
             return
 
@@ -492,6 +533,10 @@ class AutoRunManager:
             print("[ERROR] 缺少依赖 websocket-client")
             print("[ERROR] 请运行: pip install websocket-client")
             print("[ERROR] WS 聚合器启动失败，子进程将使用独立 WS 连接")
+            _log_error("WS_AGGREGATOR_DEPENDENCY_ERROR", {
+                "message": "缺少依赖 websocket-client",
+                "tokens_count": len(token_ids)
+            })
             return
 
         stop_event = threading.Event()
@@ -516,6 +561,11 @@ class AutoRunManager:
         if not self._ws_thread.is_alive():
             print("[WS][AGGREGATOR] ✗ WS线程启动后立即退出")
             print("[WS][AGGREGATOR] 子进程将使用独立 WS 连接")
+            _log_error("WS_AGGREGATOR_THREAD_ERROR", {
+                "message": "WS线程启动后立即退出",
+                "tokens_count": len(token_ids),
+                "token_ids": token_ids[:5]  # 只记录前5个
+            })
             self._ws_thread = None
             self._ws_thread_stop = None
         else:
@@ -663,6 +713,12 @@ class AutoRunManager:
 
         except OSError as exc:
             print(f"[ERROR] 写入 WS 聚合缓存失败: {exc}")
+            _log_error("WS_CACHE_WRITE_ERROR", {
+                "message": "写入 WS 聚合缓存失败",
+                "error": str(exc),
+                "cache_path": str(self._ws_cache_path),
+                "tokens_count": len(self._ws_cache)
+            })
             # 清理临时文件
             try:
                 tmp_path = self._ws_cache_path.with_suffix('.tmp')
@@ -821,6 +877,12 @@ class AutoRunManager:
             except Exception as exc:  # pragma: no cover - 防御性保护
                 print(f"[ERROR] 调度话题 {topic_id} 时异常: {exc}")
                 traceback.print_exc()
+                _log_error("TASK_SCHEDULE_ERROR", {
+                    "message": "调度话题时异常",
+                    "topic_id": topic_id,
+                    "error": str(exc),
+                    "traceback": traceback.format_exc()
+                })
                 started = False
             if not started and topic_id not in self.pending_topics:
                 # 启动失败时重新入队，避免话题被遗忘
