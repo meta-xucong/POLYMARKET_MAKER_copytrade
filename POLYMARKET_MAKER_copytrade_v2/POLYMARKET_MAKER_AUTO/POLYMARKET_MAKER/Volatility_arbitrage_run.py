@@ -2631,6 +2631,37 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         seq = snapshot.get("seq", 0)
         updated_at = snapshot.get("updated_at", 0.0)
 
+        # P0修复：运行时数据新鲜度检查（30分钟阈值）
+        # 如果缓存数据过期超过30分钟，说明市场可能失去流动性，应退出释放队列位置
+        if updated_at > 0:
+            data_age = time.time() - updated_at
+            STALE_DATA_THRESHOLD = 1800.0  # 30分钟
+
+            if data_age > STALE_DATA_THRESHOLD:
+                print(f"[STALE_DATA] 缓存数据过期 {data_age/60:.1f} 分钟（阈值 {STALE_DATA_THRESHOLD/60:.0f} 分钟）")
+                print(f"[STALE_DATA] 该token市场可能失去流动性，退出交易释放队列位置")
+
+                _log_error("STALE_DATA_IN_TRADING", {
+                    "token_id": token_id,
+                    "data_age_seconds": data_age,
+                    "data_age_minutes": data_age / 60.0,
+                    "updated_at": updated_at,
+                    "threshold_seconds": STALE_DATA_THRESHOLD,
+                    "current_seq": seq,
+                    "message": "运行时检测到数据过期，市场可能无流动性"
+                })
+
+                _record_exit_token(token_id, "STALE_DATA_IN_TRADING", {
+                    "data_age_minutes": data_age / 60.0,
+                    "threshold_minutes": STALE_DATA_THRESHOLD / 60.0,
+                    "updated_at": updated_at,
+                    "last_seq": seq
+                })
+
+                strategy.stop("stale data detected in trading loop")
+                stop_event.set()
+                return
+
         # 初始化去重状态和调试计数器
         if not hasattr(_apply_shared_ws_snapshot, "_last_seq"):
             _apply_shared_ws_snapshot._last_seq = 0
