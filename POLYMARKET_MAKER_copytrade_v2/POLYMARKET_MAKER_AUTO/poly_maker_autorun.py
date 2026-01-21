@@ -637,17 +637,13 @@ class AutoRunManager:
             if asset_id:
                 bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
                 ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
-                last = _coerce_float(ev.get("last_price") or ev.get("price") or ev.get("last_trade_price"))
 
                 # 如果有有效的bid/ask，就构造price_change格式
                 if bid or ask:
-                    # ✅ 优先使用mid=(bid+ask)/2，而不是可能异常的price字段
+                    # ✅ 使用mid=(bid+ask)/2作为最可靠的当前价格
                     mid = (bid + ask) / 2.0 if bid and ask else (bid or ask)
-                    # 如果last存在但偏离mid过大，使用mid替代
-                    if last is not None and mid > 0:
-                        deviation = abs(last - mid) / mid
-                        if deviation > 0.5:
-                            last = mid
+                    # ✅ 只使用last_trade_price，不使用price字段（含义不明确）
+                    last = _coerce_float(ev.get("last_trade_price"))
                     pcs = [{
                         "asset_id": asset_id,
                         "best_bid": bid,
@@ -711,30 +707,17 @@ class AutoRunManager:
                 continue
             bid = _coerce_float(pc.get("best_bid")) or 0.0
             ask = _coerce_float(pc.get("best_ask")) or 0.0
-            last = _coerce_float(
-                pc.get("last_trade_price")
-                or pc.get("last_price")
-                or pc.get("mark_price")
-                or pc.get("price")
-            )
 
-            # ✅ 调试：如果price和bid/ask差距过大，打印警告并使用mid替代
-            if last is not None and bid > 0 and ask > 0:
-                mid = (bid + ask) / 2.0
-                # 如果price偏离mid超过50%，可能是错误数据
-                deviation = abs(last - mid) / mid if mid > 0 else 0
-                if deviation > 0.5:
-                    if not hasattr(self, '_price_warning_tokens'):
-                        self._price_warning_tokens = set()
-                    if token_id not in self._price_warning_tokens:
-                        print(f"[WARN] Token {token_id} price异常: bid={bid:.4f} ask={ask:.4f} "
-                              f"mid={mid:.4f} price={last:.4f} (偏离{deviation*100:.1f}%)")
-                        print(f"[WARN] 使用mid={mid:.4f}替代price字段，避免误导")
-                        self._price_warning_tokens.add(token_id)
-                    last = mid  # 使用mid替代异常的price
+            # ✅ 计算mid价格（最可靠的当前市场价格）
+            mid = (bid + ask) / 2.0 if bid and ask else (bid or ask or 0.0)
 
-            if last is None:
-                last = (bid + ask) / 2.0 if bid and ask else (bid or ask or 0.0)
+            # ✅ 只使用last_trade_price作为真实成交价，不使用price字段（price含义不明确）
+            # price字段可能是历史价格或订单簿深度价格，不适合用作当前价格
+            last = _coerce_float(pc.get("last_trade_price"))
+
+            # 如果没有last_trade_price，直接使用mid
+            if last is None or last == 0.0:
+                last = mid
 
             # 获取当前序列号并递增（用于去重）
             with self._ws_cache_lock:
