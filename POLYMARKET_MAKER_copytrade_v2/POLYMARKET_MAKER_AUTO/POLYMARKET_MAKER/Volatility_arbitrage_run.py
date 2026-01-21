@@ -2669,6 +2669,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             _apply_shared_ws_snapshot._read_count = 0  # 总读取次数
             _apply_shared_ws_snapshot._skip_count = 0  # 跳过次数
             _apply_shared_ws_snapshot._last_detailed_log = 0  # 详细日志时间戳
+            _apply_shared_ws_snapshot._last_tick_ts = 0.0  # 上次调用on_tick的时间
 
         # 累计读取次数
         _apply_shared_ws_snapshot._read_count += 1
@@ -2682,40 +2683,57 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                   f"updated_at={updated_at:.2f} (last={_apply_shared_ws_snapshot._last_updated_at:.2f})")
             _apply_shared_ws_snapshot._last_detailed_log = now
 
-        # 判断是否是新数据：
-        # 1. seq增大 → 肯定是新数据，接受
-        # 2. seq变小 → 聚合器重启导致seq重置，接受
-        # 3. seq相同但updated_at变大 → 同一事件的数据被修正，接受
-        # 4. seq和updated_at都不变或变小 → 完全相同的旧数据，跳过
+        # 判断是否需要将数据喂给策略：
+        # 1. seq增大 → 肯定是新数据，必须喂给策略
+        # 2. seq变小 → 聚合器重启导致seq重置，必须喂给策略
+        # 3. seq相同但updated_at变大 → 同一事件的数据被修正，必须喂给策略
+        # 4. seq和updated_at都不变 + 距离上次on_tick超过5秒 → 周期性喂给策略（让横盘数据也能累积）
+        # 5. 其他情况 → 跳过（避免过于频繁调用）
+        should_feed_strategy = False
         is_new_data = False
         skip_reason = ""
 
         if seq > _apply_shared_ws_snapshot._last_seq:
             # 正常的新数据（seq递增）
             is_new_data = True
+            should_feed_strategy = True
         elif seq < _apply_shared_ws_snapshot._last_seq:
             # seq变小，说明聚合器重启，重置seq
             print(f"[WS][SHARED] ⚠ 检测到seq重置 ({_apply_shared_ws_snapshot._last_seq} → {seq})，接受新数据")
             is_new_data = True
+            should_feed_strategy = True
         elif seq == _apply_shared_ws_snapshot._last_seq:
             # seq相同，检查updated_at
             if updated_at > _apply_shared_ws_snapshot._last_updated_at:
                 # 同一seq但时间戳变大，可能是数据修正
                 is_new_data = True
+                should_feed_strategy = True
             else:
-                # 完全相同的数据，跳过
-                _apply_shared_ws_snapshot._skip_count += 1
-                skip_reason = f"seq和updated_at都未变化 (seq={seq}, updated_at={updated_at:.2f})"
-                return
+                # seq和updated_at都不变，检查是否需要周期性喂给策略
+                time_since_last_tick = now - _apply_shared_ws_snapshot._last_tick_ts
+                if time_since_last_tick >= 5.0:  # 5秒间隔
+                    # 即使数据不变，也周期性喂给策略（让横盘价格也能累积历史）
+                    should_feed_strategy = True
+                    if time_since_last_tick >= 30.0:  # 超过30秒才打印日志
+                        print(f"[WS][SHARED] 市场横盘 {time_since_last_tick:.0f}秒，周期性喂价格给策略 (seq={seq})")
+                else:
+                    # 距离上次on_tick不到5秒，跳过
+                    _apply_shared_ws_snapshot._skip_count += 1
+                    skip_reason = f"seq和updated_at都未变化且距上次tick仅{time_since_last_tick:.1f}秒"
+                    return
 
-        if not is_new_data:
+        if not should_feed_strategy:
             _apply_shared_ws_snapshot._skip_count += 1
-            skip_reason = "未识别为新数据"
+            skip_reason = "未满足喂给策略的条件"
             return
 
-        # 更新去重状态
-        _apply_shared_ws_snapshot._last_seq = seq
-        _apply_shared_ws_snapshot._last_updated_at = updated_at
+        # 更新去重状态（只在真正有新数据时更新）
+        if is_new_data:
+            _apply_shared_ws_snapshot._last_seq = seq
+            _apply_shared_ws_snapshot._last_updated_at = updated_at
+
+        # 无论是否新数据，只要喂给策略就更新last_tick_ts
+        _apply_shared_ws_snapshot._last_tick_ts = now
         last_shared_ts = ts  # 保留用于日志
 
         bid = float(snapshot.get("best_bid") or 0.0)
