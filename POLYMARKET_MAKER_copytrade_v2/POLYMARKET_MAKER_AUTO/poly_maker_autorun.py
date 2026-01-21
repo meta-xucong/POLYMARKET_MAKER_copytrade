@@ -1781,6 +1781,11 @@ def load_configs(
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    print("=" * 60)
+    print("[INIT] Polymarket Maker AutoRun - 聚合器启动")
+    print("[VERSION] 支持book/tick事件处理 (2026-01-21)")
+    print("=" * 60)
+
     args = parse_args(argv)
     global_conf, strategy_conf, run_params_template = load_configs(args)
 
