@@ -2719,13 +2719,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             else:
                 # seq和updated_at都不变，检查是否需要周期性喂给策略
                 time_since_last_tick = now - _apply_shared_ws_snapshot._last_tick_ts
-                if time_since_last_tick >= 10.0:  # 从5秒改为10秒，避免过于频繁
+                if time_since_last_tick >= 5.0:  # 优化为5秒周期，平衡性能和响应速度
                     # 即使数据不变，也周期性喂给策略（让横盘价格也能累积历史）
                     should_feed_strategy = True
                     if time_since_last_tick >= 30.0:  # 超过30秒才打印日志
                         print(f"[WS][SHARED] 市场横盘 {time_since_last_tick:.0f}秒，周期性喂价格给策略 (seq={seq})")
                 else:
-                    # 距离上次on_tick不到10秒，跳过策略调用
+                    # 距离上次on_tick不到5秒，跳过策略调用
                     _apply_shared_ws_snapshot._skip_count += 1
                     skip_reason = f"seq和updated_at都未变化且距上次tick仅{time_since_last_tick:.1f}秒"
                     # 注意：即使跳过策略调用，仍然更新latest快照（见下文）
