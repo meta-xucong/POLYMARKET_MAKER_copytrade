@@ -3072,20 +3072,36 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     # 诊断日志：waiting loop结束
     print(f"[WAIT][END] ✓ Waiting loop结束，latest已设置: {bool(latest.get(token_id))}")
+    sys.stdout.flush()
 
     if stop_event.is_set():
         print("[EXIT] 已终止。")
+        sys.stdout.flush()
         return
 
     print("[WAIT][END] ✓ stop_event未设置，继续初始化...")
+    sys.stdout.flush()
 
     print("[INIT][TRACE] 1. 准备启动input_listener线程...")
+    sys.stdout.flush()  # 强制刷新buffer
 
     def _input_listener():
+        # ✅ P0修复：child process通过subprocess启动时，stdin可能被重定向
+        # input()会hang住，导致整个进程阻塞。只在主进程中启用交互输入。
+        if not sys.stdin or not sys.stdin.isatty():
+            # stdin未连接到终端，跳过input监听（child process场景）
+            return
+
         while not stop_event.is_set():
             try:
                 cmd = input().strip().lower()
-            except EOFError:
+            except (EOFError, OSError):
+                # EOFError: stdin关闭
+                # OSError: stdin不支持readline
+                break
+            except Exception as e:
+                # 捕获其他异常，避免线程崩溃
+                print(f"[WARN] Input listener error: {e}")
                 break
             if cmd in {"stop", "exit", "quit"}:
                 print("[CMD] 收到停止指令，准备退出…")
@@ -3093,8 +3109,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 stop_event.set()
                 break
 
-    threading.Thread(target=_input_listener, daemon=True).start()
-    print("[INIT][TRACE] 2. input_listener线程已启动")
+    try:
+        threading.Thread(target=_input_listener, daemon=True).start()
+        print("[INIT][TRACE] 2. input_listener线程已启动")
+        sys.stdout.flush()  # 强制刷新buffer
+    except Exception as e:
+        print(f"[WARN] 无法启动input_listener: {e}")
+        sys.stdout.flush()
 
     def _fmt_price(val: Optional[Any]) -> str:
         try:
@@ -3217,11 +3238,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         return False
 
     print("[INIT][TRACE] 3. 准备初始化变量和策略状态...")
+    sys.stdout.flush()
 
     position_size: Optional[float] = None
     last_order_size: Optional[float] = None
     status_snapshot = strategy.status()
     print("[INIT][TRACE] 4. 策略状态已获取")
+    sys.stdout.flush()
     initial_pos = _extract_position_size(status_snapshot)
     if initial_pos > 0:
         position_size = initial_pos
@@ -3434,16 +3457,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     time.sleep(0.2)
 
     print(f"[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts={sell_only_start_ts}, market_deadline_ts={market_deadline_ts})")
+    sys.stdout.flush()
 
     if sell_only_start_ts and time.time() >= sell_only_start_ts:
         print("[INIT][TRACE] 6. 调用_activate_sell_only()...")
+        sys.stdout.flush()
         _activate_sell_only("countdown window")
 
     if market_deadline_ts:
         print("[INIT][TRACE] 7. 启动countdown_monitor线程...")
+        sys.stdout.flush()
         threading.Thread(target=_countdown_monitor, daemon=True).start()
 
     print("[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...")
+    sys.stdout.flush()
 
     def _execute_sell(
         order_qty: Optional[float],
@@ -3711,10 +3738,21 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     last_loop_diagnostic_log = time.time()
 
     print(f"[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws={use_shared_ws})")
+    sys.stdout.flush()
+
+    # 诊断标志：追踪第一次循环
+    first_iteration_logged = False
 
     try:
         while not stop_event.is_set():
             now = time.time()
+
+            # 诊断日志：第一次循环迭代
+            if not first_iteration_logged:
+                print(f"[MAIN_LOOP][TRACE] 第一次循环迭代开始 (now={now:.2f})")
+                sys.stdout.flush()
+                first_iteration_logged = True
+
             if now < next_loop_after:
                 wait = next_loop_after - now
                 if wait > 0 and stop_event.wait(wait):
@@ -3726,11 +3764,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             # 每60秒打印一次主循环运行状态
             if now - last_loop_diagnostic_log >= 60:
                 print(f"[MAIN_LOOP] ✓ 主循环运行中 (iterations={loop_iteration_count}, use_shared_ws={use_shared_ws})")
+                sys.stdout.flush()
                 last_loop_diagnostic_log = now
 
             try:
                 if use_shared_ws:
                     _apply_shared_ws_snapshot()
+                    # 诊断：每100次迭代flush一次
+                    if loop_iteration_count % 100 == 1:
+                        sys.stdout.flush()
                 if _exit_signal_active():
                     _force_exit("sell signal file detected")
                     break
