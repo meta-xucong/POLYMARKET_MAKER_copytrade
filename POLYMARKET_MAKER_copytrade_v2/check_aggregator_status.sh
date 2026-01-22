@@ -1,13 +1,19 @@
 #!/bin/bash
 
+# 获取脚本所在目录（V2文件夹）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 echo "======================================================"
 echo "聚合器诊断脚本"
 echo "======================================================"
 echo ""
+echo "工作目录: $SCRIPT_DIR"
+echo ""
 
 # 1. 检查代码版本
 echo "【1】检查代码库中的版本..."
-cd /home/user/POLYMARKET_MAKER_copytrade/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO
+cd POLYMARKET_MAKER_AUTO
 
 if grep -q 'elif event_type in ("book", "tick")' poly_maker_autorun.py; then
     echo "✅ 代码库包含book/tick事件处理"
@@ -25,6 +31,12 @@ if grep -q 'VERSION.*支持book/tick事件处理' poly_maker_autorun.py; then
     echo "✅ 代码库包含版本标识"
 else
     echo "❌ 代码库不包含版本标识"
+fi
+
+if grep -q 'min_loop_interval = 0.1' POLYMARKET_MAKER/Volatility_arbitrage_run.py; then
+    echo "✅ 代码库包含子进程循环优化 (0.1秒)"
+else
+    echo "❌ 代码库子进程循环仍为旧值 (1.0秒)"
 fi
 
 echo ""
@@ -46,7 +58,7 @@ echo ""
 # 3. 检查最新日志
 echo "【3】检查最新运行日志..."
 
-# 查找最新的日志文件
+# 查找最新的日志文件（在POLYMARKET_MAKER_AUTO目录下）
 LATEST_LOG=$(find . -name "*.log" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
 
 if [ -z "$LATEST_LOG" ]; then
@@ -90,8 +102,8 @@ elif ! tail -1000 "$LATEST_LOG" 2>/dev/null | grep -q "VERSION.*支持book/tick"
     echo "建议操作:"
     echo "  1. 停止旧进程: kill $AGGREGATOR_PID"
     echo "  2. 等待进程退出: sleep 5"
-    echo "  3. 启动新版本: cd /home/user/POLYMARKET_MAKER_copytrade/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO"
-    echo "  4. 运行: python poly_maker_autorun.py [your-args]"
+    echo "  3. 启动新版本: cd $SCRIPT_DIR/POLYMARKET_MAKER_AUTO"
+    echo "  4. 运行: python3 poly_maker_autorun.py [your-args]"
     echo ""
     echo "  或使用 restart_aggregator.sh 脚本自动重启"
 else
@@ -101,6 +113,7 @@ else
     echo "  - 检查WebSocket连接是否正常"
     echo "  - 检查是否有网络问题或API限制"
     echo "  - 查看完整日志确认是否有错误信息"
+    echo "  - 确认子进程也已重启（子进程需要新代码才能提高频率）"
 fi
 
 echo ""
