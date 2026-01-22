@@ -2601,6 +2601,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     def _apply_shared_ws_snapshot() -> None:
         nonlocal last_shared_ts, last_signal_ts
+
+        # 追踪函数调用频率（诊断用）
+        if not hasattr(_apply_shared_ws_snapshot, "_total_calls"):
+            _apply_shared_ws_snapshot._total_calls = 0
+            _apply_shared_ws_snapshot._last_call_log = 0
+        _apply_shared_ws_snapshot._total_calls += 1
+
+        # 每100次调用打印一次
+        if _apply_shared_ws_snapshot._total_calls % 100 == 1:
+            print(f"[WS][SHARED][TRACE] 函数调用次数: {_apply_shared_ws_snapshot._total_calls}")
+
         snapshot = _load_shared_ws_snapshot()
 
         # 首次读取失败的警告（只打印一次）
@@ -2717,6 +2728,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             # 正常的新数据（seq递增）
             is_new_data = True
             should_feed_strategy = True
+            # 打印seq增长（每次都打印，便于诊断）
+            seq_delta = seq - _apply_shared_ws_snapshot._last_seq
+            if seq_delta > 1 or _apply_shared_ws_snapshot._last_seq == 0:
+                print(f"[WS][SHARED] ✓ 检测到seq增长: {_apply_shared_ws_snapshot._last_seq} → {seq} (+{seq_delta})")
         elif seq < _apply_shared_ws_snapshot._last_seq:
             # seq变小，说明聚合器重启，重置seq
             print(f"[WS][SHARED] ⚠ 检测到seq重置 ({_apply_shared_ws_snapshot._last_seq} → {seq})，接受新数据")
@@ -2753,6 +2768,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             last_px = float(snapshot.get("price") or 0.0)
             latest[token_id] = {"price": last_px, "best_bid": bid, "best_ask": ask, "ts": ts}
             _apply_shared_ws_snapshot._skip_count += 1
+
+            # 调试日志：每100次跳过打印一次
+            if not hasattr(_apply_shared_ws_snapshot, "_skip_log_count"):
+                _apply_shared_ws_snapshot._skip_log_count = 0
+            _apply_shared_ws_snapshot._skip_log_count += 1
+            if _apply_shared_ws_snapshot._skip_log_count % 100 == 1:
+                print(f"[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数={_apply_shared_ws_snapshot._skip_count}): {skip_reason}")
+                print(f"[WS][SHARED][SKIP] 当前状态: seq={seq}, last_seq={_apply_shared_ws_snapshot._last_seq}, bid={bid}, ask={ask}")
             return
 
         # 更新去重状态（只在真正有新数据时更新）
@@ -3608,6 +3631,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print("[QUEUE] 释放队列：长时间无行情且无持仓，已退出。")
             stop_event.set()
 
+    # 主循环诊断变量（用于追踪循环是否正常执行）
+    loop_iteration_count = 0
+    last_loop_diagnostic_log = time.time()
+
+    print(f"[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws={use_shared_ws})")
+
     try:
         while not stop_event.is_set():
             now = time.time()
@@ -3617,6 +3646,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     break
             now = time.time()
             loop_started = now
+            loop_iteration_count += 1
+
+            # 每60秒打印一次主循环运行状态
+            if now - last_loop_diagnostic_log >= 60:
+                print(f"[MAIN_LOOP] ✓ 主循环运行中 (iterations={loop_iteration_count}, use_shared_ws={use_shared_ws})")
+                last_loop_diagnostic_log = now
+
             try:
                 if use_shared_ws:
                     _apply_shared_ws_snapshot()
