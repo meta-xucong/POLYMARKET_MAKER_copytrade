@@ -3740,9 +3740,19 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     print(f"[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws={use_shared_ws})")
     sys.stdout.flush()
 
+    # 诊断标志：追踪第一次循环
+    first_iteration_logged = False
+
     try:
         while not stop_event.is_set():
             now = time.time()
+
+            # 诊断日志：第一次循环迭代
+            if not first_iteration_logged:
+                print(f"[MAIN_LOOP][TRACE] 第一次循环迭代开始 (now={now:.2f})")
+                sys.stdout.flush()
+                first_iteration_logged = True
+
             if now < next_loop_after:
                 wait = next_loop_after - now
                 if wait > 0 and stop_event.wait(wait):
@@ -3754,11 +3764,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             # 每60秒打印一次主循环运行状态
             if now - last_loop_diagnostic_log >= 60:
                 print(f"[MAIN_LOOP] ✓ 主循环运行中 (iterations={loop_iteration_count}, use_shared_ws={use_shared_ws})")
+                sys.stdout.flush()
                 last_loop_diagnostic_log = now
 
             try:
                 if use_shared_ws:
                     _apply_shared_ws_snapshot()
+                    # 诊断：每100次迭代flush一次
+                    if loop_iteration_count % 100 == 1:
+                        sys.stdout.flush()
                 if _exit_signal_active():
                     _force_exit("sell signal file detected")
                     break

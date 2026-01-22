@@ -1216,8 +1216,10 @@ class AutoRunManager:
                 time.sleep(delay)
 
         # 构建命令行参数（不再使用环境变量）
+        # -u 参数：unbuffered模式，确保日志立即写入文件而不是缓冲
         cmd = [
             sys.executable,
+            "-u",  # ✅ P0修复：unbuffered模式，避免日志缓冲导致看起来"卡住"
             str(MAKER_ROOT / "Volatility_arbitrage_run.py"),
             str(cfg_path),
         ]
@@ -1313,8 +1315,10 @@ class AutoRunManager:
             return
 
         # 构建命令行参数（不再使用环境变量）
+        # -u 参数：unbuffered模式，确保日志立即写入文件而不是缓冲
         cmd = [
             sys.executable,
+            "-u",  # ✅ P0修复：unbuffered模式，避免日志缓冲导致看起来"卡住"
             str(MAKER_ROOT / "Volatility_arbitrage_run.py"),
             str(cfg_path),
         ]
