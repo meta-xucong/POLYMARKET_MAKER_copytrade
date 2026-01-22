@@ -705,6 +705,28 @@ class AutoRunManager:
             token_id = str(pc.get("asset_id") or "")
             if not token_id:
                 continue
+
+            # ✅ P0修复：只缓存订阅列表中的token
+            # Polymarket的market订阅会返回整个市场（YES+NO），需要过滤
+            if token_id not in self._ws_token_ids:
+                # 静默跳过未订阅的token（可能是配对token）
+                if not hasattr(self, '_ws_unsubscribed_tokens'):
+                    self._ws_unsubscribed_tokens = set()
+                    self._ws_unsubscribed_log_ts = 0.0
+
+                # 只在第一次遇到时记录
+                if token_id not in self._ws_unsubscribed_tokens:
+                    self._ws_unsubscribed_tokens.add(token_id)
+                    # 每5分钟打印一次未订阅token列表（避免刷屏）
+                    now = time.time()
+                    if now - self._ws_unsubscribed_log_ts >= 300:
+                        print(f"[WS][FILTER] 过滤未订阅的token（可能是配对token）: {len(self._ws_unsubscribed_tokens)} 个")
+                        if len(self._ws_unsubscribed_tokens) <= 5:
+                            for utid in self._ws_unsubscribed_tokens:
+                                print(f"  - {utid}")
+                        self._ws_unsubscribed_log_ts = now
+                continue
+
             bid = _coerce_float(pc.get("best_bid")) or 0.0
             ask = _coerce_float(pc.get("best_ask")) or 0.0
 
