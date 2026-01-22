@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 import sys
+import os  # ✅ 修复：必须在使用os.fdopen之前import os
 
 # ✅ P0修复：设置行缓冲输出，确保日志立即写入文件
 # 问题：默认的全缓冲模式导致日志滞留在缓冲区，造成"卡死"假象
@@ -22,8 +23,6 @@ elif hasattr(sys.stdout, 'buffer'):
     # Python 3.7+ 兼容方案
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
-
-import os
 import time
 import threading
 import re
@@ -2627,9 +2626,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             _apply_shared_ws_snapshot._last_call_log = 0
         _apply_shared_ws_snapshot._total_calls += 1
 
-        # 每100次调用打印一次
+        # 每100次调用打印一次（约50秒）
         if _apply_shared_ws_snapshot._total_calls % 100 == 1:
             print(f"[WS][SHARED][TRACE] 函数调用次数: {_apply_shared_ws_snapshot._total_calls}")
+            sys.stdout.flush()
 
         snapshot = _load_shared_ws_snapshot()
 
@@ -2637,9 +2637,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         if not snapshot:
             if not hasattr(_apply_shared_ws_snapshot, "_warned_missing"):
                 if not os.path.exists(shared_ws_cache_path):
-                    print(f"[WARN] 共享WS缓存文件不存在: {shared_ws_cache_path}")
+                    print(f"[WARN] ⚠ 共享WS缓存文件不存在: {shared_ws_cache_path}")
                 else:
-                    print(f"[WARN] 共享WS缓存中未找到token {token_id}，可能聚合器未订阅此token")
+                    print(f"[WARN] ⚠ 共享WS缓存中未找到token {token_id}，可能聚合器未订阅此token")
+                print(f"[WARN] ⚠ 策略将无法获取价格数据，不会生成交易信号！")
+                sys.stdout.flush()  # 立即输出首次警告
                 _apply_shared_ws_snapshot._warned_missing = True
                 _apply_shared_ws_snapshot._first_missing_at = time.time()
                 _apply_shared_ws_snapshot._last_missing_log = time.time()
@@ -2650,9 +2652,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
             # 周期性打印警告（每60秒一次）以便观察问题
             if time.time() - _apply_shared_ws_snapshot._last_missing_log >= 60:
-                print(f"[WARN][PERSISTENT] 缓存中持续 {elapsed:.0f}秒 无token数据 (尝试次数={_apply_shared_ws_snapshot._missing_count})")
+                print(f"[WARN][PERSISTENT] ⚠ 缓存中持续 {elapsed:.0f}秒 无token数据 (尝试次数={_apply_shared_ws_snapshot._missing_count})")
+                print(f"[WARN][PERSISTENT] ⚠ 策略无法接收价格更新，不会生成交易信号！")
                 print(f"[WARN][PERSISTENT] token_id={token_id}")
                 print(f"[WARN][PERSISTENT] cache_path={shared_ws_cache_path}")
+                sys.stdout.flush()  # 立即输出警告
 
                 # 尝试读取缓存诊断
                 try:
@@ -2677,24 +2681,33 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 _apply_shared_ws_snapshot._last_missing_log = time.time()
 
-            # ✅ 增加：如果长时间无数据，主动退出避免卡死
-            if elapsed > 600:  # 10分钟超时
-                print(f"[ERROR] 共享WS缓存中持续10分钟无此token数据，可能聚合器未订阅")
+            # ✅ P0修复：缩短超时到3分钟，避免长时间占用队列位置
+            # 原因：如果聚合器未订阅此token，10分钟太长会浪费资源
+            if elapsed > 180:  # 3分钟超时（从600秒缩短）
+                print(f"[ERROR] 共享WS缓存中持续3分钟无此token数据，聚合器可能未订阅")
+                print(f"[ERROR] ⚠ 策略无法获取价格数据，无法生成交易信号！")
                 print(f"[EXIT] 释放队列：token {token_id} 无法从聚合器获取数据")
+                print(f"[HINT] 请检查：1) 聚合器是否运行 2) 是否订阅了此token")
+                sys.stdout.flush()
                 _log_error("AGGREGATOR_NO_DATA", {
                     "token_id": token_id,
-                    "message": "聚合器缓存中持续无此token数据"
+                    "message": "聚合器缓存中持续无此token数据",
+                    "timeout_seconds": 180
                 })
                 _record_exit_token(token_id, "AGGREGATOR_NO_DATA", {
-                    "duration_seconds": elapsed
+                    "duration_seconds": elapsed,
+                    "timeout_seconds": 180
                 })
                 strategy.stop("aggregator no data")
                 stop_event.set()
-            return
+            return  # ← 关键：没有数据时直接return，不调用strategy.on_tick()！
 
         # 重置警告标志
         if hasattr(_apply_shared_ws_snapshot, "_warned_missing"):
-            print(f"[INFO] 共享WS缓存文件已就绪")
+            elapsed = time.time() - _apply_shared_ws_snapshot._first_missing_at
+            print(f"[INFO] ✓ 共享WS缓存文件已就绪（等待了 {elapsed:.1f}秒）")
+            print(f"[INFO] ✓ 策略现在可以接收价格数据并生成交易信号")
+            sys.stdout.flush()
             delattr(_apply_shared_ws_snapshot, "_warned_missing")
 
         if _is_market_closed(snapshot):
@@ -3894,13 +3907,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     awaiting_s = awaiting.value if hasattr(awaiting, "value") else awaiting
                     entry_price = st.get("entry_price")
 
-                    # ✅ 增加：检测latest数据是否长时间未更新（可能卡在获取数据）
+                    # ✅ P0修复：明确显示无数据状态，避免用户困惑
                     if not snap:
-                        print(f"[WARN] latest中无token {token_id} 数据，可能聚合器未提供更新")
+                        print(f"[WARN] ⚠⚠⚠ latest中无token {token_id} 数据，策略未接收价格更新！")
+                        print(f"[WARN] 原因：共享WebSocket缓存中没有此token数据")
+                        print(f"[WARN] 结果：不会生成交易信号，不会下单")
                         sys.stdout.flush()
 
+                    # 如果bid/ask/price都是0，说明没有数据
+                    no_data_marker = " [⚠无数据⚠]" if (bid == 0.0 and ask == 0.0 and last_px == 0.0) else ""
                     print(
-                        f"[PX] bid={bid:.4f} ask={ask:.4f} mid={mid_px:.4f} last={last_px:.4f} | "
+                        f"[PX] bid={bid:.4f} ask={ask:.4f} mid={mid_px:.4f} last={last_px:.4f}{no_data_marker} | "
                         f"state={st.get('state')} awaiting={awaiting_s} entry={entry_price}"
                     )
                     sys.stdout.flush()  # 立即刷新心跳日志
