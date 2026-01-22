@@ -11,6 +11,18 @@
 """
 from __future__ import annotations
 import sys
+
+# ✅ P0修复：设置行缓冲输出，确保日志立即写入文件
+# 问题：默认的全缓冲模式导致日志滞留在缓冲区，造成"卡死"假象
+# 解决：强制行缓冲，每条print立即flush到日志文件
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+elif hasattr(sys.stdout, 'buffer'):
+    # Python 3.7+ 兼容方案
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
+    sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
+
 import os
 import time
 import threading
@@ -3711,6 +3723,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     last_loop_diagnostic_log = time.time()
 
     print(f"[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws={use_shared_ws})")
+    sys.stdout.flush()  # 立即刷新确保日志输出
 
     try:
         while not stop_event.is_set():
@@ -3726,6 +3739,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             # 每60秒打印一次主循环运行状态
             if now - last_loop_diagnostic_log >= 60:
                 print(f"[MAIN_LOOP] ✓ 主循环运行中 (iterations={loop_iteration_count}, use_shared_ws={use_shared_ws})")
+                sys.stdout.flush()
                 last_loop_diagnostic_log = now
 
             try:
@@ -3867,6 +3881,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     loop_heartbeat_msg = f"[HEARTBEAT] 主循环运行中... (use_shared_ws={use_shared_ws})"
                     if last_log is None:
                         print(loop_heartbeat_msg + " (首次心跳)")
+                        sys.stdout.flush()  # 立即刷新首次心跳日志
 
                 if last_log is None or now - last_log >= 30.0:  # 从60秒改为30秒，更频繁的心跳日志
                     snap = latest.get(token_id) or {}
@@ -3882,11 +3897,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     # ✅ 增加：检测latest数据是否长时间未更新（可能卡在获取数据）
                     if not snap:
                         print(f"[WARN] latest中无token {token_id} 数据，可能聚合器未提供更新")
+                        sys.stdout.flush()
 
                     print(
                         f"[PX] bid={bid:.4f} ask={ask:.4f} mid={mid_px:.4f} last={last_px:.4f} | "
                         f"state={st.get('state')} awaiting={awaiting_s} entry={entry_price}"
                     )
+                    sys.stdout.flush()  # 立即刷新心跳日志
 
                     extra_lines: List[str] = []
 
@@ -3930,6 +3947,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         print(line)
                     last_log = now
 
+                # ✅ P0修复：action处理必须在每次循环中执行，不能在心跳日志条件块内
+                # 原BUG：action_queue.get()在条件块内导致只有每30秒才处理一次交易信号
+                # 修复：将action处理移到条件块外，确保每次循环（~0.5秒）都检查队列
                 try:
                     action = action_queue.get(timeout=0.5)
                 except Empty:
@@ -4344,6 +4364,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print("[CMD] 捕获到 Ctrl+C，准备退出…")
         strategy.stop("keyboard interrupt")
         stop_event.set()
+
+    except Exception as main_loop_exc:
+        # ✅ P0修复：捕获主循环中的所有异常，确保能诊断问题
+        print(f"[ERROR] 主循环异常退出: {type(main_loop_exc).__name__}: {main_loop_exc}")
+        print(f"[ERROR] 异常堆栈: {traceback.format_exc()}")
+        sys.stdout.flush()
+        strategy.stop(f"main loop exception: {type(main_loop_exc).__name__}")
+        stop_event.set()
+        # 记录异常到日志文件
+        _log_error("MAIN_LOOP_EXCEPTION", {
+            "exception_type": type(main_loop_exc).__name__,
+            "exception_message": str(main_loop_exc),
+            "traceback": traceback.format_exc(),
+            "token_id": token_id,
+            "use_shared_ws": use_shared_ws
+        })
 
     finally:
         stop_event.set()
