@@ -2856,6 +2856,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             _apply_shared_ws_snapshot._last_debug_log = now
             _apply_shared_ws_snapshot._update_count = 0  # 重置计数器
 
+        # 诊断日志：函数即将返回（首次打印）
+        if not hasattr(_apply_shared_ws_snapshot, "_return_logged"):
+            print(f"[WS][SHARED][TRACE] ✓ 函数执行完成，准备返回 (latest已设置: {bool(latest.get(token_id))})")
+            _apply_shared_ws_snapshot._return_logged = True
+
     def _on_ws_state(state: str, info: Dict[str, Any]):
         ts_now = time.time()
         with ws_state_lock:
@@ -2927,7 +2932,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     wait_timeout = 600.0  # 最长等待600秒（10分钟），避免API响应慢导致的误伤
     last_progress_log = start_wait
     progress_log_interval = 30.0  # 等待进度日志打印间隔（秒）
+    wait_loop_iteration = 0  # 诊断计数器
     while not latest.get(token_id) and not stop_event.is_set():
+        wait_loop_iteration += 1
         now_ts = time.time()
         elapsed_wait = now_ts - start_wait
 
@@ -3052,11 +3059,25 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             last_progress_log = now_ts
         if use_shared_ws:
             _apply_shared_ws_snapshot()
+            # 诊断日志：检查函数调用后的状态
+            if not hasattr(_apply_shared_ws_snapshot, "_post_call_log_count"):
+                _apply_shared_ws_snapshot._post_call_log_count = 0
+            _apply_shared_ws_snapshot._post_call_log_count += 1
+            if _apply_shared_ws_snapshot._post_call_log_count <= 3:  # 只打印前3次
+                print(f"[WAIT][TRACE] _apply_shared_ws_snapshot()返回，latest已设置: {bool(latest.get(token_id))}, stop_event: {stop_event.is_set()}")
         time.sleep(0.2)
+        # 诊断日志：检查循环状态
+        if wait_loop_iteration <= 5:  # 只打印前5次迭代
+            print(f"[WAIT][TRACE] Loop iteration {wait_loop_iteration}, latest: {bool(latest.get(token_id))}, stop: {stop_event.is_set()}")
+
+    # 诊断日志：waiting loop结束
+    print(f"[WAIT][END] ✓ Waiting loop结束，latest已设置: {bool(latest.get(token_id))}")
 
     if stop_event.is_set():
         print("[EXIT] 已终止。")
         return
+
+    print("[WAIT][END] ✓ stop_event未设置，继续初始化...")
 
     def _input_listener():
         while not stop_event.is_set():
