@@ -3079,6 +3079,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     print("[WAIT][END] ✓ stop_event未设置，继续初始化...")
 
+    print("[INIT][TRACE] 1. 准备启动input_listener线程...")
+
     def _input_listener():
         while not stop_event.is_set():
             try:
@@ -3092,6 +3094,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 break
 
     threading.Thread(target=_input_listener, daemon=True).start()
+    print("[INIT][TRACE] 2. input_listener线程已启动")
 
     def _fmt_price(val: Optional[Any]) -> str:
         try:
@@ -3213,9 +3216,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 continue
         return False
 
+    print("[INIT][TRACE] 3. 准备初始化变量和策略状态...")
+
     position_size: Optional[float] = None
     last_order_size: Optional[float] = None
     status_snapshot = strategy.status()
+    print("[INIT][TRACE] 4. 策略状态已获取")
     initial_pos = _extract_position_size(status_snapshot)
     if initial_pos > 0:
         position_size = initial_pos
@@ -3427,11 +3433,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         return
                     time.sleep(0.2)
 
+    print(f"[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts={sell_only_start_ts}, market_deadline_ts={market_deadline_ts})")
+
     if sell_only_start_ts and time.time() >= sell_only_start_ts:
+        print("[INIT][TRACE] 6. 调用_activate_sell_only()...")
         _activate_sell_only("countdown window")
 
     if market_deadline_ts:
+        print("[INIT][TRACE] 7. 启动countdown_monitor线程...")
         threading.Thread(target=_countdown_monitor, daemon=True).start()
+
+    print("[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...")
 
     def _execute_sell(
         order_qty: Optional[float],
