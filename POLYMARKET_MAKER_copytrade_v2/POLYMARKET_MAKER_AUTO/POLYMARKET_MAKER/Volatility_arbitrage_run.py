@@ -2584,8 +2584,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if snapshot is None:
                 if not hasattr(_load_shared_ws_snapshot, "_warned_missing_token"):
                     print(f"[WS][SHARED] ✗ 缓存中未找到 token {token_id} 的数据")
+                    print(f"[WS][SHARED] 查询key: '{str(token_id)}' (类型={type(str(token_id)).__name__}, 长度={len(str(token_id))})")
                     print(f"[WS][SHARED] 缓存中的 tokens: {list(tokens.keys())[:5]}...")
                     print(f"[WS][SHARED] 缓存总token数: {len(tokens)}")
+
+                    # 调试：显示缓存key的格式
+                    if tokens:
+                        first_key = list(tokens.keys())[0]
+                        print(f"[WS][SHARED] 缓存key示例: '{first_key}' (类型={type(first_key).__name__}, 长度={len(first_key)})")
+
                     _load_shared_ws_snapshot._warned_missing_token = True
                     _load_shared_ws_snapshot._first_warned_at = time.time()
                 elif time.time() - getattr(_load_shared_ws_snapshot, "_first_warned_at", 0) > 30:
@@ -2614,7 +2621,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
         snapshot = _load_shared_ws_snapshot()
 
-        # 首次读取失败的警告（只打印一次）
+        # 首次读取失败的警告（首次打印，之后周期性打印）
         if not snapshot:
             if not hasattr(_apply_shared_ws_snapshot, "_warned_missing"):
                 if not os.path.exists(shared_ws_cache_path):
@@ -2623,8 +2630,43 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     print(f"[WARN] 共享WS缓存中未找到token {token_id}，可能聚合器未订阅此token")
                 _apply_shared_ws_snapshot._warned_missing = True
                 _apply_shared_ws_snapshot._first_missing_at = time.time()
+                _apply_shared_ws_snapshot._last_missing_log = time.time()
+                _apply_shared_ws_snapshot._missing_count = 0
+
+            _apply_shared_ws_snapshot._missing_count += 1
+            elapsed = time.time() - _apply_shared_ws_snapshot._first_missing_at
+
+            # 周期性打印警告（每60秒一次）以便观察问题
+            if time.time() - _apply_shared_ws_snapshot._last_missing_log >= 60:
+                print(f"[WARN][PERSISTENT] 缓存中持续 {elapsed:.0f}秒 无token数据 (尝试次数={_apply_shared_ws_snapshot._missing_count})")
+                print(f"[WARN][PERSISTENT] token_id={token_id}")
+                print(f"[WARN][PERSISTENT] cache_path={shared_ws_cache_path}")
+
+                # 尝试读取缓存诊断
+                try:
+                    if os.path.exists(shared_ws_cache_path):
+                        with open(shared_ws_cache_path, "r", encoding="utf-8") as f:
+                            payload = json.load(f)
+                        tokens = payload.get("tokens", {})
+                        cache_token_ids = list(tokens.keys())[:10]
+                        print(f"[WARN][PERSISTENT] 缓存中实际有 {len(tokens)} 个token")
+                        print(f"[WARN][PERSISTENT] 缓存中的token_id示例: {cache_token_ids}")
+                        # 检查格式匹配
+                        if str(token_id) not in tokens:
+                            print(f"[WARN][PERSISTENT] ✗ str(token_id)='{str(token_id)}' 不在缓存keys中")
+                            # 尝试查找相似的key
+                            similar = [k for k in cache_token_ids if token_id in k or k in str(token_id)]
+                            if similar:
+                                print(f"[WARN][PERSISTENT] 💡 发现相似key: {similar}")
+                    else:
+                        print(f"[WARN][PERSISTENT] 缓存文件不存在")
+                except Exception as diag_e:
+                    print(f"[WARN][PERSISTENT] 诊断失败: {diag_e}")
+
+                _apply_shared_ws_snapshot._last_missing_log = time.time()
+
             # ✅ 增加：如果长时间无数据，主动退出避免卡死
-            elif time.time() - _apply_shared_ws_snapshot._first_missing_at > 600:  # 10分钟超时
+            if elapsed > 600:  # 10分钟超时
                 print(f"[ERROR] 共享WS缓存中持续10分钟无此token数据，可能聚合器未订阅")
                 print(f"[EXIT] 释放队列：token {token_id} 无法从聚合器获取数据")
                 _log_error("AGGREGATOR_NO_DATA", {
@@ -2632,7 +2674,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     "message": "聚合器缓存中持续无此token数据"
                 })
                 _record_exit_token(token_id, "AGGREGATOR_NO_DATA", {
-                    "duration_seconds": time.time() - _apply_shared_ws_snapshot._first_missing_at
+                    "duration_seconds": elapsed
                 })
                 strategy.stop("aggregator no data")
                 stop_event.set()
@@ -3865,6 +3907,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 if action is None:
                     continue
+
+                # 诊断日志：记录收到的action
+                print(f"[ACTION] 🔔 收到交易信号: type={action.action}, target_price={getattr(action, 'target_price', 'N/A')}")
 
                 snap = latest.get(token_id) or {}
                 bid = float(snap.get("best_bid") or 0.0)
