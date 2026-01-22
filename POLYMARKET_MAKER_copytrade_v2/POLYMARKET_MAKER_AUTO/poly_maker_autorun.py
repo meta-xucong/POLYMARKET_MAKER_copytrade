@@ -750,19 +750,39 @@ class AutoRunManager:
                 self._cache_update_count += 1
                 now = time.time()
                 if now - self._cache_update_log_ts >= 60:
-                    print(f"[WS][AGGREGATOR] 缓存更新统计: {self._cache_update_count} 次/分钟, "
+                    # ✅ 添加更详细的统计信息
+                    force_updates_per_min = (getattr(self, '_force_update_count', 0) / 60.0) * 60
+                    print(f"[WS][AGGREGATOR] 缓存更新统计: {self._cache_update_count} 次/分钟 (WebSocket事件), "
+                          f"强制更新: {getattr(self, '_force_update_count', 0)} 次/分钟, "
                           f"tokens={len(self._ws_cache)}, last_seq={seq}")
                     self._cache_update_log_ts = now
                     self._cache_update_count = 0
+                    self._force_update_count = 0
 
     def _flush_ws_cache_if_needed(self) -> None:
         now = time.time()
-        # ✅ 从1.0秒改为0.1秒：提高缓存写入频率，让子进程能更快看到seq更新
-        if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 0.1:
+        # ✅ 关键修复：强制每0.1秒写入一次缓存，同时更新每个token的updated_at
+        # 这样即使WebSocket事件很少，子进程也能检测到数据变化并周期性更新策略
+        force_update = (now - self._ws_cache_last_flush >= 0.1)
+
+        if not force_update and not self._ws_cache_dirty:
             return
+
         with self._ws_cache_lock:
-            if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 0.1:
+            # 再次检查（避免竞态）
+            if not force_update and not self._ws_cache_dirty:
                 return
+
+            # ✅ 强制更新所有token的updated_at（确保子进程能检测到变化）
+            if force_update and not self._ws_cache_dirty:
+                current_time = now
+                for token_id in self._ws_cache:
+                    self._ws_cache[token_id]["updated_at"] = current_time
+                # 统计强制更新次数
+                if not hasattr(self, '_force_update_count'):
+                    self._force_update_count = 0
+                self._force_update_count += 1
+
             data = {
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "tokens": self._ws_cache,

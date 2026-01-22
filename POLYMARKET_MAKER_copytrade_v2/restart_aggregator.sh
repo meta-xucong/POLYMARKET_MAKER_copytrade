@@ -48,9 +48,11 @@ echo ""
 echo "【2】验证代码版本..."
 VERSION_CHECK=0
 
-if grep -q 'VERSION.*支持book/tick事件处理' poly_maker_autorun.py; then
-    echo "✅ 代码包含版本标识（聚合器）"
+if grep -q '强制每0.1秒写入一次缓存' poly_maker_autorun.py; then
+    echo "✅ 代码包含强制缓存更新修复 (2026-01-22)"
     VERSION_CHECK=$((VERSION_CHECK + 1))
+elif grep -q 'VERSION.*支持book/tick事件处理' poly_maker_autorun.py; then
+    echo "⚠️  代码版本较旧（缺少强制缓存更新修复）"
 else
     echo "❌ 代码不包含版本标识，请确认代码已更新"
 fi
