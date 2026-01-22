@@ -500,9 +500,21 @@ class AutoRunManager:
         removed = old_ids - new_ids
 
         if added:
-            print(f"[WS][AGGREGATOR] ✓ 新增订阅 {len(added)} 个token: {list(added)[:3]}{'...' if len(added) > 3 else ''}")
+            print(f"[WS][AGGREGATOR] ✓ 新增订阅 {len(added)} 个token:")
+            for tid in list(added)[:5]:
+                print(f"    {tid[:8]}...{tid[-8:]}")
         if removed:
-            print(f"[WS][AGGREGATOR] ✗ 移除订阅 {len(removed)} 个token: {list(removed)[:3]}{'...' if len(removed) > 3 else ''}")
+            print(f"[WS][AGGREGATOR] ✗ 移除订阅 {len(removed)} 个token:")
+            for tid in list(removed)[:5]:
+                print(f"    {tid[:8]}...{tid[-8:]}")
+
+        # 调试：打印完整订阅列表（启动时）
+        if not hasattr(self, '_subscription_list_printed'):
+            self._subscription_list_printed = True
+            print(f"[WS][AGGREGATOR][DEBUG] 完整订阅列表 ({len(token_ids)} 个):")
+            for idx, tid in enumerate(token_ids, 1):
+                print(f"    [{idx}] {tid[:8]}...{tid[-8:]}")
+            print()
 
         self._stop_ws_subscription()
         self._ws_token_ids = token_ids
@@ -713,17 +725,29 @@ class AutoRunManager:
                 if not hasattr(self, '_ws_unsubscribed_tokens'):
                     self._ws_unsubscribed_tokens = set()
                     self._ws_unsubscribed_log_ts = 0.0
+                    self._ws_filter_detail_logged = False
 
                 # 只在第一次遇到时记录
                 if token_id not in self._ws_unsubscribed_tokens:
                     self._ws_unsubscribed_tokens.add(token_id)
-                    # 每5分钟打印一次未订阅token列表（避免刷屏）
+
+                    # 第一次过滤时，打印详细信息（调试用）
+                    if not self._ws_filter_detail_logged:
+                        print(f"[WS][FILTER][DEBUG] 发现未订阅的token: {token_id[:8]}...{token_id[-8:]}")
+                        print(f"[WS][FILTER][DEBUG] 当前订阅列表 ({len(self._ws_token_ids)} 个):")
+                        for sub_tid in list(self._ws_token_ids)[:5]:
+                            print(f"    {sub_tid[:8]}...{sub_tid[-8:]}")
+                        if len(self._ws_token_ids) > 5:
+                            print(f"    ... (还有 {len(self._ws_token_ids) - 5} 个)")
+                        self._ws_filter_detail_logged = True
+
+                    # 每5分钟打印一次汇总（避免刷屏）
                     now = time.time()
                     if now - self._ws_unsubscribed_log_ts >= 300:
                         print(f"[WS][FILTER] 过滤未订阅的token（可能是配对token）: {len(self._ws_unsubscribed_tokens)} 个")
                         if len(self._ws_unsubscribed_tokens) <= 5:
                             for utid in self._ws_unsubscribed_tokens:
-                                print(f"  - {utid}")
+                                print(f"  - {utid[:8]}...{utid[-8:]}")
                         self._ws_unsubscribed_log_ts = now
                 continue
 
@@ -825,6 +849,27 @@ class AutoRunManager:
         - 市场状态检测：自动清理已关闭市场
         - 日志优化：减少刷屏频率
         """
+        # 周期性打印缓存状态（每5分钟）
+        if not hasattr(self, '_last_cache_status_log'):
+            self._last_cache_status_log = 0.0
+
+        now = time.time()
+        if now - self._last_cache_status_log >= 300:  # 5分钟
+            with self._ws_cache_lock:
+                if self._ws_cache:
+                    print(f"\n[WS][CACHE_STATUS] 缓存中的token状态 ({len(self._ws_cache)} 个):")
+                    for idx, (tid, data) in enumerate(list(self._ws_cache.items())[:10], 1):
+                        seq = data.get("seq", 0)
+                        bid = data.get("best_bid", 0)
+                        ask = data.get("best_ask", 0)
+                        updated = data.get("updated_at", 0)
+                        age = now - updated if updated > 0 else 0
+                        tid_short = f"{tid[:8]}...{tid[-8:]}"
+                        print(f"  [{idx}] {tid_short}: seq={seq}, bid={bid}, ask={ask}, age={age:.0f}s")
+                    if len(self._ws_cache) > 10:
+                        print(f"  ... (还有 {len(self._ws_cache) - 10} 个token)")
+                    print()
+            self._last_cache_status_log = now
         # 检查 WS 线程是否运行
         if self._ws_token_ids and (not self._ws_thread or not self._ws_thread.is_alive()):
             print("[WARN] WS 聚合器线程已停止，尝试重启...")
