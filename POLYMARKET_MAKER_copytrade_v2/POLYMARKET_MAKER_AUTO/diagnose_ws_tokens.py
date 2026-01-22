@@ -44,13 +44,16 @@ def diagnose():
 
     # 显示所有token的详细信息
     for idx, (token_id, data) in enumerate(tokens.items(), 1):
-        print(f"[Token {idx}] ID: {token_id}")
-        print(f"  - seq: {data.get('seq', 'N/A')}")
-        print(f"  - price: {data.get('price', 'N/A')}")
-        print(f"  - best_bid: {data.get('best_bid', 'N/A')}")
-        print(f"  - best_ask: {data.get('best_ask', 'N/A')}")
-        print(f"  - updated_at: {data.get('updated_at', 'N/A')}")
-        print(f"  - event_type: {data.get('event_type', 'N/A')}")
+        print(f"[Token {idx}]")
+        print(f"  ID: {token_id}")
+        print(f"  ID类型: {type(token_id).__name__}")
+        print(f"  ID长度: {len(token_id)} 字符")
+        print(f"  seq: {data.get('seq', 'N/A')}")
+        print(f"  price: {data.get('price', 'N/A')}")
+        print(f"  best_bid: {data.get('best_bid', 'N/A')}")
+        print(f"  best_ask: {data.get('best_ask', 'N/A')}")
+        print(f"  updated_at: {data.get('updated_at', 'N/A')}")
+        print(f"  event_type: {data.get('event_type', 'N/A')}")
         print()
 
     # 检查是否有相同价格的token（可能是YES/NO配对）
@@ -92,6 +95,13 @@ def diagnose():
                         expected_tokens.add(str(token_id))
 
             print(f"📝 期望订阅的token (从copytrade配置): {len(expected_tokens)} 个")
+
+            # 打印期望token的前3个用于对比
+            for idx, tid in enumerate(list(expected_tokens)[:3], 1):
+                print(f"  期望[{idx}]: {tid} (类型: {type(tid).__name__}, 长度: {len(tid)})")
+
+            print()
+
             cached_tokens = set(tokens.keys())
 
             # 检查匹配情况
@@ -101,20 +111,30 @@ def diagnose():
 
             print(f"  ✅ 匹配: {len(matched)} 个")
             print(f"  ❌ 缺失: {len(missing)} 个")
-            print(f"  ⚠️  额外: {len(extra)} 个 (可能是配对token)")
+            print(f"  ⚠️  额外: {len(extra)} 个 (可能是配对token或格式不匹配)")
 
             if missing:
                 print("\n❌ 缺失的token (订阅了但缓存中没有):")
-                for tid in missing:
+                for tid in list(missing)[:5]:
                     print(f"    - {tid}")
+                    # 检查是否有类似的token（可能是格式问题）
+                    for cached_tid in cached_tokens:
+                        if cached_tid.endswith(tid[-10:]) or tid.endswith(cached_tid[-10:]):
+                            print(f"      ⚠️  可能匹配: {cached_tid} (格式可能不同)")
 
             if extra:
                 print("\n⚠️  额外的token (缓存中有但未订阅):")
-                for tid in extra:
-                    print(f"    - {tid}")
-                    # 检查是否可能是YES/NO配对
+                for tid in list(extra)[:5]:
                     data = tokens[tid]
+                    print(f"    - {tid}")
                     print(f"       seq={data.get('seq')}, bid={data.get('best_bid')}, ask={data.get('best_ask')}")
+                    # 检查是否是配对token（相同价格）
+                    for exp_tid in expected_tokens:
+                        if exp_tid in tokens:
+                            exp_data = tokens[exp_tid]
+                            if (exp_data.get('best_bid') == data.get('best_bid') and
+                                exp_data.get('best_ask') == data.get('best_ask')):
+                                print(f"       ⚠️  可能是配对token，价格相同于: {exp_tid[:8]}...")
         except Exception as e:
             print(f"⚠️  无法读取copytrade配置: {e}")
 
@@ -122,6 +142,10 @@ def diagnose():
     print("=" * 80)
     print("诊断完成")
     print("=" * 80)
+    print("\n💡 提示:")
+    print("  - 如果'缺失'数量>0：聚合器可能未订阅正确的token")
+    print("  - 如果'额外'数量>0：可能是配对token（YES/NO）或token_id格式不匹配")
+    print("  - 检查token_id的类型和长度是否一致")
 
 if __name__ == "__main__":
     diagnose()
