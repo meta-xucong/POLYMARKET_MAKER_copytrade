@@ -2836,7 +2836,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             bid = float(snapshot.get("best_bid") or 0.0)
             ask = float(snapshot.get("best_ask") or 0.0)
             last_px = float(snapshot.get("price") or 0.0)
-            latest[token_id] = {"price": last_px, "best_bid": bid, "best_ask": ask, "ts": ts}
+            # ✅ P0修复：使用当前时间而非事件时间戳，避免市场横盘时快照被误判为过期
+            latest[token_id] = {"price": last_px, "best_bid": bid, "best_ask": ask, "ts": time.time()}
             _apply_shared_ws_snapshot._skip_count += 1
 
             # 调试日志：每100次跳过打印一次
@@ -2860,7 +2861,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         bid = float(snapshot.get("best_bid") or 0.0)
         ask = float(snapshot.get("best_ask") or 0.0)
         last_px = float(snapshot.get("price") or 0.0)
-        latest[token_id] = {"price": last_px, "best_bid": bid, "best_ask": ask, "ts": ts}
+        # ✅ P0修复：latest使用当前时间，避免市场横盘时快照被误判为过期
+        # strategy.on_tick仍使用事件原始时间戳ts，保持策略逻辑不变
+        latest[token_id] = {"price": last_px, "best_bid": bid, "best_ask": ask, "ts": time.time()}
         action = strategy.on_tick(best_ask=ask, best_bid=bid, ts=ts)
         if action and action.action in (ActionType.BUY, ActionType.SELL):
             action_queue.put(action)
