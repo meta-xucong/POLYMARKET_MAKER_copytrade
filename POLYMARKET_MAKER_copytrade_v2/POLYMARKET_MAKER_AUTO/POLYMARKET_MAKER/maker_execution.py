@@ -197,15 +197,22 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         ("get_ticker", {"token_id": token_id}),
     )
 
+    # P0修复：记录尝试的方法
+    attempted_methods = []
+    last_error = None
+
     for name, kwargs in method_candidates:
         fn = getattr(client, name, None)
         if not callable(fn):
             continue
+        attempted_methods.append(name)
         try:
             resp = fn(**kwargs)
-        except TypeError:
+        except TypeError as e:
+            last_error = f"{name}: TypeError - {e}"
             continue
-        except Exception:
+        except Exception as e:
+            last_error = f"{name}: {type(e).__name__} - {e}"
             continue
 
         payload = resp
@@ -217,6 +224,12 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         best = _extract_best_price(payload, side)
         if best is not None:
             return PriceSample(float(best.price), best.decimals)
+
+    # P0修复：如果所有方法都失败，打印诊断信息（限制频率）
+    if attempted_methods:
+        print(f"[FETCH][WARN] 无法通过 REST API 获取 {side} 价格，尝试了 {len(attempted_methods)} 个方法: {', '.join(attempted_methods[:3])}")
+        if last_error:
+            print(f"[FETCH][WARN] 最后一个错误: {last_error}")
     return None
 
 
@@ -433,6 +446,9 @@ def maker_buy_follow_bid(
 ) -> Dict[str, Any]:
     """Continuously maintain a maker buy order following the market bid."""
 
+    # P0修复：函数入口日志，确认函数被调用
+    print(f"[MAKER][BUY] 开始买入流程 -> target_size={target_size:.4f} poll_sec={poll_sec:.1f}s")
+
     goal_size = max(_ceil_to_dp(float(target_size), BUY_SIZE_DP), 0.0)
     api_min_qty = 0.0
     if min_order_size and min_order_size > 0:
@@ -577,7 +593,14 @@ def maker_buy_follow_bid(
         final_status = "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
         return True
 
+    # P0修复：添加循环计数器用于诊断
+    loop_count = 0
+    last_diagnostic_at = 0.0
+    diagnostic_interval = 30.0  # 每30秒打印一次诊断信息
+
     while True:
+        loop_count += 1
+
         if stop_check and stop_check():
             if active_order:
                 _cancel_order(client, active_order)
@@ -593,6 +616,24 @@ def maker_buy_follow_bid(
                 break
             bid_info = _best_bid_info(client, token_id, best_bid_fn)
             if bid_info is None:
+                # P0修复：添加诊断日志，避免静默等待
+                now = time.time()
+                if now - last_diagnostic_at >= diagnostic_interval:
+                    print(f"[MAKER][BUY][DIAG] 等待有效的 bid 数据... (循环次数={loop_count}, 剩余={remaining:.{BUY_SIZE_DP}f})")
+                    # 尝试通过 WebSocket 函数获取
+                    if best_bid_fn is not None:
+                        try:
+                            ws_bid = best_bid_fn()
+                            if ws_bid is None or ws_bid <= 0:
+                                print(f"[MAKER][BUY][DIAG] WebSocket bid 不可用 (value={ws_bid})")
+                            else:
+                                print(f"[MAKER][BUY][DIAG] WebSocket bid={ws_bid:.4f} 但被判定为无效")
+                        except Exception as diag_exc:
+                            print(f"[MAKER][BUY][DIAG] WebSocket bid 查询异常: {diag_exc}")
+                    else:
+                        print(f"[MAKER][BUY][DIAG] 未提供 best_bid_fn，依赖 REST API")
+                    print(f"[MAKER][BUY][DIAG] REST API 回退也未能获取 bid，将在 {poll_sec:.0f}s 后重试")
+                    last_diagnostic_at = now
                 sleep_fn(poll_sec)
                 continue
             bid = bid_info.price
