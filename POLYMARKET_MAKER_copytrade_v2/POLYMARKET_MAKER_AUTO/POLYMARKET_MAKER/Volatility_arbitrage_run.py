@@ -3166,13 +3166,34 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             _latest_best_bid._diag_logged = True
             print(f"[DIAG][BID] latest字典中的token数据: {snap}")
             print(f"[DIAG][BID] ORDERBOOK_STALE_AFTER_SEC = {ORDERBOOK_STALE_AFTER_SEC}")
+
+        # ✅ P0修复：如果快照过期，主动从缓存重新读取（买入/卖出流程阻塞时）
         if _snapshot_stale(snap):
             # P0诊断：显示为什么判定为过期
             ts = snap.get("ts")
             if ts:
                 age = time.time() - float(ts)
                 print(f"[DIAG][BID] 快照过期: 年龄={age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
-            return None
+                print(f"[DIAG][BID] 尝试从缓存刷新数据...")
+
+            # 从共享缓存重新读取最新数据
+            if use_shared_ws:
+                fresh_snap = _load_shared_ws_snapshot()
+                if fresh_snap:
+                    latest[token_id] = {
+                        "price": float(fresh_snap.get("price") or 0.0),
+                        "best_bid": float(fresh_snap.get("best_bid") or 0.0),
+                        "best_ask": float(fresh_snap.get("best_ask") or 0.0),
+                        "ts": time.time()
+                    }
+                    snap = latest[token_id]
+                    print(f"[DIAG][BID] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')}")
+                else:
+                    print(f"[DIAG][BID] ✗ 无法从缓存刷新数据")
+                    return None
+            else:
+                # 独立WS模式下，过期就返回None（依赖实时事件更新）
+                return None
         try:
             value = snap.get("best_bid")
             return float(value) if value is not None else None
@@ -3181,8 +3202,29 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     def _latest_best_ask() -> Optional[float]:
         snap = latest.get(token_id) or {}
+
+        # ✅ P0修复：如果快照过期，主动从缓存重新读取（买入/卖出流程阻塞时）
         if _snapshot_stale(snap):
-            return None
+            # 从共享缓存重新读取最新数据
+            if use_shared_ws:
+                fresh_snap = _load_shared_ws_snapshot()
+                if fresh_snap:
+                    latest[token_id] = {
+                        "price": float(fresh_snap.get("price") or 0.0),
+                        "best_bid": float(fresh_snap.get("best_bid") or 0.0),
+                        "best_ask": float(fresh_snap.get("best_ask") or 0.0),
+                        "ts": time.time()
+                    }
+                    snap = latest[token_id]
+                    if not hasattr(_latest_best_ask, "_refresh_logged"):
+                        _latest_best_ask._refresh_logged = True
+                        print(f"[DIAG][ASK] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')}")
+                else:
+                    return None
+            else:
+                # 独立WS模式下，过期就返回None（依赖实时事件更新）
+                return None
+
         try:
             value = snap.get("best_ask")
             return float(value) if value is not None else None
@@ -3191,8 +3233,26 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     def _latest_price() -> Optional[float]:
         snap = latest.get(token_id) or {}
+
+        # ✅ P0修复：如果快照过期，主动从缓存重新读取（买入/卖出流程阻塞时）
         if _snapshot_stale(snap):
-            return None
+            # 从共享缓存重新读取最新数据
+            if use_shared_ws:
+                fresh_snap = _load_shared_ws_snapshot()
+                if fresh_snap:
+                    latest[token_id] = {
+                        "price": float(fresh_snap.get("price") or 0.0),
+                        "best_bid": float(fresh_snap.get("best_bid") or 0.0),
+                        "best_ask": float(fresh_snap.get("best_ask") or 0.0),
+                        "ts": time.time()
+                    }
+                    snap = latest[token_id]
+                else:
+                    return None
+            else:
+                # 独立WS模式下，过期就返回None（依赖实时事件更新）
+                return None
+
         try:
             value = snap.get("price")
             return float(value) if value is not None else None
