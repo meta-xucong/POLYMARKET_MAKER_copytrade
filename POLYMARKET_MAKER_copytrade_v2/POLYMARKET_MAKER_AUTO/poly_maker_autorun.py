@@ -8,6 +8,7 @@ poly_maker_autorun
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -809,9 +810,10 @@ class AutoRunManager:
         with self._ws_cache_lock:
             if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 0.1:
                 return
+            # ✅ 使用深拷贝避免多线程并发修改导致 "dictionary changed size during iteration" 错误
             data = {
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "tokens": self._ws_cache,
+                "tokens": copy.deepcopy(self._ws_cache),
             }
             self._ws_cache_dirty = False
             self._ws_cache_last_flush = now
