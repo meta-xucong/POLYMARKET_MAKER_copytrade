@@ -12,10 +12,12 @@ class WsOrderbookCache:
         ws_watch: Callable[..., None],
         logger: Optional[Any] = None,
         stale_sec: float = 30.0,
+        max_stale_sec: float = 300.0,
     ) -> None:
         self._ws_watch = ws_watch
         self._logger = logger
         self._stale_sec = stale_sec
+        self._max_stale_sec = max_stale_sec
         self._lock = threading.Lock()
         self._latest: Dict[str, Dict[str, Any]] = {}
         self._tokens: Set[str] = set()
@@ -30,16 +32,44 @@ class WsOrderbookCache:
             self._tokens = normalized
         self._restart()
 
-    def get_best(self, token_id: str) -> Tuple[Optional[float], Optional[float]]:
+    def get_best(self, token_id: str, allow_stale: bool = False) -> Tuple[Optional[float], Optional[float]]:
         now = time.time()
         with self._lock:
             entry = self._latest.get(str(token_id))
             if not entry:
+                self._log("debug", f"[WS][GET_BEST] token={token_id[:16]}... 无快照数据")
                 return None, None
             ts = float(entry.get("ts") or 0.0)
-            if ts and self._stale_sec > 0 and now - ts > self._stale_sec:
+            if not ts:
+                self._log("debug", f"[WS][GET_BEST] token={token_id[:16]}... 快照无时间戳")
                 return None, None
-            return entry.get("best_bid"), entry.get("best_ask")
+
+            age = now - ts
+            bid = entry.get("best_bid")
+            ask = entry.get("best_ask")
+
+            # 分级判断：正常 -> stale -> 过期
+            if self._stale_sec > 0 and age > self._stale_sec:
+                # 超过正常阈值，但在最大阈值内
+                if allow_stale and self._max_stale_sec > 0 and age <= self._max_stale_sec:
+                    self._log(
+                        "debug",
+                        f"[WS][GET_BEST] token={token_id[:16]}... 使用陈旧快照: age={age:.1f}s (阈值={self._stale_sec:.1f}s, 最大={self._max_stale_sec:.1f}s), bid={bid}, ask={ask}"
+                    )
+                    return bid, ask
+                # 超过最大阈值，拒绝使用
+                self._log(
+                    "warning",
+                    f"[WS][GET_BEST] token={token_id[:16]}... 快照过期: age={age:.1f}s > 阈值={self._stale_sec:.1f}s (max={self._max_stale_sec:.1f}s), bid={bid}, ask={ask}"
+                )
+                return None, None
+
+            # 快照新鲜，正常返回
+            self._log(
+                "debug",
+                f"[WS][GET_BEST] token={token_id[:16]}... 快照新鲜: age={age:.1f}s, bid={bid}, ask={ask}"
+            )
+            return bid, ask
 
     def stop(self) -> None:
         if self._stop_event:

@@ -506,7 +506,7 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
     return None
 
 
-def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSample]:
+def _fetch_best_price(client: Any, token_id: str, side: str, logger: Optional[Any] = None) -> Optional[PriceSample]:
     method_candidates = (
         ("get_market_orderbook", {"market": token_id}),
         ("get_market_orderbook", {"token_id": token_id}),
@@ -523,15 +523,25 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         ("get_ticker", {"token_id": token_id}),
     )
 
+    attempted_methods = []
+    error_details = []
+
     for name, kwargs in method_candidates:
         fn = getattr(client, name, None)
         if not callable(fn):
+            attempted_methods.append(f"{name}[不存在]")
             continue
+
+        attempted_methods.append(name)
         try:
             resp = fn(**kwargs)
-        except TypeError:
+        except TypeError as exc:
+            error_details.append(f"{name}: TypeError({exc})")
             continue
-        except Exception:
+        except Exception as exc:
+            error_type = type(exc).__name__
+            error_msg = str(exc)[:100]  # 限制错误消息长度
+            error_details.append(f"{name}: {error_type}({error_msg})")
             continue
 
         payload = resp
@@ -542,7 +552,26 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
 
         best = _extract_best_price(payload, side)
         if best is not None:
+            if logger:
+                log_fn = getattr(logger, "debug", None)
+                if callable(log_fn):
+                    log_fn(f"[FETCH][REST] token={token_id[:16]}... side={side} 成功: method={name}, price={best.price}")
             return PriceSample(float(best.price), best.decimals)
+
+        # 方法调用成功但未能提取价格
+        error_details.append(f"{name}: 响应无法提取{side}价格")
+
+    # 所有方法都失败，记录详细日志
+    if logger:
+        log_fn = getattr(logger, "warning", None)
+        if callable(log_fn):
+            log_fn(
+                f"[FETCH][REST] token={token_id[:16]}... side={side} 失败: "
+                f"尝试了{len(attempted_methods)}个方法: {', '.join(attempted_methods)}"
+            )
+            if error_details:
+                log_fn(f"[FETCH][REST] token={token_id[:16]}... 错误详情: {'; '.join(error_details[:5])}")  # 只显示前5个错误
+
     return None
 
 
