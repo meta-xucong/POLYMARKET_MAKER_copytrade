@@ -101,7 +101,8 @@ def _init_ws_cache(logger: logging.Logger, cfg: Dict[str, Any]) -> Optional[WsOr
     if not callable(ws_watch):
         return None
     stale_sec = float(orderbook_cfg.get("ws_stale_sec", 30.0))
-    return WsOrderbookCache(ws_watch=ws_watch, logger=logger, stale_sec=stale_sec)
+    max_stale_sec = float(orderbook_cfg.get("ws_max_stale_sec", 300.0))
+    return WsOrderbookCache(ws_watch=ws_watch, logger=logger, stale_sec=stale_sec, max_stale_sec=max_stale_sec)
 
 
 def run_loop(cfg: Dict[str, Any], *, base_dir: Path, config_path: Path) -> None:

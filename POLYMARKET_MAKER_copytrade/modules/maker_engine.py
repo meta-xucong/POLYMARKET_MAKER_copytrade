@@ -539,32 +539,68 @@ class MakerEngine:
 
     def _get_best_prices(self, token_id: str) -> Tuple[Optional[float], Optional[float]]:
         ws_cache = self._ws_cache
+        ws_bid, ws_ask = None, None
+        used_stale = False
+
+        # 第1步：尝试WS缓存（正常快照）
         if ws_cache is not None:
             try:
-                ws_bid, ws_ask = ws_cache.get_best(token_id)
-            except Exception:
+                ws_bid, ws_ask = ws_cache.get_best(token_id, allow_stale=False)
+            except Exception as exc:
+                self._log("warning", f"[PRICE][WS] token={token_id[:16]}... 获取失败: {exc}")
                 ws_bid, ws_ask = None, None
+
             if ws_bid is not None and ws_ask is not None:
+                self._log("debug", f"[PRICE][WS] token={token_id[:16]}... 使用新鲜快照: bid={ws_bid}, ask={ws_ask}")
                 return ws_bid, ws_ask
+
+            # 第2步：如果新鲜快照不可用，尝试陈旧快照
+            try:
+                ws_bid, ws_ask = ws_cache.get_best(token_id, allow_stale=True)
+                if ws_bid is not None and ws_ask is not None:
+                    used_stale = True
+                    self._log("info", f"[PRICE][WS] token={token_id[:16]}... 使用陈旧快照（将尝试REST更新）: bid={ws_bid}, ask={ws_ask}")
+            except Exception as exc:
+                self._log("warning", f"[PRICE][WS] token={token_id[:16]}... 获取陈旧快照失败: {exc}")
+
+        # 第3步：检查本地缓存
         refresh_sec = float(self._orderbook_config.get("refresh_sec") or 0.0)
         now = time.time()
         cached = self._orderbook_cache.get(token_id)
         if cached and refresh_sec > 0 and now - cached[0] < refresh_sec:
+            self._log("debug", f"[PRICE][CACHE] token={token_id[:16]}... 使用本地缓存: bid={cached[1]}, ask={cached[2]}, age={now-cached[0]:.1f}s")
             return cached[1], cached[2]
 
-        bid_sample = _fetch_best_price(self._client, token_id, "bid")
-        ask_sample = _fetch_best_price(self._client, token_id, "ask")
-        bid = bid_sample.price if bid_sample is not None else None
-        ask = ask_sample.price if ask_sample is not None else None
-        if bid is None or ask is None:
-            return bid, ask
-        self._orderbook_cache[token_id] = (now, bid, ask)
-        cache_max = int(self._orderbook_config.get("cache_max_items") or 0)
-        if cache_max > 0 and len(self._orderbook_cache) > cache_max:
-            overflow = len(self._orderbook_cache) - cache_max
-            for key in list(self._orderbook_cache.keys())[:overflow]:
-                self._orderbook_cache.pop(key, None)
-        return bid, ask
+        # 第4步：调用REST API（当WS过期或使用陈旧快照时）
+        if ws_bid is None or ws_ask is None or used_stale:
+            self._log("info", f"[PRICE][REST] token={token_id[:16]}... 开始REST API查询（WS不可用或陈旧）")
+            bid_sample = _fetch_best_price(self._client, token_id, "bid", logger=self._logger)
+            ask_sample = _fetch_best_price(self._client, token_id, "ask", logger=self._logger)
+            bid = bid_sample.price if bid_sample is not None else None
+            ask = ask_sample.price if ask_sample is not None else None
+
+            # 如果REST成功，更新缓存并返回
+            if bid is not None and ask is not None:
+                self._log("info", f"[PRICE][REST] token={token_id[:16]}... REST成功: bid={bid}, ask={ask}")
+                self._orderbook_cache[token_id] = (now, bid, ask)
+                cache_max = int(self._orderbook_config.get("cache_max_items") or 0)
+                if cache_max > 0 and len(self._orderbook_cache) > cache_max:
+                    overflow = len(self._orderbook_cache) - cache_max
+                    for key in list(self._orderbook_cache.keys())[:overflow]:
+                        self._orderbook_cache.pop(key, None)
+                return bid, ask
+
+            # REST失败，如果有陈旧快照，使用它
+            if used_stale and ws_bid is not None and ws_ask is not None:
+                self._log("warning", f"[PRICE][REST] token={token_id[:16]}... REST失败，回退使用陈旧WS快照: bid={ws_bid}, ask={ws_ask}")
+                return ws_bid, ws_ask
+
+            # REST失败且无陈旧快照
+            self._log("error", f"[PRICE][REST] token={token_id[:16]}... REST失败且无可用快照")
+            return None, None
+
+        # 不应该到达这里，但为了安全返回None
+        return None, None
 
     def _risk_allows_buy(self, session: MakerSession, order_size: float, ref_price: float) -> bool:
         token_key = session.token_key or session.token_id
