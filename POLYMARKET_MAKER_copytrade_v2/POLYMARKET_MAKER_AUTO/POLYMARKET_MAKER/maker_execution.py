@@ -238,10 +238,17 @@ def _best_price_info(
     if best_fn is not None:
         try:
             val = best_fn()
-        except Exception:
+        except Exception as e:
+            # P0诊断：记录WebSocket回调异常
+            print(f"[DIAG][WS] WebSocket {side} 回调异常: {e}")
             val = None
         if val is not None and val > 0:
             return PriceSample(float(val), _infer_price_decimals(val))
+        # P0诊断：记录为什么WebSocket数据不可用
+        if val is None:
+            print(f"[DIAG][WS] WebSocket {side} 返回 None（可能原因：快照过期或数据缺失）")
+        elif val <= 0:
+            print(f"[DIAG][WS] WebSocket {side} 值无效: {val}")
     return _fetch_best_price(client, token_id, side)
 
 

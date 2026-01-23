@@ -3157,7 +3157,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     def _latest_best_bid() -> Optional[float]:
         snap = latest.get(token_id) or {}
+        # P0诊断：添加详细的调试信息
+        if not hasattr(_latest_best_bid, "_diag_logged"):
+            _latest_best_bid._diag_logged = True
+            print(f"[DIAG][BID] latest字典中的token数据: {snap}")
+            print(f"[DIAG][BID] ORDERBOOK_STALE_AFTER_SEC = {ORDERBOOK_STALE_AFTER_SEC}")
         if _snapshot_stale(snap):
+            # P0诊断：显示为什么判定为过期
+            ts = snap.get("ts")
+            if ts:
+                age = time.time() - float(ts)
+                print(f"[DIAG][BID] 快照过期: 年龄={age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
             return None
         try:
             value = snap.get("best_bid")
