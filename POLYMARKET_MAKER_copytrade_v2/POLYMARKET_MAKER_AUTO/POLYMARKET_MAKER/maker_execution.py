@@ -181,20 +181,16 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
 
 
 def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSample]:
+    # P0修复：精简API方法候选列表，移除不兼容的调用
+    # py_clob_client.ClobClient 主要方法：
+    # - get_order_book(token_id) - 获取订单簿（最常用）
+    # 其他方法如 get_market() 需要 condition_id 而非 token_id，会导致 TypeError
     method_candidates = (
-        ("get_market_orderbook", {"market": token_id}),
-        ("get_market_orderbook", {"token_id": token_id}),
-        ("get_market_orderbook", {"market_id": token_id}),
-        ("get_order_book", {"market": token_id}),
+        # 最常用的订单簿方法（py_clob_client的标准API）
         ("get_order_book", {"token_id": token_id}),
-        ("get_orderbook", {"market": token_id}),
+        # 备用的命名变体（兼容其他客户端实现）
         ("get_orderbook", {"token_id": token_id}),
-        ("get_market", {"market": token_id}),
-        ("get_market", {"token_id": token_id}),
-        ("get_market_data", {"market": token_id}),
-        ("get_market_data", {"token_id": token_id}),
-        ("get_ticker", {"market": token_id}),
-        ("get_ticker", {"token_id": token_id}),
+        ("get_market_orderbook", {"token_id": token_id}),
     )
 
     # P0修复：记录尝试的方法
