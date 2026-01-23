@@ -2506,7 +2506,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if str(pc.get("asset_id")) != str(token_id):
                 continue
             bid, ask, last = _parse_price_change(pc)
-            latest[token_id] = {"price": last, "best_bid": bid, "best_ask": ask, "ts": ts}
+            # ✅ P0修复：使用当前时间而非事件时间戳，保持与共享WS模式一致
+            latest[token_id] = {"price": last, "best_bid": bid, "best_ask": ask, "ts": time.time()}
 
             # 添加独立WS的调试日志（与共享WS对应）
             if not hasattr(_on_event, "_last_debug_log"):
