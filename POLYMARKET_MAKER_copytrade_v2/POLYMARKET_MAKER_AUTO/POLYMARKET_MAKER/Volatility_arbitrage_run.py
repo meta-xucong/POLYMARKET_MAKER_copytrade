@@ -3180,6 +3180,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    # ✅ P0修复：验证缓存数据本身是否新鲜
+                    cache_updated_at = fresh_snap.get("updated_at")
+                    if cache_updated_at:
+                        cache_age = time.time() - float(cache_updated_at)
+                        if cache_age > ORDERBOOK_STALE_AFTER_SEC:
+                            print(f"[DIAG][BID] ✗ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
+                            print(f"[DIAG][BID] 缓存数据过期，返回None触发REST API fallback")
+                            return None
+
                     latest[token_id] = {
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
@@ -3187,7 +3196,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "ts": time.time()
                     }
                     snap = latest[token_id]
-                    print(f"[DIAG][BID] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')}")
+                    print(f"[DIAG][BID] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')} (缓存数据新鲜)")
                 else:
                     print(f"[DIAG][BID] ✗ 无法从缓存刷新数据")
                     return None
@@ -3209,6 +3218,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    # ✅ P0修复：验证缓存数据本身是否新鲜
+                    cache_updated_at = fresh_snap.get("updated_at")
+                    if cache_updated_at:
+                        cache_age = time.time() - float(cache_updated_at)
+                        if cache_age > ORDERBOOK_STALE_AFTER_SEC:
+                            if not hasattr(_latest_best_ask, "_stale_logged"):
+                                _latest_best_ask._stale_logged = True
+                                print(f"[DIAG][ASK] ✗ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
+                                print(f"[DIAG][ASK] 缓存数据过期，返回None触发REST API fallback")
+                            return None
+
                     latest[token_id] = {
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
@@ -3218,7 +3238,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     snap = latest[token_id]
                     if not hasattr(_latest_best_ask, "_refresh_logged"):
                         _latest_best_ask._refresh_logged = True
-                        print(f"[DIAG][ASK] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')}")
+                        print(f"[DIAG][ASK] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')} (缓存数据新鲜)")
                 else:
                     return None
             else:
@@ -3240,6 +3260,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    # ✅ P0修复：验证缓存数据本身是否新鲜
+                    cache_updated_at = fresh_snap.get("updated_at")
+                    if cache_updated_at:
+                        cache_age = time.time() - float(cache_updated_at)
+                        if cache_age > ORDERBOOK_STALE_AFTER_SEC:
+                            # 缓存数据过期，返回None触发REST API fallback
+                            return None
+
                     latest[token_id] = {
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
