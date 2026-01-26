@@ -390,6 +390,8 @@ class AutoRunManager:
         self._ws_token_ids: List[str] = []
         self._ws_aggregator_thread: Optional[threading.Thread] = None
         self._ws_debug_raw = _env_flag("POLY_WS_DEBUG_RAW") or self.config.ws_debug_raw
+        # 增量订阅客户端（替代完全重启WS的方式）
+        self._ws_client: Optional[Any] = None  # WSAggregatorClient 实例
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -494,22 +496,38 @@ class AutoRunManager:
 
             time.sleep(0.1)  # 从1.0秒改为0.1秒，提高缓存写入频率
 
-    def _restart_ws_subscription(self, token_ids: List[str]) -> None:
+    def _update_ws_subscription(self, token_ids: List[str]) -> None:
+        """
+        使用增量订阅更新WS订阅列表（避免完全重启WS连接）
+
+        优化点：
+        - 计算新增/移除的token差异
+        - 通过增量消息添加/移除订阅，而不是重启整个WS连接
+        - 保持数据流连续性，消除时序竞态问题
+        """
         old_ids = set(self._ws_token_ids)
         new_ids = set(token_ids)
         added = new_ids - old_ids
         removed = old_ids - new_ids
 
+        # 无变化时跳过
+        if not added and not removed:
+            return
+
         if added:
             print(f"[WS][AGGREGATOR] ✓ 新增订阅 {len(added)} 个token:")
             for tid in list(added)[:5]:
                 print(f"    {tid[:8]}...{tid[-8:]}")
+            if len(added) > 5:
+                print(f"    ... (还有 {len(added) - 5} 个)")
         if removed:
             print(f"[WS][AGGREGATOR] ✗ 移除订阅 {len(removed)} 个token:")
             for tid in list(removed)[:5]:
                 print(f"    {tid[:8]}...{tid[-8:]}")
+            if len(removed) > 5:
+                print(f"    ... (还有 {len(removed) - 5} 个)")
 
-        # 调试：打印完整订阅列表（启动时）
+        # 调试：首次打印完整订阅列表
         if not hasattr(self, '_subscription_list_printed'):
             self._subscription_list_printed = True
             print(f"[WS][AGGREGATOR][DEBUG] 完整订阅列表 ({len(token_ids)} 个):")
@@ -517,17 +535,39 @@ class AutoRunManager:
                 print(f"    [{idx}] {tid[:8]}...{tid[-8:]}")
             print()
 
-        self._stop_ws_subscription()
+        # 更新本地记录
         self._ws_token_ids = token_ids
-        if not token_ids:
-            print("[WS][AGGREGATOR] 无token需要订阅，WS连接已停止")
-            return
-        self._start_ws_subscription(token_ids)
+
+        # 使用增量订阅客户端
+        if self._ws_client is not None:
+            # 先取消订阅移除的token
+            if removed:
+                self._ws_client.unsubscribe(list(removed))
+            # 再订阅新增的token
+            if added:
+                self._ws_client.subscribe(list(added))
+        else:
+            # 客户端未初始化，需要启动
+            if token_ids:
+                self._start_ws_subscription(token_ids)
+            else:
+                print("[WS][AGGREGATOR] 无token需要订阅")
+
+    # 保留旧方法名作为别名，保持兼容性
+    def _restart_ws_subscription(self, token_ids: List[str]) -> None:
+        """兼容性别名，内部调用 _update_ws_subscription"""
+        self._update_ws_subscription(token_ids)
 
     def _start_ws_subscription(self, token_ids: List[str]) -> None:
+        """
+        启动WS订阅（使用增量订阅客户端）
+
+        如果客户端已存在且连接正常，只添加新的订阅；
+        否则创建新的客户端实例。
+        """
         # 验证 WS 模块导入
         try:
-            from Volatility_arbitrage_main_ws import ws_watch_by_ids
+            from Volatility_arbitrage_main_ws import WSAggregatorClient
         except Exception as exc:
             print(f"[ERROR] 无法导入 WS 模块: {exc}")
             print("[ERROR] WS 聚合器启动失败，子进程将使用独立 WS 连接")
@@ -536,7 +576,6 @@ class AutoRunManager:
                 "error": str(exc),
                 "tokens_count": len(token_ids)
             })
-            # 不抛出异常，让系统继续运行（子进程会fallback到独立WS）
             return
 
         # 验证 websocket-client 依赖
@@ -552,39 +591,46 @@ class AutoRunManager:
             })
             return
 
-        stop_event = threading.Event()
-        self._ws_thread_stop = stop_event
-        self._ws_thread = threading.Thread(
-            target=ws_watch_by_ids,
-            kwargs={
-                "asset_ids": token_ids,
-                "label": "autorun-aggregator",
-                "on_event": self._on_ws_event,
-                "verbose": self._ws_debug_raw,
-                "stop_event": stop_event,
-            },
-            daemon=True,
+        # 如果客户端已存在且运行正常，只添加订阅
+        if self._ws_client is not None and self._ws_client.is_connected():
+            self._ws_client.subscribe(token_ids)
+            print(f"[WS][AGGREGATOR] 增量订阅 {len(token_ids)} 个token（连接保持）")
+            return
+
+        # 创建新的增量订阅客户端
+        print(f"[WS][AGGREGATOR] 初始化增量订阅客户端...")
+        self._ws_client = WSAggregatorClient(
+            on_event=self._on_ws_event,
+            verbose=self._ws_debug_raw,
+            label="autorun-aggregator",
         )
-        self._ws_thread.start()
+        self._ws_client.start()
+
+        # 订阅初始token列表
+        if token_ids:
+            self._ws_client.subscribe(token_ids)
+
         print(f"[WS][AGGREGATOR] 聚合订阅启动，tokens={len(token_ids)}")
         print(f"[WS][AGGREGATOR] 缓存文件: {self._ws_cache_path}")
+        print(f"[WS][AGGREGATOR] ✓ 使用增量订阅模式（避免WS重启导致的数据中断）")
 
-        # 验证线程是否成功启动
+        # 验证客户端是否成功启动
         time.sleep(2)
-        if not self._ws_thread.is_alive():
-            print("[WS][AGGREGATOR] ✗ WS线程启动后立即退出")
-            print("[WS][AGGREGATOR] 子进程将使用独立 WS 连接")
-            _log_error("WS_AGGREGATOR_THREAD_ERROR", {
-                "message": "WS线程启动后立即退出",
-                "tokens_count": len(token_ids),
-                "token_ids": token_ids[:5]  # 只记录前5个
-            })
-            self._ws_thread = None
-            self._ws_thread_stop = None
+        if not self._ws_client.is_connected():
+            print("[WS][AGGREGATOR] ⚠ WS连接尚未建立，可能正在重试...")
+            # 不立即报错，让客户端自动重连
         else:
-            print(f"[WS][AGGREGATOR] ✓ WS线程运行正常")
+            stats = self._ws_client.get_stats()
+            print(f"[WS][AGGREGATOR] ✓ WS连接正常 (已订阅: {stats.get('subscribed_tokens', 0)} 个token)")
 
     def _stop_ws_subscription(self) -> None:
+        """停止WS订阅"""
+        # 停止增量订阅客户端
+        if self._ws_client is not None:
+            self._ws_client.stop()
+            self._ws_client = None
+
+        # 兼容旧的线程方式（如果有）
         if self._ws_thread_stop is not None:
             self._ws_thread_stop.set()
         if self._ws_thread and self._ws_thread.is_alive():
@@ -872,10 +918,25 @@ class AutoRunManager:
                         print(f"  ... (还有 {len(self._ws_cache) - 10} 个token)")
                     print()
             self._last_cache_status_log = now
-        # 检查 WS 线程是否运行
-        if self._ws_token_ids and (not self._ws_thread or not self._ws_thread.is_alive()):
-            print("[WARN] WS 聚合器线程已停止，尝试重启...")
-            self._restart_ws_subscription(self._ws_token_ids)
+
+        # 检查 WS 客户端是否运行（优先检查增量订阅客户端）
+        if self._ws_token_ids:
+            ws_healthy = False
+            if self._ws_client is not None:
+                ws_healthy = self._ws_client.is_connected()
+                # 打印客户端统计信息（每5分钟）
+                if now - self._last_cache_status_log < 1:  # 刚打印完缓存状态
+                    stats = self._ws_client.get_stats()
+                    print(f"[WS][CLIENT] 连接状态: {'✓' if ws_healthy else '✗'}, "
+                          f"已订阅: {stats.get('subscribed_tokens', 0)}, "
+                          f"待订阅: {stats.get('pending_subscribe', 0)}, "
+                          f"连接次数: {stats.get('connect_count', 0)}")
+            elif self._ws_thread and self._ws_thread.is_alive():
+                ws_healthy = True
+
+            if not ws_healthy:
+                print("[WARN] WS 聚合器连接异常，尝试恢复...")
+                self._restart_ws_subscription(self._ws_token_ids)
 
         # 检查缓存数据
         with self._ws_cache_lock:
