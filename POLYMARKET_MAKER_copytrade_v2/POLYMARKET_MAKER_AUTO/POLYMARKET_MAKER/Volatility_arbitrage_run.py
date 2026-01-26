@@ -188,6 +188,7 @@ POST_BUY_POSITION_CHECK_DELAY = 60.0
 POST_BUY_POSITION_CHECK_ATTEMPTS = 5
 POST_BUY_POSITION_CHECK_INTERVAL = 7.0
 POST_BUY_POSITION_CHECK_ROUND_COOLDOWN = 60.0
+POST_BUY_POSITION_CONFIRM_MAX_ROUNDS = 10  # 最大重试轮数，防止无限循环
 POST_BUY_POSITION_MATCH_REL_TOL = 1e-4
 POST_BUY_POSITION_MATCH_ABS_TOL = 1e-6
 
@@ -4144,7 +4145,34 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     )
                     pending_buy = action
                     buy_cooldown_until = time.time() + short_buy_cooldown
-                    _execute_sell(actionable_position, floor_hint=None, source="[BUY][BLOCK]")
+                    # 计算清仓地板价：优先使用策略的入场价格，否则查询持仓均价
+                    block_floor_hint: Optional[float] = None
+                    if strategy.sell_trigger_price() is None:
+                        # 策略没有入场价格，需要从 data-api 查询持仓均价
+                        try:
+                            block_avg_px, _, block_origin = _lookup_position_avg_price(client, token_id)
+                            if block_avg_px is not None and block_avg_px > 0:
+                                # 使用均价计算地板价：均价 * (1 + profit_pct)
+                                block_floor_hint = block_avg_px * (1.0 + profit_pct)
+                                print(
+                                    f"[BUY][BLOCK] 从 {block_origin} 获取均价 {block_avg_px:.4f}，"
+                                    f"计算地板价 {block_floor_hint:.4f}"
+                                )
+                                # 同步入场价格到策略，避免后续重复查询
+                                strategy.sync_long_state(ref_price=block_avg_px)
+                            else:
+                                # 查不到均价，使用当前 bid 作为保本地板价
+                                if bid is not None and bid > 0:
+                                    block_floor_hint = bid
+                                    print(
+                                        f"[BUY][BLOCK] 无法获取持仓均价，使用当前 bid={bid:.4f} 作为保本地板价"
+                                    )
+                        except Exception as block_exc:
+                            print(f"[BUY][BLOCK] 查询持仓均价异常：{block_exc}")
+                            if bid is not None and bid > 0:
+                                block_floor_hint = bid
+                                print(f"[BUY][BLOCK] 使用当前 bid={bid:.4f} 作为 fallback 地板价")
+                    _execute_sell(actionable_position, floor_hint=block_floor_hint, source="[BUY][BLOCK]")
                     continue
     
                 if treat_as_dust:
@@ -4351,8 +4379,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     confirmed_total: Optional[float] = None
                     success_samples: List[Tuple[float, float]] = []
                     round_index = 0
+                    used_fallback = False
                     while confirmed_avg is None or confirmed_total is None:
                         round_index += 1
+                        # 检查是否达到最大重试轮数
+                        if round_index > POST_BUY_POSITION_CONFIRM_MAX_ROUNDS:
+                            origin_display = origin_note or "positions"
+                            print(
+                                f"[WARN] 持仓均价确认已达最大轮数 {POST_BUY_POSITION_CONFIRM_MAX_ROUNDS}，"
+                                f"使用下单均价 {fallback_price:.4f} 作为 fallback。 origin={origin_display}"
+                            )
+                            confirmed_avg = fallback_price
+                            confirmed_total = expected_total_position
+                            used_fallback = True
+                            break
                         round_success_start = len(success_samples)
                         for attempt in range(POST_BUY_POSITION_CHECK_ATTEMPTS):
                             try:
