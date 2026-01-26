@@ -94,10 +94,24 @@ def _record_exit_token(token_id: str, exit_reason: str, exit_data: Optional[Dict
     """
     记录因各种原因退出maker交易的token。
 
+    用于 Slot Refill (回填) 功能：记录退出的token及其状态，以便后续判断是否可以重新加入maker队列。
+
     :param token_id: token ID
     :param exit_reason: 退出原因（如 STARTUP_TIMEOUT, MARKET_CLOSED, SIGNAL_TIMEOUT 等）
-    :param exit_data: 退出相关数据（可选）
+    :param exit_data: 退出相关数据（可选），应包含以下字段便于回填判断：
+        - has_position: bool - 是否有持仓
+        - position_size: float - 持仓数量
+        - entry_price: float - 买入均价
+        - last_bid: float - 最后bid价格
+        - last_ask: float - 最后ask价格
     """
+    # 不可回填的退出原因
+    NON_REFILLABLE_REASONS = {
+        "MARKET_CLOSED",
+        "USER_STOPPED",
+        "DEADLINE_REACHED",
+    }
+
     try:
         # 确定退出记录文件路径
         script_dir = Path(__file__).parent.parent
@@ -105,13 +119,15 @@ def _record_exit_token(token_id: str, exit_reason: str, exit_data: Optional[Dict
         data_dir.mkdir(parents=True, exist_ok=True)
         exit_record_path = data_dir / "exit_tokens.json"
 
-        # 构建记录条目
+        # 构建记录条目（增强版：添加 exit_ts 和 refillable 字段）
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         record = {
             "timestamp": timestamp,
+            "exit_ts": time.time(),  # 精确时间戳，用于冷却时间计算
             "token_id": token_id,
             "exit_reason": exit_reason,
-            "exit_data": exit_data or {}
+            "exit_data": exit_data or {},
+            "refillable": exit_reason not in NON_REFILLABLE_REASONS,  # 是否可回填
         }
 
         # 读取现有记录（如果存在）
@@ -138,7 +154,8 @@ def _record_exit_token(token_id: str, exit_reason: str, exit_data: Optional[Dict
             json.dump(existing_records, f, ensure_ascii=False, indent=2)
         tmp_path.replace(exit_record_path)
 
-        print(f"[EXIT_RECORD] 已记录退出token: {token_id[:20]}... 原因: {exit_reason}")
+        refill_hint = "可回填" if record["refillable"] else "不可回填"
+        print(f"[EXIT_RECORD] 已记录退出token: {token_id[:20]}... 原因: {exit_reason} ({refill_hint})")
 
     except Exception as e:
         # 记录失败时，仅打印到控制台，不中断程序
@@ -2247,6 +2264,36 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     }
     exit_only = bool(run_cfg.get("exit_only", False))
 
+    # ========== Slot Refill (回填) 恢复状态 ==========
+    resume_state = run_cfg.get("resume_state")
+    if resume_state and isinstance(resume_state, dict):
+        has_position = resume_state.get("has_position", False)
+        position_size = resume_state.get("position_size")
+        entry_price = resume_state.get("entry_price")
+        skip_buy = resume_state.get("skip_buy", False)
+        refill_retry_count = run_cfg.get("refill_retry_count", 0)
+
+        print(f"\n[REFILL] ========== 回填恢复状态 ==========")
+        print(f"[REFILL] token_id: {token_id[:20]}...")
+        print(f"[REFILL] 重试次数: {refill_retry_count}")
+
+        if has_position and position_size:
+            # 有持仓：同步到策略，跳过买入阶段
+            print(f"[REFILL] 检测到持仓恢复状态:")
+            print(f"[REFILL]   持仓数量: {position_size}")
+            print(f"[REFILL]   买入价格: {entry_price}")
+            print(f"[REFILL]   跳过买入: {skip_buy}")
+            strategy.sync_position(
+                total_position=position_size,
+                ref_price=entry_price
+            )
+            print(f"[REFILL] ✓ 已同步持仓状态到策略，将直接进入卖出等待")
+        else:
+            # 无持仓：正常启动等待买入
+            print(f"[REFILL] 无持仓恢复状态，将正常等待买入信号")
+
+        print(f"[REFILL] ========================================\n")
+
     def _exit_cleanup_only(reason: str) -> None:
         print(f"[EXIT] 收到清仓信号: {reason}")
         canceled = _cancel_open_orders_for_token(client, token_id)
@@ -2701,7 +2748,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 })
                 _record_exit_token(token_id, "AGGREGATOR_NO_DATA", {
                     "duration_seconds": elapsed,
-                    "timeout_seconds": 180
+                    "timeout_seconds": 180,
+                    "has_position": False,  # 启动阶段，无持仓
                 })
                 strategy.stop("aggregator no data")
                 stop_event.set()
@@ -2750,11 +2798,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     "message": "运行时检测到数据过期，市场可能无流动性"
                 })
 
+                # 注意：此时无法获取精确的持仓状态，标记为 "unknown"
+                # 回填时将根据策略判断是否重试
                 _record_exit_token(token_id, "STALE_DATA_IN_TRADING", {
                     "data_age_minutes": data_age / 60.0,
                     "threshold_minutes": STALE_DATA_THRESHOLD / 60.0,
                     "updated_at": updated_at,
-                    "last_seq": seq
+                    "last_seq": seq,
+                    "has_position": None,  # 持仓状态未知
                 })
 
                 strategy.stop("stale data detected in trading loop")
@@ -2995,7 +3046,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     })
                     _record_exit_token(token_id, "MARKET_CLOSED", {
                         "elapsed_seconds": elapsed_wait,
-                        "detected_at_startup": True
+                        "detected_at_startup": True,
+                        "has_position": False,  # 启动阶段，无持仓
                     })
                     stop_event.set()
                     return
@@ -3012,7 +3064,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     })
                     _record_exit_token(token_id, "STALE_DATA_TIMEOUT", {
                         "elapsed_seconds": elapsed_wait,
-                        "data_age_seconds": data_age
+                        "data_age_seconds": data_age,
+                        "has_position": False,  # 启动阶段，无持仓
                     })
                     stop_event.set()
                     return
@@ -3039,7 +3092,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             })
             _record_exit_token(token_id, "STARTUP_TIMEOUT", {
                 "elapsed_seconds": elapsed_wait,
-                "use_shared_ws": use_shared_ws
+                "use_shared_ws": use_shared_ws,
+                "has_position": False,  # 启动阶段，无持仓
             })
 
             stop_event.set()
@@ -3972,10 +4026,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         else:
                             strategy.stop("signal timeout (no position)")
                             print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
+                            # 获取最后的价格数据用于回填判断
+                            snap = latest.get(token_id) or {}
                             _record_exit_token(token_id, "SIGNAL_TIMEOUT", {
                                 "signal_idle_minutes": signal_idle_seconds / 60.0,
                                 "timeout_threshold_minutes": signal_timeout_seconds / 60.0,
-                                "last_signal_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_signal_ts))
+                                "last_signal_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_signal_ts)),
+                                "has_position": False,  # 无持仓
+                                "last_bid": float(snap.get("best_bid") or 0.0),
+                                "last_ask": float(snap.get("best_ask") or 0.0),
                             })
                             stop_event.set()
                         if stop_event.is_set():

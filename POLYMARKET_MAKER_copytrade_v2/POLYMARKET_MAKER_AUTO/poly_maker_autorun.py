@@ -54,6 +54,11 @@ DEFAULT_GLOBAL_CONFIG = {
     "log_excerpt_interval_sec": 15.0,
     "runtime_status_path": str(PROJECT_ROOT / "data" / "autorun_status.json"),
     "ws_debug_raw": False,
+    # Slot refill (回填) 配置
+    "enable_slot_refill": True,
+    "refill_cooldown_minutes": 30.0,
+    "max_refill_retries": 3,
+    "refill_check_interval_sec": 60.0,
 }
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 
@@ -239,6 +244,11 @@ class GlobalConfig:
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["runtime_status_path"])
     )
     ws_debug_raw: bool = bool(DEFAULT_GLOBAL_CONFIG["ws_debug_raw"])
+    # Slot refill (回填) 配置
+    enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
+    refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
+    max_refill_retries: int = DEFAULT_GLOBAL_CONFIG["max_refill_retries"]
+    refill_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG["refill_check_interval_sec"]
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GlobalConfig":
@@ -327,6 +337,19 @@ class GlobalConfig:
                 or debug.get("ws_raw")
                 or merged.get("ws_debug_raw", cls.ws_debug_raw)
             ),
+            # Slot refill (回填) 配置
+            enable_slot_refill=bool(
+                scheduler.get("enable_slot_refill", merged.get("enable_slot_refill", True))
+            ),
+            refill_cooldown_minutes=float(
+                scheduler.get("refill_cooldown_minutes", merged.get("refill_cooldown_minutes", 30.0))
+            ),
+            max_refill_retries=int(
+                scheduler.get("max_refill_retries", merged.get("max_refill_retries", 3))
+            ),
+            refill_check_interval_sec=float(
+                scheduler.get("refill_check_interval_sec", merged.get("refill_check_interval_sec", 60.0))
+            ),
         )
 
     def ensure_dirs(self) -> None:
@@ -392,6 +415,11 @@ class AutoRunManager:
         self._ws_debug_raw = _env_flag("POLY_WS_DEBUG_RAW") or self.config.ws_debug_raw
         # 增量订阅客户端（替代完全重启WS的方式）
         self._ws_client: Optional[Any] = None  # WSAggregatorClient 实例
+        # Slot refill (回填) 相关
+        self._exit_tokens_path = self.config.data_dir / "exit_tokens.json"
+        self._refill_retry_counts: Dict[str, int] = {}  # token_id -> 已重试次数
+        self._next_refill_check: float = 0.0
+        self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -412,6 +440,10 @@ class AutoRunManager:
                     if now >= self._next_topics_refresh:
                         self._refresh_topics()
                         self._next_topics_refresh = now + self.config.copytrade_poll_sec
+                    # Slot回填检查
+                    if self.config.enable_slot_refill and now >= self._next_refill_check:
+                        self._schedule_refill()
+                        self._next_refill_check = now + self.config.refill_check_interval_sec
                     if now >= self._next_status_dump:
                         self._print_status()
                         self._dump_runtime_status()
@@ -1207,6 +1239,14 @@ class AutoRunManager:
                 else 0.5,
             )
             merged["order_size"] = scaled_size
+
+        # Slot refill (回填) 恢复状态
+        resume_state = topic_info.get("resume_state")
+        if resume_state:
+            merged["resume_state"] = resume_state
+            refill_retry_count = topic_info.get("refill_retry_count", 0)
+            merged["refill_retry_count"] = refill_retry_count
+
         return merged
 
     def _should_use_shared_ws(self) -> bool:
@@ -1578,6 +1618,227 @@ class AutoRunManager:
                     self.pending_topics.remove(topic_id)
                 except ValueError:
                     pass
+
+    # ========== Slot Refill (回填) 逻辑 ==========
+    def _load_exit_tokens(self) -> List[Dict[str, Any]]:
+        """
+        加载退出token记录文件。
+
+        Returns:
+            退出token记录列表
+        """
+        if not self._exit_tokens_path.exists():
+            return []
+        try:
+            with self._exit_tokens_path.open("r", encoding="utf-8") as f:
+                records = json.load(f)
+            if not isinstance(records, list):
+                return []
+            return records
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"[REFILL] 读取退出token记录失败: {exc}")
+            return []
+
+    def _should_refill_slots(self) -> bool:
+        """
+        判断是否需要回填maker slot。
+
+        条件：
+        1. 回填功能已启用
+        2. pending_topics 队列为空（所有token已进入过maker逻辑）
+        3. 当前运行的任务数 < max_concurrent_tasks
+
+        Returns:
+            True 表示需要回填
+        """
+        if not self.config.enable_slot_refill:
+            return False
+
+        # pending队列为空
+        if self.pending_topics:
+            return False
+
+        # 有空闲slot
+        running = sum(1 for t in self.tasks.values() if t.is_running())
+        has_capacity = running < max(1, int(self.config.max_concurrent_tasks))
+
+        return has_capacity
+
+    def _filter_refillable_tokens(
+        self, exit_records: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        筛选可回填的token。
+
+        筛选条件：
+        1. 退出原因可重试（非 MARKET_CLOSED）
+        2. 超过冷却时间
+        3. 未超过最大重试次数
+        4. 不在当前运行或pending列表中
+        5. 未被标记为不可回填
+
+        Args:
+            exit_records: 退出token记录列表
+
+        Returns:
+            可回填的token记录列表（按优先级排序）
+        """
+        # 不可重试的退出原因
+        NON_RETRYABLE_REASONS = {
+            "MARKET_CLOSED",
+            "USER_STOPPED",
+            "DEADLINE_REACHED",
+        }
+
+        now = time.time()
+        cooldown_seconds = self.config.refill_cooldown_minutes * 60.0
+        max_retries = self.config.max_refill_retries
+
+        refillable: List[Dict[str, Any]] = []
+        seen_tokens: set[str] = set()  # 避免重复
+
+        # 按退出时间倒序处理（最新的优先，避免处理过期记录）
+        sorted_records = sorted(
+            exit_records,
+            key=lambda r: r.get("exit_ts", 0),
+            reverse=True,
+        )
+
+        for record in sorted_records:
+            token_id = record.get("token_id")
+            if not token_id:
+                continue
+
+            # 去重：同一个token只取最新记录
+            if token_id in seen_tokens:
+                continue
+            seen_tokens.add(token_id)
+
+            exit_reason = record.get("exit_reason", "")
+            exit_ts = record.get("exit_ts", 0)
+            refillable_flag = record.get("refillable", True)
+
+            # 检查是否可重试
+            if exit_reason in NON_RETRYABLE_REASONS:
+                continue
+
+            # 检查是否标记为不可回填
+            if not refillable_flag:
+                continue
+
+            # 检查冷却时间（exit_ts 到现在的时间间隔）
+            if exit_ts > 0 and (now - exit_ts) < cooldown_seconds:
+                continue
+
+            # 检查重试次数
+            retry_count = self._refill_retry_counts.get(token_id, 0)
+            if retry_count >= max_retries:
+                continue
+
+            # 检查是否已在运行或pending
+            if token_id in self.tasks and self.tasks[token_id].is_running():
+                continue
+            if token_id in self.pending_topics:
+                continue
+            if token_id in self.pending_exit_topics:
+                continue
+
+            # 检查是否最近已被回填过（避免短时间内重复回填）
+            if token_id in self._refilled_tokens:
+                continue
+
+            # 检查数据有效期（24小时内的退出记录才回填）
+            if exit_ts > 0 and (now - exit_ts) > 86400:  # 24小时
+                continue
+
+            refillable.append(record)
+
+        # 排序优先级：
+        # 1. 有持仓的优先（需要尽快卖出）
+        # 2. 退出时间早的优先（等待时间长）
+        def _sort_key(r: Dict[str, Any]) -> tuple:
+            exit_data = r.get("exit_data", {}) or {}
+            has_position = exit_data.get("has_position", False)
+            exit_ts = r.get("exit_ts", 0)
+            # has_position=True 排前面（0 < 1）
+            # exit_ts 小的排前面（早退出的优先）
+            return (0 if has_position else 1, exit_ts)
+
+        refillable.sort(key=_sort_key)
+
+        return refillable
+
+    def _schedule_refill(self) -> None:
+        """
+        执行回填调度：从退出记录中选取可回填的token重新加入pending队列。
+        """
+        if not self._should_refill_slots():
+            return
+
+        exit_records = self._load_exit_tokens()
+        if not exit_records:
+            return
+
+        refillable = self._filter_refillable_tokens(exit_records)
+        if not refillable:
+            return
+
+        # 计算可用slot数
+        running = sum(1 for t in self.tasks.values() if t.is_running())
+        available_slots = max(0, self.config.max_concurrent_tasks - running - len(self.pending_topics))
+
+        if available_slots <= 0:
+            return
+
+        # 取前 N 个可回填token
+        to_refill = refillable[:available_slots]
+
+        print(f"\n[REFILL] ========== Slot回填检查 ==========")
+        print(f"[REFILL] 当前运行: {running}/{self.config.max_concurrent_tasks}")
+        print(f"[REFILL] 可用slot: {available_slots}")
+        print(f"[REFILL] 可回填token: {len(refillable)} 个")
+
+        for record in to_refill:
+            token_id = record.get("token_id")
+            exit_reason = record.get("exit_reason", "UNKNOWN")
+            exit_data = record.get("exit_data", {}) or {}
+            has_position = exit_data.get("has_position", False)
+
+            # 增加重试计数
+            self._refill_retry_counts[token_id] = self._refill_retry_counts.get(token_id, 0) + 1
+            retry_count = self._refill_retry_counts[token_id]
+
+            # 标记为已回填
+            self._refilled_tokens.add(token_id)
+
+            # 构建恢复配置
+            resume_state = None
+            if has_position:
+                resume_state = {
+                    "has_position": True,
+                    "position_size": exit_data.get("position_size"),
+                    "entry_price": exit_data.get("entry_price"),
+                    "skip_buy": True,  # 跳过买入阶段
+                }
+
+            # 保存恢复状态到 topic_details（供 _build_run_config 使用）
+            if token_id not in self.topic_details:
+                self.topic_details[token_id] = {}
+            self.topic_details[token_id]["resume_state"] = resume_state
+            self.topic_details[token_id]["refill_retry_count"] = retry_count
+
+            # 加入pending队列
+            self.pending_topics.append(token_id)
+
+            state_hint = "有持仓→等待卖出" if has_position else "无持仓→等待买入"
+            print(
+                f"[REFILL] + 回填 token={token_id[:20]}... "
+                f"原因={exit_reason} 状态={state_hint} "
+                f"重试={retry_count}/{self.config.max_refill_retries}"
+            )
+
+        print(f"[REFILL] 已添加 {len(to_refill)} 个token到pending队列")
+        print(f"[REFILL] ========================================\n")
 
     def _refresh_topics(self) -> None:
         try:
