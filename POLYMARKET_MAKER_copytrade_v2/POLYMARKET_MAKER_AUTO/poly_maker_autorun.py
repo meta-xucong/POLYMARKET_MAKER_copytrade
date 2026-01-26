@@ -1383,6 +1383,12 @@ class AutoRunManager:
         task.heartbeat("started")
         self.tasks[topic_id] = task
         self._update_handled_topics([topic_id])
+        # 启动成功后，从回填标记中移除（允许后续再次回填）
+        self._refilled_tokens.discard(topic_id)
+        # 清理 topic_details 中的 resume_state（已被使用）
+        if topic_id in self.topic_details:
+            self.topic_details[topic_id].pop("resume_state", None)
+            self.topic_details[topic_id].pop("refill_retry_count", None)
         print(f"[START] topic={topic_id} pid={proc.pid} log={log_path}")
         return True
 
@@ -1843,6 +1849,14 @@ class AutoRunManager:
     def _refresh_topics(self) -> None:
         try:
             self.latest_topics = self._load_copytrade_tokens()
+            # 保留已有的 resume_state（回填恢复状态），只更新 copytrade 数据
+            old_resume_states: Dict[str, Any] = {}
+            for tid, detail in self.topic_details.items():
+                if detail.get("resume_state"):
+                    old_resume_states[tid] = {
+                        "resume_state": detail.get("resume_state"),
+                        "refill_retry_count": detail.get("refill_retry_count", 0),
+                    }
             self.topic_details = {}
             for item in self.latest_topics:
                 topic_id = _topic_id_from_entry(item)
@@ -1851,6 +1865,13 @@ class AutoRunManager:
                 detail = dict(item)
                 detail.setdefault("topic_id", topic_id)
                 self.topic_details[topic_id] = detail
+            # 恢复之前保存的 resume_state（回填恢复状态）
+            for tid, saved in old_resume_states.items():
+                if tid not in self.topic_details:
+                    self.topic_details[tid] = {}
+                self.topic_details[tid]["resume_state"] = saved.get("resume_state")
+                self.topic_details[tid]["refill_retry_count"] = saved.get("refill_retry_count", 0)
+
             sell_signals = self._load_copytrade_sell_signals()
             self._apply_sell_signals(sell_signals)
             new_topics = [

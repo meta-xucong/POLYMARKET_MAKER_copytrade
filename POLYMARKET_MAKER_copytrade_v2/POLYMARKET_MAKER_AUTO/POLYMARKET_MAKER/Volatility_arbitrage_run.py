@@ -3739,6 +3739,18 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(
                 "[RELEASE] 卖出挂单长期无动作，停止做市逻辑但保留挂单。"
             )
+            # 获取当前持仓和价格信息用于回填
+            snap = latest.get(token_id) or {}
+            status = strategy.status()
+            _record_exit_token(token_id, "SELL_ABANDONED", {
+                "has_position": True,  # 仍有持仓
+                "position_size": float(sell_resp.get("remaining") or eff_qty),
+                "entry_price": status.get("entry_price"),
+                "last_bid": float(snap.get("best_bid") or 0.0),
+                "last_ask": float(snap.get("best_ask") or 0.0),
+                "sell_floor_price": floor_price,
+                "inactive_timeout_hours": sell_inactive_timeout_sec / 3600.0,
+            })
             strategy.stop("sell inactive release")
             stop_event.set()
             return
@@ -3864,6 +3876,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         else:
             strategy.stop("price stagnation")
             print("[QUEUE] 释放队列：价格停滞且无持仓，已退出。")
+            snap = latest.get(token_id) or {}
+            _record_exit_token(token_id, "STAGNATION_NO_POSITION", {
+                "has_position": False,
+                "change_ratio": change_ratio,
+                "window_span_minutes": window_span / 60.0,
+                "stagnation_threshold": stagnation_pct,
+                "last_bid": float(snap.get("best_bid") or 0.0),
+                "last_ask": float(snap.get("best_ask") or 0.0),
+            })
             stop_event.set()
 
     def _handle_no_feed_exit(idle_seconds: float) -> None:
@@ -3889,6 +3910,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         else:
             strategy.stop("price stagnation (no feed)")
             print("[QUEUE] 释放队列：长时间无行情且无持仓，已退出。")
+            snap = latest.get(token_id) or {}
+            _record_exit_token(token_id, "NO_FEED_NO_POSITION", {
+                "has_position": False,
+                "idle_minutes": idle_seconds / 60.0,
+                "last_bid": float(snap.get("best_bid") or 0.0),
+                "last_ask": float(snap.get("best_ask") or 0.0),
+            })
             stop_event.set()
 
     # 主循环诊断变量（用于追踪循环是否正常执行）
