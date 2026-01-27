@@ -1972,6 +1972,12 @@ class AutoRunManager:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
             has_history = token_id in self.handled_topics
+
+            # 检查是否已完成 exit-only cleanup，避免重复触发
+            if task and not has_running_task and task.end_reason == "sell signal cleanup":
+                # 已经完成过清仓，不再重复添加到 pending_exit_topics
+                continue
+
             if not has_running_task and not has_history:
                 print(
                     "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
