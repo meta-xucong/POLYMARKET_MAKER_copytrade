@@ -1085,8 +1085,9 @@ class AutoRunManager:
         task.heartbeat(f"process finished rc={rc}")
         self._update_log_excerpt(task)
 
-        # 如果是 exit-only cleanup 完成，记录到已完成集合，防止重复触发
-        if task.end_reason == "sell signal cleanup":
+        # 如果是因 sell signal 退出（包括运行中收到信号和 exit-only cleanup），
+        # 记录到已完成集合，防止重复触发清仓
+        if task.end_reason in ("sell signal", "sell signal cleanup"):
             self._completed_exit_cleanup_tokens.add(task.topic_id)
 
         if task.no_restart:
