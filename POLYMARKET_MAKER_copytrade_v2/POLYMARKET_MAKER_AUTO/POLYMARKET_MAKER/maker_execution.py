@@ -963,6 +963,9 @@ def maker_sell_follow_ask_with_floor_wait(
     consecutive_insufficient_with_position = 0
     missing_position_retry = 0
     shortage_retry_count = 0
+    # 仓位不足后缩减目标的锁定标志，防止目标被扩回
+    shrink_locked = False
+    shrink_locked_goal: Optional[float] = None
     try:
         aggressive_timeout = float(aggressive_timeout)
     except (TypeError, ValueError):
@@ -1053,6 +1056,9 @@ def maker_sell_follow_ask_with_floor_wait(
                     )
                     min_goal = max(filled_total, 0.0)
                     new_goal = _apply_goal_cap(max(adjusted_target, min_goal))
+                    # 如果已锁定缩减目标，则只允许进一步缩减，不允许扩回
+                    if shrink_locked and shrink_locked_goal is not None:
+                        new_goal = min(new_goal, shrink_locked_goal)
                     if abs(new_goal - goal_size) > _MIN_FILL_EPS:
                         change = "扩充" if new_goal > goal_size else "收缩"
                         prev_goal = goal_size
@@ -1061,6 +1067,7 @@ def maker_sell_follow_ask_with_floor_wait(
                         print(
                             "[MAKER][SELL] 仓位更新 -> "
                             f"{change}目标至 {goal_size:.{SELL_SIZE_DP}f}"
+                            + (" (已锁定不扩回)" if shrink_locked else "")
                         )
                         _touch_activity()
                         if remaining <= _MIN_FILL_EPS:
@@ -1283,12 +1290,16 @@ def maker_sell_follow_ask_with_floor_wait(
                         break
 
                     refreshed_goal = _apply_goal_cap(max(filled_total + live_target, filled_total))
+                    # 如果已锁定缩减目标，则只允许进一步缩减，不允许扩回
+                    if shrink_locked and shrink_locked_goal is not None:
+                        refreshed_goal = min(refreshed_goal, shrink_locked_goal)
                     refreshed_remaining = max(refreshed_goal - filled_total, 0.0)
                     goal_size = refreshed_goal
                     remaining = refreshed_remaining
                     print(
                         "[MAKER][SELL] 刷新仓位后按最新可用数量重试 -> "
                         f"goal={goal_size:.{SELL_SIZE_DP}f} remain={remaining:.{SELL_SIZE_DP}f}"
+                        + (" (已锁定不扩回)" if shrink_locked else "")
                     )
 
                     if refreshed_remaining < 0.01 or (
@@ -1312,9 +1323,12 @@ def maker_sell_follow_ask_with_floor_wait(
                             goal_size = filled_total + shrink_candidate
                             remaining = max(goal_size - filled_total, 0.0)
                             consecutive_insufficient_with_position = 5
+                            # 锁定缩减后的目标，防止后续刷新时扩回
+                            shrink_locked = True
+                            shrink_locked_goal = goal_size
                             print(
                                 "[MAKER][SELL] 连续仓位不足，缩减卖出目标后重试 -> "
-                                f"old={refreshed_remaining:.{SELL_SIZE_DP}f} new={remaining:.{SELL_SIZE_DP}f}"
+                                f"old={refreshed_remaining:.{SELL_SIZE_DP}f} new={remaining:.{SELL_SIZE_DP}f} (已锁定)"
                             )
                         elif consecutive_insufficient_with_position > 10:
                             final_status = "FAILED"
