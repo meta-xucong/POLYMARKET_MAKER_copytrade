@@ -43,6 +43,13 @@ SELL_SIZE_DP = 2
 _MIN_FILL_EPS = 1e-9
 DEFAULT_MIN_ORDER_SIZE = 5.0
 
+# 价格获取失败警告的频率限制（秒）
+_PRICE_FETCH_WARN_INTERVAL = 60.0
+# 价格获取失败警告的上次时间记录 {(token_id, side): last_warn_ts}
+_price_fetch_warn_times: Dict[Tuple[str, str], float] = {}
+# 价格无效超时时间（秒）- 连续无法获取有效价格则退出
+PRICE_INVALID_TIMEOUT_SEC = 600.0  # 10 分钟
+
 
 def _round_up_to_dp(value: float, dp: int) -> float:
     factor = 10 ** dp
@@ -221,11 +228,16 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         if best is not None:
             return PriceSample(float(best.price), best.decimals)
 
-    # P0修复：如果所有方法都失败，打印诊断信息（限制频率）
+    # P0修复：如果所有方法都失败，打印诊断信息（限制频率，避免日志刷屏）
     if attempted_methods:
-        print(f"[FETCH][WARN] 无法通过 REST API 获取 {side} 价格，尝试了 {len(attempted_methods)} 个方法: {', '.join(attempted_methods[:3])}")
-        if last_error:
-            print(f"[FETCH][WARN] 最后一个错误: {last_error}")
+        warn_key = (token_id, side)
+        now = time.time()
+        last_warn = _price_fetch_warn_times.get(warn_key, 0.0)
+        if now - last_warn >= _PRICE_FETCH_WARN_INTERVAL:
+            _price_fetch_warn_times[warn_key] = now
+            print(f"[FETCH][WARN] 无法通过 REST API 获取 {side} 价格，尝试了 {len(attempted_methods)} 个方法: {', '.join(attempted_methods[:3])}")
+            if last_error:
+                print(f"[FETCH][WARN] 最后一个错误: {last_error}")
     return None
 
 
@@ -492,6 +504,8 @@ def maker_buy_follow_bid(
     no_fill_poll_count = 0
 
     next_probe_at = 0.0
+    # 价格无效超时追踪：连续无法获取有效价格的开始时间
+    price_invalid_since: Optional[float] = None
 
     def _maybe_update_price_dp(observed: Optional[int]) -> None:
         nonlocal price_dp_active, tick
@@ -619,6 +633,14 @@ def maker_buy_follow_bid(
                 break
             bid_info = _best_bid_info(client, token_id, best_bid_fn)
             if bid_info is None:
+                # 价格无效超时检测：如果连续 10 分钟无法获取有效价格，退出
+                if price_invalid_since is None:
+                    price_invalid_since = time.time()
+                    print("[MAKER][BUY] 价格无效，开始计时等待恢复...")
+                elif time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC:
+                    print(f"[MAKER][BUY] 价格持续无效超过 {PRICE_INVALID_TIMEOUT_SEC/60:.0f} 分钟，退出买入流程")
+                    final_status = "PRICE_TIMEOUT"
+                    break
                 # P0修复：添加诊断日志，避免静默等待
                 now = time.time()
                 if now - last_diagnostic_at >= diagnostic_interval:
@@ -639,6 +661,11 @@ def maker_buy_follow_bid(
                     last_diagnostic_at = now
                 sleep_fn(poll_sec)
                 continue
+            # 价格恢复有效，重置无效计时器
+            if price_invalid_since is not None:
+                elapsed = time.time() - price_invalid_since
+                print(f"[MAKER][BUY] 价格恢复有效，无效持续时间 {elapsed:.1f} 秒")
+                price_invalid_since = None
             bid = bid_info.price
             if bid <= 0:
                 sleep_fn(poll_sec)
@@ -966,6 +993,8 @@ def maker_sell_follow_ask_with_floor_wait(
     # 仓位不足后缩减目标的锁定标志，防止目标被扩回
     shrink_locked = False
     shrink_locked_goal: Optional[float] = None
+    # 价格无效超时追踪：连续无法获取有效价格的开始时间
+    price_invalid_since: Optional[float] = None
     try:
         aggressive_timeout = float(aggressive_timeout)
     except (TypeError, ValueError):
@@ -1135,6 +1164,14 @@ def maker_sell_follow_ask_with_floor_wait(
                         )
         if not aggressive_mode:
             if ask is None or ask <= 0:
+                # 价格无效超时检测：如果连续 10 分钟无法获取有效价格，退出
+                if price_invalid_since is None:
+                    price_invalid_since = time.time()
+                    print("[MAKER][SELL] 价格无效，开始计时等待恢复...")
+                elif time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC:
+                    print(f"[MAKER][SELL] 价格持续无效超过 {PRICE_INVALID_TIMEOUT_SEC/60:.0f} 分钟，退出卖出流程")
+                    final_status = "PRICE_TIMEOUT"
+                    break
                 waiting_for_floor = True
                 if active_order:
                     _cancel_order(client, active_order)
@@ -1174,6 +1211,14 @@ def maker_sell_follow_ask_with_floor_wait(
                 waiting_for_floor = False
         else:
             if ask is None or ask <= 0:
+                # 价格无效超时检测（aggressive 模式同样适用）
+                if price_invalid_since is None:
+                    price_invalid_since = time.time()
+                    print("[MAKER][SELL] 价格无效，开始计时等待恢复...")
+                elif time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC:
+                    print(f"[MAKER][SELL] 价格持续无效超过 {PRICE_INVALID_TIMEOUT_SEC/60:.0f} 分钟，退出卖出流程")
+                    final_status = "PRICE_TIMEOUT"
+                    break
                 sleep_fn(poll_sec)
                 continue
             if ask <= floor_float + 1e-12:
@@ -1182,6 +1227,12 @@ def maker_sell_follow_ask_with_floor_wait(
             elif aggressive_floor_locked and ask > floor_float + 1e-12:
                 aggressive_floor_locked = False
                 aggressive_locked_price = None
+
+        # 价格恢复有效，重置无效计时器
+        if price_invalid_since is not None:
+            elapsed = time.time() - price_invalid_since
+            print(f"[MAKER][SELL] 价格恢复有效，无效持续时间 {elapsed:.1f} 秒")
+            price_invalid_since = None
 
         if active_order is None:
             px_candidate = max(_round_down_to_dp(ask, price_dp), floor_float)
