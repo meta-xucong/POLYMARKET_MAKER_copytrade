@@ -420,6 +420,8 @@ class AutoRunManager:
         self._refill_retry_counts: Dict[str, int] = {}  # token_id -> 已重试次数
         self._next_refill_check: float = 0.0
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
+        # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
+        self._completed_exit_cleanup_tokens: set[str] = set()
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -1082,6 +1084,10 @@ class AutoRunManager:
             task.status = "exited" if rc == 0 else "error"
         task.heartbeat(f"process finished rc={rc}")
         self._update_log_excerpt(task)
+
+        # 如果是 exit-only cleanup 完成，记录到已完成集合，防止重复触发
+        if task.end_reason == "sell signal cleanup":
+            self._completed_exit_cleanup_tokens.add(task.topic_id)
 
         if task.no_restart:
             return
@@ -1974,8 +1980,13 @@ class AutoRunManager:
             has_history = token_id in self.handled_topics
 
             # 检查是否已完成 exit-only cleanup，避免重复触发
+            # 方式1: task 对象仍存在且标记为 sell signal cleanup
+            # 方式2: token 已记录在 _completed_exit_cleanup_tokens 集合中（task 被 purge 后仍有效）
+            if token_id in self._completed_exit_cleanup_tokens:
+                continue
             if task and not has_running_task and task.end_reason == "sell signal cleanup":
                 # 已经完成过清仓，不再重复添加到 pending_exit_topics
+                self._completed_exit_cleanup_tokens.add(token_id)  # 同步到集合
                 continue
 
             if not has_running_task and not has_history:
