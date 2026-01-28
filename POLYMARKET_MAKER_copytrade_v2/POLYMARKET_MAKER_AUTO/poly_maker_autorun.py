@@ -2311,15 +2311,17 @@ class AutoRunManager:
         restored_topics: List[str] = []
         for topic_id in pending_topics:
             topic_id = str(topic_id)
-            if topic_id in self.pending_topics or topic_id in self.handled_topics:
+            # 只检查是否已在 pending 队列中，不检查 handled_topics
+            # 因为保存的 pending_topics 代表"还未完成的任务"，即使在 handled 中也应恢复
+            if topic_id in self.pending_topics:
                 continue
             restored_topics.append(topic_id)
             self.pending_topics.append(topic_id)
 
         for topic_id, info in tasks_snapshot.items():
             topic_id = str(topic_id)
-            if topic_id in self.handled_topics:
-                continue
+            # 不检查 handled_topics，因为保存的 tasks 代表"上次运行中的任务"
+            # 即使在 handled 中也应恢复，以确保任务不丢失
             if topic_id not in self.pending_topics:
                 restored_topics.append(topic_id)
                 self.pending_topics.append(topic_id)
