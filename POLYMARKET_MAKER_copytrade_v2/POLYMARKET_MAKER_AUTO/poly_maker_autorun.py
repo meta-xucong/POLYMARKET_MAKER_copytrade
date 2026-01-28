@@ -446,6 +446,8 @@ class AutoRunManager:
                     self._purge_inactive_tasks()
                     if now >= self._next_topics_refresh:
                         self._refresh_topics()
+                        # 清理 MARKET_CLOSED 的 token（从 copytrade 文件中移除）
+                        self._cleanup_closed_market_tokens()
                         self._next_topics_refresh = now + self.config.copytrade_poll_sec
                     # Slot回填检查
                     if self.config.enable_slot_refill and now >= self._next_refill_check:
@@ -1082,6 +1084,8 @@ class AutoRunManager:
                         f"[AUTO] topic={task.topic_id} 日志显示市场已结束，自动结束该话题。"
                     )
                     self._terminate_task(task, reason="market closed (auto)")
+                    # 从 copytrade 文件中移除该 token，避免重启后再次加入
+                    self._remove_token_from_copytrade_files(task.topic_id)
                 continue
             self._handle_process_exit(task, rc)
 
@@ -1641,6 +1645,98 @@ class AutoRunManager:
                 except ValueError:
                     pass
 
+    # ========== 市场关闭时自动清理 token ==========
+    def _remove_token_from_copytrade_files(self, token_id: str) -> None:
+        """
+        从 copytrade JSON 文件中移除指定的 token，避免重启后再次加入队列。
+
+        会从以下文件中移除：
+        - tokens_from_copytrade.json
+        - copytrade_sell_signals.json
+        """
+        if not token_id:
+            return
+
+        # 1. 从 tokens_from_copytrade.json 移除
+        tokens_path = self.config.copytrade_tokens_path
+        if tokens_path.exists():
+            try:
+                with tokens_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                if isinstance(data, dict) and "tokens" in data:
+                    original_count = len(data["tokens"])
+                    data["tokens"] = [
+                        t for t in data["tokens"]
+                        if _topic_id_from_entry(t) != token_id
+                    ]
+                    removed_count = original_count - len(data["tokens"])
+
+                    if removed_count > 0:
+                        data["updated_at"] = time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                        )
+                        with tokens_path.open("w", encoding="utf-8") as f:
+                            json.dump(data, f, ensure_ascii=False, indent=2)
+                        print(
+                            f"[CLEANUP] 已从 tokens_from_copytrade.json 移除 token={token_id[:20]}..."
+                        )
+            except (json.JSONDecodeError, OSError) as exc:
+                print(f"[CLEANUP] 更新 tokens_from_copytrade.json 失败: {exc}")
+
+        # 2. 从 copytrade_sell_signals.json 移除
+        signals_path = self.config.copytrade_sell_signals_path
+        if signals_path.exists():
+            try:
+                with signals_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                if isinstance(data, dict) and "sell_tokens" in data:
+                    original_count = len(data["sell_tokens"])
+                    data["sell_tokens"] = [
+                        t for t in data["sell_tokens"]
+                        if _topic_id_from_entry(t) != token_id
+                    ]
+                    removed_count = original_count - len(data["sell_tokens"])
+
+                    if removed_count > 0:
+                        data["updated_at"] = time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                        )
+                        with signals_path.open("w", encoding="utf-8") as f:
+                            json.dump(data, f, ensure_ascii=False, indent=2)
+                        print(
+                            f"[CLEANUP] 已从 copytrade_sell_signals.json 移除 token={token_id[:20]}..."
+                        )
+            except (json.JSONDecodeError, OSError) as exc:
+                print(f"[CLEANUP] 更新 copytrade_sell_signals.json 失败: {exc}")
+
+        # 3. 从内存队列中移除
+        if token_id in self.pending_topics:
+            try:
+                self.pending_topics.remove(token_id)
+                print(f"[CLEANUP] 已从 pending_topics 移除 token={token_id[:20]}...")
+            except ValueError:
+                pass
+
+        if token_id in self.pending_exit_topics:
+            try:
+                self.pending_exit_topics.remove(token_id)
+                print(f"[CLEANUP] 已从 pending_exit_topics 移除 token={token_id[:20]}...")
+            except ValueError:
+                pass
+
+        # 4. 从 topic_details 中移除
+        if token_id in self.topic_details:
+            self.topic_details.pop(token_id, None)
+
+        # 5. 从 latest_topics 中移除
+        if token_id in self.latest_topics:
+            try:
+                self.latest_topics.remove(token_id)
+            except ValueError:
+                pass
+
     # ========== Slot Refill (回填) 逻辑 ==========
     def _load_exit_tokens(self) -> List[Dict[str, Any]]:
         """
@@ -1660,6 +1756,40 @@ class AutoRunManager:
         except (json.JSONDecodeError, OSError) as exc:
             print(f"[REFILL] 读取退出token记录失败: {exc}")
             return []
+
+    def _cleanup_closed_market_tokens(self) -> None:
+        """
+        清理 exit_tokens.json 中因 MARKET_CLOSED 退出的 token。
+        从 copytrade JSON 文件中移除这些 token，避免重启后再次加入队列。
+        """
+        exit_records = self._load_exit_tokens()
+        if not exit_records:
+            return
+
+        cleaned_tokens: List[str] = []
+        for record in exit_records:
+            token_id = record.get("token_id")
+            exit_reason = record.get("exit_reason", "")
+
+            if not token_id:
+                continue
+
+            # 只处理 MARKET_CLOSED 退出原因
+            if exit_reason != "MARKET_CLOSED":
+                continue
+
+            # 检查是否已在 copytrade 文件中（避免重复清理）
+            if token_id not in self.latest_topics:
+                continue
+
+            # 从 copytrade 文件中移除
+            self._remove_token_from_copytrade_files(token_id)
+            cleaned_tokens.append(token_id)
+
+        if cleaned_tokens:
+            print(
+                f"[CLEANUP] 已清理 {len(cleaned_tokens)} 个市场关闭的 token"
+            )
 
     def _should_refill_slots(self) -> bool:
         """
