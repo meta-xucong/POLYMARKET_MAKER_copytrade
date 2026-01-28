@@ -249,6 +249,9 @@ class GlobalConfig:
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
     max_refill_retries: int = DEFAULT_GLOBAL_CONFIG["max_refill_retries"]
     refill_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG["refill_check_interval_sec"]
+    # Maker 子进程配置
+    maker_poll_sec: float = 10.0  # 挂单轮询间隔（秒）
+    maker_position_sync_interval: float = 60.0  # 仓位同步间隔（秒）
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GlobalConfig":
@@ -256,7 +259,8 @@ class GlobalConfig:
         scheduler = data.get("scheduler") or {}
         paths = data.get("paths") or {}
         debug = data.get("debug") or {}
-        flat_overrides = {k: v for k, v in data.items() if k not in {"scheduler", "paths"}}
+        maker = data.get("maker") or {}
+        flat_overrides = {k: v for k, v in data.items() if k not in {"scheduler", "paths", "maker"}}
         merged = {**DEFAULT_GLOBAL_CONFIG, **flat_overrides}
 
         log_dir = Path(
@@ -349,6 +353,13 @@ class GlobalConfig:
             ),
             refill_check_interval_sec=float(
                 scheduler.get("refill_check_interval_sec", merged.get("refill_check_interval_sec", 60.0))
+            ),
+            # Maker 子进程配置
+            maker_poll_sec=float(
+                maker.get("poll_sec", merged.get("maker_poll_sec", 10.0))
+            ),
+            maker_position_sync_interval=float(
+                maker.get("position_sync_interval", merged.get("maker_position_sync_interval", 60.0))
             ),
         )
 
@@ -1266,6 +1277,10 @@ class AutoRunManager:
             merged["resume_state"] = resume_state
             refill_retry_count = topic_info.get("refill_retry_count", 0)
             merged["refill_retry_count"] = refill_retry_count
+
+        # Maker 子进程配置（从 global_config 传递）
+        merged["maker_poll_sec"] = self.config.maker_poll_sec
+        merged["maker_position_sync_interval"] = self.config.maker_position_sync_interval
 
         return merged
 

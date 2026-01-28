@@ -2264,6 +2264,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     }
     exit_only = bool(run_cfg.get("exit_only", False))
 
+    # ========== Maker 配置（从 global_config 传递）==========
+    maker_poll_sec = float(run_cfg.get("maker_poll_sec", 10.0))
+    maker_position_sync_interval = float(run_cfg.get("maker_position_sync_interval", POSITION_SYNC_INTERVAL))
+    if maker_poll_sec != 10.0 or maker_position_sync_interval != POSITION_SYNC_INTERVAL:
+        print(f"[INIT] Maker 配置: poll_sec={maker_poll_sec}s, position_sync_interval={maker_position_sync_interval}s")
+
     # ========== Slot Refill (回填) 恢复状态 ==========
     resume_state = run_cfg.get("resume_state")
     if resume_state and isinstance(resume_state, dict):
@@ -3463,7 +3469,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         if now < position_sync_block_until:
             next_position_sync = max(next_position_sync, position_sync_block_until)
             return
-        next_position_sync = now + POSITION_SYNC_INTERVAL
+        next_position_sync = now + maker_position_sync_interval
         try:
             avg_px, total_pos, origin_note = _lookup_position_avg_price(client, token_id)
         except Exception as probe_exc:
@@ -3720,7 +3726,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 token_id=token_id,
                 position_size=eff_qty,
                 floor_X=float(floor_price),
-                poll_sec=10.0,
+                poll_sec=maker_poll_sec,
                 min_order_size=API_MIN_ORDER_SIZE,
                 best_ask_fn=_latest_best_ask,
                 stop_check=stop_event.is_set,
@@ -4429,7 +4435,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         client=client,
                         token_id=token_id,
                         target_size=order_size,
-                        poll_sec=10.0,
+                        poll_sec=maker_poll_sec,
                         min_quote_amt=1.0,
                         min_order_size=API_MIN_ORDER_SIZE,
                         best_bid_fn=_latest_best_bid,
