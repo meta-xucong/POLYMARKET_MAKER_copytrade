@@ -422,6 +422,11 @@ class AutoRunManager:
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
+        # 日志清理相关（每天清理7天前的日志）
+        self._next_log_cleanup: float = 0.0
+        self._log_cleanup_interval_sec: float = 3600.0  # 每小时检查一次
+        self._log_retention_days: int = 7  # 保留7天
+        self._last_cleanup_date: Optional[str] = None  # 记录上次清理日期，避免同一天重复清理
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -452,6 +457,10 @@ class AutoRunManager:
                         self._next_status_dump = now + max(
                             5.0, self.config.command_poll_sec
                         )
+                    # 日志清理检查（每天清理一次7天前的日志）
+                    if now >= self._next_log_cleanup:
+                        self._cleanup_old_logs()
+                        self._next_log_cleanup = now + self._log_cleanup_interval_sec
                     time.sleep(self.config.command_poll_sec)
                 except Exception as exc:  # pragma: no cover - 防御性保护
                     print(f"[ERROR] 主循环异常已捕获，将继续运行: {exc}")
@@ -2012,6 +2021,117 @@ class AutoRunManager:
                     and token_id not in self.pending_topics
                 ):
                     self.pending_exit_topics.append(token_id)
+
+    def _cleanup_old_logs(self) -> None:
+        """清理7天前的日志文件，每天只执行一次"""
+        today = time.strftime("%Y-%m-%d")
+        if self._last_cleanup_date == today:
+            # 今天已经清理过，跳过
+            return
+
+        # 计算截止时间（7天前）
+        cutoff_ts = time.time() - (self._log_retention_days * 24 * 3600)
+
+        # 要清理的目录列表
+        cleanup_dirs = [
+            self.config.data_dir,
+            self.config.log_dir,
+        ]
+
+        total_deleted = 0
+        total_size_freed = 0
+
+        for dir_path in cleanup_dirs:
+            if not dir_path.exists():
+                continue
+            try:
+                deleted, size_freed = self._cleanup_directory(dir_path, cutoff_ts)
+                total_deleted += deleted
+                total_size_freed += size_freed
+            except Exception as exc:
+                print(f"[LOG_CLEANUP][WARN] 清理目录 {dir_path} 时出错: {exc}")
+
+        self._last_cleanup_date = today
+
+        if total_deleted > 0:
+            size_mb = total_size_freed / (1024 * 1024)
+            print(f"[LOG_CLEANUP] 清理完成: 删除 {total_deleted} 个文件，释放 {size_mb:.2f} MB")
+        else:
+            print(f"[LOG_CLEANUP] 检查完成，无需清理（保留 {self._log_retention_days} 天内的文件）")
+
+    def _cleanup_directory(self, dir_path: Path, cutoff_ts: float) -> tuple:
+        """递归清理指定目录中的旧文件，返回 (删除文件数, 释放字节数)"""
+        deleted_count = 0
+        size_freed = 0
+
+        # 保护列表：这些文件/目录不应被删除
+        protected_names = {
+            "handled_topics.json",
+            "autorun_status.json",
+            "exit_tokens.json",
+            "ws_cache.json",
+            ".gitkeep",
+        }
+
+        try:
+            for item in dir_path.rglob("*"):
+                if not item.is_file():
+                    continue
+
+                # 跳过受保护的文件
+                if item.name in protected_names:
+                    continue
+
+                # 只清理日志文件和临时文件
+                # 清理的文件类型：.log, .log.*, .json (非保护), .tmp
+                suffix_lower = item.suffix.lower()
+                name_lower = item.name.lower()
+
+                # 判断是否为可清理的文件类型
+                is_log_file = (
+                    suffix_lower == ".log"
+                    or ".log." in name_lower  # 如 xxx.log.1, xxx.log.2024-01-01
+                    or suffix_lower == ".tmp"
+                )
+
+                # 对于 data 目录下的 JSON 文件，只清理非保护的
+                is_old_json = (
+                    suffix_lower == ".json"
+                    and item.name not in protected_names
+                    and "data" in str(item.parent)
+                )
+
+                if not (is_log_file or is_old_json):
+                    continue
+
+                try:
+                    mtime = item.stat().st_mtime
+                    if mtime < cutoff_ts:
+                        file_size = item.stat().st_size
+                        item.unlink()
+                        deleted_count += 1
+                        size_freed += file_size
+                except OSError:
+                    # 文件可能正在被使用，跳过
+                    pass
+
+        except Exception as exc:
+            print(f"[LOG_CLEANUP][WARN] 遍历目录 {dir_path} 时出错: {exc}")
+
+        # 清理空目录
+        try:
+            for item in sorted(dir_path.rglob("*"), reverse=True):
+                if item.is_dir():
+                    try:
+                        # 尝试删除空目录
+                        if not any(item.iterdir()):
+                            item.rmdir()
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
+        return deleted_count, size_freed
 
     def _cleanup_all_tasks(self) -> None:
         for task in list(self.tasks.values()):
