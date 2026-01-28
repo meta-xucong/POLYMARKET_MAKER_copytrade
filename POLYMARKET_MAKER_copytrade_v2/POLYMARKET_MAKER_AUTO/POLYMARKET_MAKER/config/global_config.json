@@ -8,6 +8,10 @@
     "max_refill_retries": 3,
     "refill_check_interval_sec": 60.0
   },
+  "maker": {
+    "poll_sec": 10.0,
+    "position_sync_interval": 60.0
+  },
   "debug": {
     "ws_debug_raw": false
   }
