@@ -2045,12 +2045,17 @@ class AutoRunManager:
                 print(
                     f"[INCR] 新话题 {len(new_topics)} 个，将更新历史记录 preview={preview}"
                 )
+                added_topics: List[str] = []
                 for topic_id in new_topics:
                     if topic_id in self.pending_topics:
                         continue
                     if topic_id in self.tasks and self.tasks[topic_id].is_running():
                         continue
                     self.pending_topics.append(topic_id)
+                    added_topics.append(topic_id)
+                # 立即标记为已处理，防止下次轮询时重复检测到同一 token
+                if added_topics:
+                    self._update_handled_topics(added_topics)
             else:
                 print("[INCR] 无新增话题")
         except Exception as exc:  # pragma: no cover - 网络/外部依赖
