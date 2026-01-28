@@ -50,6 +50,15 @@ _price_fetch_warn_times: Dict[Tuple[str, str], float] = {}
 # 价格无效超时时间（秒）- 连续无法获取有效价格则退出
 PRICE_INVALID_TIMEOUT_SEC = 600.0  # 10 分钟
 
+# ========== 指数避退机制（Exponential Backoff）==========
+# 当 REST API 调用失败（尤其是 429 Rate Limit）时，使用指数避退减少请求频率
+# 避退时间序列：2s -> 4s -> 8s -> 16s -> 32s -> 60s（最大）
+_BACKOFF_BASE_SEC = 2.0
+_BACKOFF_MAX_SEC = 60.0
+_BACKOFF_MAX_LEVEL = 5  # 2^5 = 32s, 之后固定60s
+# 避退状态记录 {(token_id, side): {"until": float, "level": int, "last_error": str}}
+_api_backoff_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
 
 def _round_up_to_dp(value: float, dp: int) -> float:
     factor = 10 ** dp
@@ -187,7 +196,74 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
     return None
 
 
+def _is_rate_limit_error(error: Exception) -> bool:
+    """检测是否为 429 Rate Limit 错误"""
+    error_str = str(error).lower()
+    # 检查常见的 rate limit 错误模式
+    rate_limit_patterns = ("429", "rate limit", "too many requests", "throttl")
+    return any(p in error_str for p in rate_limit_patterns)
+
+
+def _get_backoff_wait(token_id: str, side: str) -> float:
+    """返回当前需要等待的避退时间（秒），0 表示无需等待"""
+    key = (token_id, side)
+    state = _api_backoff_state.get(key)
+    if state is None:
+        return 0.0
+    until = state.get("until", 0.0)
+    remaining = until - time.time()
+    return max(remaining, 0.0)
+
+
+def _record_api_failure(token_id: str, side: str, error: str, is_rate_limit: bool = False) -> None:
+    """记录 API 失败并更新避退状态"""
+    key = (token_id, side)
+    state = _api_backoff_state.get(key, {"until": 0.0, "level": 0, "last_error": ""})
+
+    # 增加避退等级
+    new_level = min(state.get("level", 0) + 1, _BACKOFF_MAX_LEVEL + 1)
+
+    # 计算避退时间：2^level 秒，最大 60 秒
+    if new_level <= _BACKOFF_MAX_LEVEL:
+        backoff_sec = _BACKOFF_BASE_SEC * (2 ** (new_level - 1))
+    else:
+        backoff_sec = _BACKOFF_MAX_SEC
+
+    # 如果是 rate limit 错误，使用更长的避退时间
+    if is_rate_limit:
+        backoff_sec = max(backoff_sec, 10.0)  # 至少 10 秒
+
+    _api_backoff_state[key] = {
+        "until": time.time() + backoff_sec,
+        "level": new_level,
+        "last_error": error,
+    }
+
+
+def _record_api_success(token_id: str, side: str) -> None:
+    """API 调用成功，重置避退状态"""
+    key = (token_id, side)
+    if key in _api_backoff_state:
+        del _api_backoff_state[key]
+
+
 def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSample]:
+    # ========== 指数避退检查 ==========
+    # 如果处于避退期，跳过本次调用
+    backoff_wait = _get_backoff_wait(token_id, side)
+    if backoff_wait > 0:
+        # 限制频率打印避退信息
+        warn_key = (token_id, side)
+        now = time.time()
+        last_warn = _price_fetch_warn_times.get(warn_key, 0.0)
+        if now - last_warn >= _PRICE_FETCH_WARN_INTERVAL:
+            _price_fetch_warn_times[warn_key] = now
+            state = _api_backoff_state.get(warn_key, {})
+            level = state.get("level", 0)
+            last_err = state.get("last_error", "unknown")
+            print(f"[FETCH][BACKOFF] REST API {side} 处于避退期，剩余 {backoff_wait:.1f}s (level={level}, 上次错误: {last_err[:80]})")
+        return None
+
     # P0修复：精简API方法候选列表，移除不兼容的调用
     # py_clob_client.ClobClient 主要方法：
     # - get_order_book(token_id) - 获取订单簿（最常用）
@@ -203,6 +279,7 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
     # P0修复：记录尝试的方法
     attempted_methods = []
     last_error = None
+    encountered_rate_limit = False
 
     for name, kwargs in method_candidates:
         fn = getattr(client, name, None)
@@ -216,6 +293,10 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
             continue
         except Exception as e:
             last_error = f"{name}: {type(e).__name__} - {e}"
+            # 检测 rate limit 错误
+            if _is_rate_limit_error(e):
+                encountered_rate_limit = True
+                print(f"[FETCH][RATE_LIMIT] 检测到 API 限流 (429)，将启动指数避退: {e}")
             continue
 
         payload = resp
@@ -226,18 +307,29 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
 
         best = _extract_best_price(payload, side)
         if best is not None:
+            # 成功获取价格，重置避退状态
+            _record_api_success(token_id, side)
             return PriceSample(float(best.price), best.decimals)
 
-    # P0修复：如果所有方法都失败，打印诊断信息（限制频率，避免日志刷屏）
-    if attempted_methods:
+    # 所有方法都失败，记录避退状态
+    if attempted_methods and last_error:
+        _record_api_failure(token_id, side, last_error, is_rate_limit=encountered_rate_limit)
+
+        # 限制频率打印警告
         warn_key = (token_id, side)
         now = time.time()
         last_warn = _price_fetch_warn_times.get(warn_key, 0.0)
         if now - last_warn >= _PRICE_FETCH_WARN_INTERVAL:
             _price_fetch_warn_times[warn_key] = now
-            print(f"[FETCH][WARN] 无法通过 REST API 获取 {side} 价格，尝试了 {len(attempted_methods)} 个方法: {', '.join(attempted_methods[:3])}")
-            if last_error:
-                print(f"[FETCH][WARN] 最后一个错误: {last_error}")
+            state = _api_backoff_state.get(warn_key, {})
+            backoff_until = state.get("until", 0.0)
+            backoff_remaining = max(backoff_until - now, 0.0)
+            if encountered_rate_limit:
+                print(f"[FETCH][WARN] REST API 被限流，已启动避退 {backoff_remaining:.1f}s")
+            else:
+                print(f"[FETCH][WARN] 无法通过 REST API 获取 {side} 价格，尝试了 {len(attempted_methods)} 个方法: {', '.join(attempted_methods[:3])}")
+                print(f"[FETCH][WARN] 最后错误: {last_error}，避退 {backoff_remaining:.1f}s 后重试")
+
     return None
 
 
