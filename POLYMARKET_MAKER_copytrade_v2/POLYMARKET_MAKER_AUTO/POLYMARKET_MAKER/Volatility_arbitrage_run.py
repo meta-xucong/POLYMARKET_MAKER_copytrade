@@ -3544,6 +3544,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             )
             try:
                 if position_size is not None:
+                    # 先撤销该 token 的所有已有挂单，释放被锁定的仓位
+                    canceled = _cancel_open_orders_for_token(client, token_id)
+                    if canceled:
+                        print(f"[POSITION][SYNC] 已撤销 {canceled} 个现有挂单以释放锁定仓位")
                     strategy.mark_awaiting(ActionType.SELL)
                     print("[STATE] 同步远端持仓后，标记等待卖出以避免误入买入分支。")
                     _execute_sell(position_size, floor_hint=fallback_px, source="[POSITION][SYNC]")
