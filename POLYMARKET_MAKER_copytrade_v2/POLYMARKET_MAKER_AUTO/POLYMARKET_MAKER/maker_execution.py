@@ -1087,6 +1087,8 @@ def maker_sell_follow_ask_with_floor_wait(
     shrink_locked_goal: Optional[float] = None
     # 价格无效超时追踪：连续无法获取有效价格的开始时间
     price_invalid_since: Optional[float] = None
+    transient_ask_none = 0
+    transient_ask_none_limit = 3
     try:
         aggressive_timeout = float(aggressive_timeout)
     except (TypeError, ValueError):
@@ -1216,6 +1218,12 @@ def maker_sell_follow_ask_with_floor_wait(
                             _touch_activity()
                             continue
 
+        if best_ask_fn is not None:
+            try:
+                best_ask_fn()
+            except Exception:
+                pass
+
         if api_min_qty and remaining + _MIN_FILL_EPS < api_min_qty:
             final_status = "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
             break
@@ -1254,6 +1262,13 @@ def maker_sell_follow_ask_with_floor_wait(
                             "[MAKER][SELL] 卖一校验覆盖（" + direction + ") -> "
                             f"old={prev:.{price_dp}f} new={ask:.{price_dp}f}"
                         )
+        if ask is None or ask <= 0:
+            if transient_ask_none < transient_ask_none_limit:
+                transient_ask_none += 1
+                sleep_fn(poll_sec)
+                continue
+        else:
+            transient_ask_none = 0
         if not aggressive_mode:
             if ask is None or ask <= 0:
                 # 价格无效超时检测：如果连续 10 分钟无法获取有效价格，退出
@@ -1389,6 +1404,13 @@ def maker_sell_follow_ask_with_floor_wait(
                 )
                 if insufficient:
                     shortage_retry_count += 1
+                    if active_order:
+                        _cancel_order(client, active_order)
+                        rec = records.get(active_order)
+                        if rec is not None:
+                            rec["status"] = "CANCELLED"
+                        active_order = None
+                        active_price = None
                     print("[MAKER][SELL] 下单失败，疑似仓位不足，等待60s后刷新仓位。")
                     sleep_fn(60)
                     refreshed_goal: Optional[float] = None
