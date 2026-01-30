@@ -1,0 +1,2228 @@
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/run_params_47762771985439515891493048505438381476431742366648422118840977543937503496558.json
+[INIT] API 凭证已验证。
+[INIT] ClobClient 就绪。
+[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。
+[INFO] 市场/子问题标题: US strikes Iran by February 1, 2026?
+[INFO] 使用 token_id: 47762771985439515891493048505438381476431742366648422118840977543937503496558
+[INFO] 市场标注时区: America/New_York
+[INFO] 市场计划截止时间 (UTC): 2026-02-01T00:00:00+00:00
+[WARN] 自动获取的截止日期缺少具体时刻，已按默认配置设置截止时间为 2026-02-01T23:59:00-05:00 (America/New_York)。
+[INFO] 监控目标结束时间 (UTC): 2026-02-02T04:59:00+00:00
+[INFO] 未能识别市场价格精度，默认按盈利百分比下限 0.300% 执行。
+[INIT] 目标 token_id: 47762771985439515891493048505438381476431742366648422118840977543937503496558
+[INIT] 已读取手动份数 10.0，模式：总持仓目标。
+[INIT] 卖出挂单模式：aggressive
+[INIT] 卖出后递增买入阈值已启用，步长 0.0200%。
+[INIT] 价格停滞监控窗口 120.0 分钟，阈值 0.2000%。
+[INIT] 启动后无行情自动退出阈值 10.0 分钟。
+[INIT] 交易信号超时退出阈值 60.0 分钟（长时间无买入/卖出信号将退出）。
+[INIT] 卖出挂单空窗释放阈值 6.0 小时。
+[INFO] 倒计时卖出模式将在市场结束前 300 分钟开启。
+[INIT] Maker 配置: poll_sec=15.0s, position_sync_interval=90.0s
+[WS][SHARED] ✓ 将使用共享 WS 缓存模式
+[WS][SHARED] 缓存路径: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/ws_cache.json
+[WS][SHARED] ✓ 缓存文件新鲜（0秒前更新）
+[RUN] 监听行情中… 输入 stop / exit 可手动停止。
+[WS][SHARED][TRACE] 函数调用次数: 1
+[WS][SHARED][DEBUG] 读取统计: read=1, skip=0, 当前seq=119 (last=0), updated_at=1769736527.27 (last=0.00)
+[WS][SHARED] ✓ 检测到seq增长: 0 → 119 (+119)
+[WS][SHARED] 开始从共享缓存读取数据 (token=47762771985439515891493048505438381476431742366648422118840977543937503496558)
+[WS][SHARED] seq=119, updates=1 (2.0/min), bid=0.78, ask=0.8, price=0.79
+[WS][SHARED][TRACE] ✓ 函数执行完成，准备返回 (latest已设置: True)
+[WAIT][TRACE] _apply_shared_ws_snapshot()返回，latest已设置: True, stop_event: False
+[WAIT][TRACE] Loop iteration 1, latest: True, stop: False
+[WAIT][END] ✓ Waiting loop结束，latest已设置: True
+[WAIT][END] ✓ stop_event未设置，继续初始化...
+[INIT][TRACE] 1. 准备启动input_listener线程...
+[INIT][TRACE] 2. input_listener线程已启动
+[INIT][TRACE] 3. 准备初始化变量和策略状态...
+[INIT][TRACE] 4. 策略状态已获取
+[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts=1769990340.0, market_deadline_ts=1770008340.0)
+[INIT][TRACE] 7. 启动countdown_monitor线程...
+[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...
+[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws=True)
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2): seq和updated_at都未变化且距上次tick仅0.2秒
+[WS][SHARED][SKIP] 当前状态: seq=119, last_seq=119, bid=0.78, ask=0.8
+[HEARTBEAT] 主循环运行中... (use_shared_ws=True) (首次心跳)
+[PX] bid=0.7800 ask=0.8000 mid=0.7900 last=0.7900 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.7900 / 低 0.7900
+    信号超时: 0.0分钟无信号 / 阈值 60分钟
+[PX] bid=0.7800 ask=0.8000 mid=0.7900 last=0.7900 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 5
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.7900 / 低 0.7900
+    信号超时: 0.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=119, updates=5 (9.5/min), bid=0.78, ask=0.8, price=0.79
+[WS][SHARED][DEBUG] 读取统计: read=100, skip=176, 当前seq=119 (last=119), updated_at=1769736527.27 (last=1769736527.27)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=100, use_shared_ws=True)
+[WS][SHARED][TRACE] 函数调用次数: 101
+[PX] bid=0.7800 ask=0.8000 mid=0.7900 last=0.7900 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 11
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.7900 / 低 0.7900
+    信号超时: 1.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=119, updates=6 (12.0/min), bid=0.78, ask=0.8, price=0.79
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=202): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=119, last_seq=119, bid=0.78, ask=0.8
+[PX] bid=0.7800 ask=0.8000 mid=0.7900 last=0.7900 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 17
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.7900 / 低 0.7900
+    信号超时: 1.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=120, updates=6 (9.1/min), bid=0.78, ask=0.8, price=0.79
+[WS][SHARED] ✓ 检测到seq增长: 120 → 124 (+4)
+[WS][SHARED][DEBUG] 读取统计: read=200, skip=354, 当前seq=124 (last=124), updated_at=1769736653.01 (last=1769736653.01)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=200, use_shared_ws=True)
+[WS][SHARED][TRACE] 函数调用次数: 201
+[PX] bid=0.7800 ask=0.8400 mid=0.8100 last=0.8100 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 22
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.8100 / 低 0.7900
+    信号超时: 2.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=125, updates=7 (13.3/min), bid=0.79, ask=0.84, price=0.815
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=402): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=125, last_seq=125, bid=0.79, ask=0.84
+[WS][SHARED] ✓ 检测到seq增长: 125 → 127 (+2)
+[WS][SHARED] ✓ 检测到seq增长: 127 → 129 (+2)
+[WS][SHARED] ✓ 检测到seq增长: 129 → 144 (+15)
+[PX] bid=0.8000 ask=0.8400 mid=0.8200 last=0.8200 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 31
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.8200 / 低 0.7900
+    信号超时: 2.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 144 → 146 (+2)
+[WS][SHARED] seq=146, updates=9 (17.7/min), bid=0.81, ask=0.84, price=0.825
+[WS][SHARED] ✓ 检测到seq增长: 146 → 151 (+5)
+[WS][SHARED] ✓ 检测到seq增长: 151 → 158 (+7)
+[WS][SHARED][TRACE] 函数调用次数: 301
+[WS][SHARED][DEBUG] 读取统计: read=320, skip=560, 当前seq=159 (last=159), updated_at=1769736704.51 (last=1769736704.51)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=320, use_shared_ws=True)
+[PX] bid=0.8100 ask=0.8400 mid=0.8250 last=0.8250 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 39
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.8250 / 低 0.7900
+    信号超时: 3.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=160, updates=7 (12.5/min), bid=0.81, ask=0.84, price=0.825
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=602): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=160, last_seq=160, bid=0.81, ask=0.84
+[PX] bid=0.8100 ask=0.8400 mid=0.8250 last=0.8250 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 43
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.8250 / 低 0.7900
+    信号超时: 3.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=162, updates=8 (14.7/min), bid=0.81, ask=0.84, price=0.825
+[WS][SHARED][TRACE] 函数调用次数: 401
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[HINT][BUY] 目标 10.0000 - 当前仓位(未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558) 0.0000 -> 本次下单 10.0000
+[MAKER][BUY] 开始买入流程 -> target_size=10.0000 poll_sec=15.0s
+[DIAG][BID] latest字典中的token数据: {'price': 0.81, 'best_bid': 0.78, 'best_ask': 0.84, 'ts': 1769736767.970921}
+[DIAG][BID] ORDERBOOK_STALE_AFTER_SEC = 30.0
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单 -> price=0.78 qty=10.0000 remaining=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.78 filled=10.0000 remaining=0.0000 status=MATCHED
+[DIAG][BID] 快照过期: 年龄=49.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.78, ask=0.84 (缓存数据新鲜)
+[TRADE][BUY][MAKER] resp={'status': 'FILLED', 'avg_price': 0.78, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0xa7cee1cc18616b0e808364c1211ae019b10805346d08be5bbc46281a9ac21645', 'side': 'buy', 'price': 0.78, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.78}]}
+[INFO] 买入成交，延迟 60s 再查询持仓均价，等待 data-api 刷新…
+[INFO] 开始持仓均价多轮确认（目标 size≈10.0000，最多 5 轮，每轮间隔 7s）
+[TRACE] 持仓均价查询结果（第1次/本轮） origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.780000 size=10.000000
+[TRACE] 持仓均价查询结果（第2次/本轮） origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.780000 size=10.000000
+[TRACE] 持仓均价查询结果（第3次/本轮） origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.780000 size=10.000000
+[STATE] 持仓均价确认 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[STATE] 买入成交 -> status=FILLED price=0.7800 size=10.0000
+[DIAG][ASK] ✓ 已刷新快照: bid=0.77, ask=0.83 (缓存数据新鲜)
+[MAKER][SELL] 挂单 -> price=0.83 qty=10.00 remaining=10.00
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][ASK] ✗ 缓存数据过期: 年龄=45.6s > 阈值=30.0s
+[DIAG][ASK] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.7 秒
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 79.5 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.83 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL][激进] 挂单超时未成交，下调挂价 -> old=0.83 new=0.82
+[MAKER][SELL] 挂单 -> price=0.82 qty=10.00 remaining=10.00
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.7 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 63.2 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL][激进] 挂单超时未成交，下调挂价 -> old=0.82 new=0.81
+[MAKER][SELL] 挂单 -> price=0.81 qty=10.00 remaining=10.00
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.4 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7800 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.8 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.8 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.4 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][SELL] 挂单状态 -> price=0.81 sold=10.00 remaining=0.00 status=MATCHED
+[TRADE][SELL][MAKER] resp={'status': 'FILLED_TRUNCATED', 'avg_price': 0.8100000000000002, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0x1c4552eefc6994e6fd05ffcb6ffdedf6dc7d42e8de1905938f647d7faff23cb6', 'side': 'sell', 'price': 0.83, 'size': 10.0, 'status': 'CANCELLED', 'filled': 0.0, 'avg_price': 0.83}, {'id': '0x433e501ff6abb64a9443753178726d41e05dc93c4855aa9f5e6d5e81c7828922', 'side': 'sell', 'price': 0.82, 'size': 10.0, 'status': 'CANCELLED', 'filled': 0.0, 'avg_price': 0.82}, {'id': '0x3dfa383605781ee25db17eb9c36f406e8de5f9f2400005879c48bc845c91d5ae', 'side': 'sell', 'price': 0.81, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.81}]}
+[STATE] 卖出成交 -> price=0.8100 size=10.0000 status=FILLED_TRUNCATED
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=404, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=405, skip=706, 当前seq=292 (last=164), updated_at=1769737871.31 (last=1769736767.92)
+[WS][SHARED] ✓ 检测到seq增长: 164 → 292 (+128)
+[WS][SHARED] seq=292, updates=3 (0.2/min), bid=0.8, ask=0.83, price=0.815
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 18.5分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=802): seq和updated_at都未变化且距上次tick仅1.5秒
+[WS][SHARED][SKIP] 当前状态: seq=292, last_seq=292, bid=0.8, ask=0.83
+[WS][SHARED] seq=292, updates=6 (12.0/min), bid=0.8, ask=0.83, price=0.815
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 7
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 19.0分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 501
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=524, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=525, skip=922, 当前seq=292 (last=292), updated_at=1769737871.31 (last=1769737871.31)
+[WS][SHARED] seq=292, updates=6 (12.0/min), bid=0.8, ask=0.83, price=0.815
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 13
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 19.5分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1002): seq和updated_at都未变化且距上次tick仅2.0秒
+[WS][SHARED][SKIP] 当前状态: seq=292, last_seq=292, bid=0.8, ask=0.83
+[WS][SHARED] seq=292, updates=6 (12.0/min), bid=0.8, ask=0.83, price=0.815
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 19
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 20.0分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 601
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=644, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=645, skip=1138, 当前seq=292 (last=292), updated_at=1769737871.31 (last=1769737871.31)
+[WS][SHARED] seq=292, updates=6 (12.0/min), bid=0.8, ask=0.83, price=0.815
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 25
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 20.5分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1202): seq和updated_at都未变化且距上次tick仅2.0秒
+[WS][SHARED][SKIP] 当前状态: seq=293, last_seq=293, bid=0.8, ask=0.83
+[WS][SHARED][TRACE] 函数调用次数: 701
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 31
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 21.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=293, updates=7 (13.5/min), bid=0.8, ask=0.83, price=0.815
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=764, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=765, skip=1352, 当前seq=293 (last=293), updated_at=1769738006.87 (last=1769738006.87)
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 37
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 21.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=293, updates=6 (9.1/min), bid=0.8, ask=0.83, price=0.815
+[WS][SHARED] ✓ 检测到seq增长: 293 → 295 (+2)
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1402): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=295, last_seq=295, bid=0.8, ask=0.83
+[WS][SHARED][TRACE] 函数调用次数: 801
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 42
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 22.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=295, updates=7 (12.7/min), bid=0.8, ask=0.83, price=0.815
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=864, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=865, skip=1530, 当前seq=295 (last=295), updated_at=1769738080.00 (last=1769738080.00)
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 48
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 22.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=295, updates=6 (12.0/min), bid=0.8, ask=0.83, price=0.815
+[WS][SHARED][TRACE] 函数调用次数: 901
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1602): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=295, last_seq=295, bid=0.8, ask=0.83
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 54
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 23.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=296, updates=5 (9.5/min), bid=0.8, ask=0.83, price=0.815
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=965, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=966, skip=1708, 当前seq=298 (last=298), updated_at=1769738176.15 (last=1769738176.15)
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 60
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 23.5分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 1001
+[WS][SHARED] seq=298, updates=8 (13.9/min), bid=0.8, ask=0.83, price=0.815
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1802): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=298, last_seq=298, bid=0.8, ask=0.83
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 66
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 24.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=300, updates=7 (14.0/min), bid=0.8, ask=0.83, price=0.815
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1085, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1086, skip=1922, 当前seq=300 (last=300), updated_at=1769738216.17 (last=1769738216.17)
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 73
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 24.5分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 1101
+[WS][SHARED] seq=300, updates=5 (9.6/min), bid=0.8, ask=0.83, price=0.815
+[PX] bid=0.8000 ask=0.8300 mid=0.8150 last=0.8150 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 77
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8150 / 低 0.8150
+    信号超时: 25.0分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2002): seq和updated_at都未变化且距上次tick仅1.5秒
+[WS][SHARED][SKIP] 当前状态: seq=301, last_seq=301, bid=0.8, ask=0.84
+[WS][SHARED] ✓ 检测到seq增长: 302 → 311 (+9)
+[WS][SHARED] ✓ 检测到seq增长: 311 → 315 (+4)
+[WS][SHARED] ✓ 检测到seq增长: 315 → 322 (+7)
+[WS][SHARED] ✓ 检测到seq增长: 322 → 326 (+4)
+[WS][SHARED] seq=327, updates=10 (18.1/min), bid=0.83, ask=0.84, price=0.835
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1185, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1186, skip=2090, 当前seq=330 (last=330), updated_at=1769738292.38 (last=1769738292.38)
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 90
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 25.5分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 1201
+[WS][SHARED] seq=330, updates=9 (17.1/min), bid=0.83, ask=0.84, price=0.835
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 96
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 26.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2202): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=331, last_seq=331, bid=0.83, ask=0.84
+[WS][SHARED] seq=331, updates=4 (7.9/min), bid=0.83, ask=0.84, price=0.835
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1284, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1285, skip=2268, 当前seq=331 (last=331), updated_at=1769738336.41 (last=1769738336.41)
+[WS][SHARED][TRACE] 函数调用次数: 1301
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 102
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 26.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=331, updates=6 (12.0/min), bid=0.83, ask=0.84, price=0.835
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2402): seq和updated_at都未变化且距上次tick仅1.5秒
+[WS][SHARED][SKIP] 当前状态: seq=331, last_seq=331, bid=0.83, ask=0.84
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 108
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 27.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=331, updates=6 (12.0/min), bid=0.83, ask=0.84, price=0.835
+[WS][SHARED][TRACE] 函数调用次数: 1401
+[WS][SHARED] ✓ 检测到seq增长: 331 → 333 (+2)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1404, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1405, skip=2482, 当前seq=333 (last=333), updated_at=1769738415.57 (last=1769738415.57)
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 113
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 27.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=333, updates=5 (9.8/min), bid=0.83, ask=0.84, price=0.835
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 119
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 28.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2602): seq和updated_at都未变化且距上次tick仅3.0秒
+[WS][SHARED][SKIP] 当前状态: seq=333, last_seq=333, bid=0.83, ask=0.84
+[WS][SHARED] seq=333, updates=6 (12.0/min), bid=0.83, ask=0.84, price=0.835
+[WS][SHARED][TRACE] 函数调用次数: 1501
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1524, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1525, skip=2698, 当前seq=333 (last=333), updated_at=1769738415.57 (last=1769738415.57)
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 125
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 28.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 334 → 336 (+2)
+[WS][SHARED] seq=336, updates=7 (12.7/min), bid=0.83, ask=0.84, price=0.835
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 131
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 29.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2802): seq和updated_at都未变化且距上次tick仅4.0秒
+[WS][SHARED][SKIP] 当前状态: seq=339, last_seq=339, bid=0.83, ask=0.84
+[WS][SHARED][TRACE] 函数调用次数: 1601
+[WS][SHARED] seq=339, updates=7 (12.6/min), bid=0.83, ask=0.84, price=0.835
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1624, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1625, skip=2872, 当前seq=339 (last=339), updated_at=1769738519.96 (last=1769738519.96)
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 137
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 29.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=340, updates=7 (12.1/min), bid=0.83, ask=0.84, price=0.835
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 143
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 30.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=3002): seq和updated_at都未变化且距上次tick仅2.5秒
+[WS][SHARED][SKIP] 当前状态: seq=341, last_seq=341, bid=0.83, ask=0.84
+[WS][SHARED][TRACE] 函数调用次数: 1701
+[WS][SHARED] ✓ 检测到seq增长: 342 → 344 (+2)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1722, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1723, skip=3046, 当前seq=344 (last=344), updated_at=1769738594.59 (last=1769738594.59)
+[WS][SHARED] seq=344, updates=6 (10.2/min), bid=0.83, ask=0.84, price=0.835
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 149
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.12%
+    窗口价格(mid): 高 0.8350 / 低 0.8150
+    信号超时: 30.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 344 → 347 (+3)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[HINT][BUY] 目标 10.0000 - 当前仓位(未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558) 0.0000 -> 本次下单 10.0000
+[MAKER][BUY] 开始买入流程 -> target_size=10.0000 poll_sec=15.0s
+[DIAG][BID] 快照过期: 年龄=32.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.79, ask=0.83 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单 -> price=0.79 qty=10.0000 remaining=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=37.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.79, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=62.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=48.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=88.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.79, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=62.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.79, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=80.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.79 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 买一上行 -> 撤单重挂 | old=0.79 new=0.80
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单 -> price=0.80 qty=10.0000 remaining=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=37.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=61.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.82 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=36.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=33.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=33.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=46.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=50.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=45.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=62.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=67.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=79.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=86.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=32.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=43.4s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=49.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=60.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=67.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=78.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=84.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=95.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=101.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=42.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=33.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=49.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=65.7s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=67.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=82.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=86.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=100.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=103.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=117.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=119.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=134.4s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=136.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=151.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=154.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=169.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=171.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=186.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=188.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=48.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=65.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=68.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=82.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=85.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=99.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7999 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=103.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=117.4s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.80 filled=10.0000 remaining=0.0000 status=MATCHED
+[DIAG][BID] 快照过期: 年龄=120.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[TRADE][BUY][MAKER] resp={'status': 'FILLED', 'avg_price': 0.8, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0xb96683b4956bdd2d72a6430a1f8d0279f2fbdf8c1b76e6ee9986758855032a85', 'side': 'buy', 'price': 0.79, 'size': 10.0, 'status': 'CANCELLED', 'filled': 0.0, 'avg_price': 0.79}, {'id': '0x8ed62350b225d9028a2b9476f5a520d579e39e99d97885c0fdff173f65e59f73', 'side': 'buy', 'price': 0.8, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.8}]}
+[INFO] 买入成交，延迟 60s 再查询持仓均价，等待 data-api 刷新…
+[INFO] 开始持仓均价多轮确认（目标 size≈10.0000，最多 5 轮，每轮间隔 7s）
+[TRACE] 持仓均价查询结果（第1次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.799900 size=10.000000
+[TRACE] 持仓均价查询结果（第2次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.799900 size=10.000000
+[TRACE] 持仓均价查询结果（第3次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.799900 size=10.000000
+[STATE] 持仓均价确认 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7999 size=10.0000
+[STATE] 买入成交 -> status=FILLED price=0.7999 size=10.0000
+[MAKER][SELL] 挂单 -> price=0.82 qty=10.00 remaining=10.00
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7999 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 47.3 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.7999 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.1 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=10.00 remaining=0.00 status=MATCHED
+[TRADE][SELL][MAKER] resp={'status': 'FILLED_TRUNCATED', 'avg_price': 0.82, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0x7bbe84697617bb6f8e8d224dbd23120e24bcd3e54fc74f0148801ad4737bbb50', 'side': 'sell', 'price': 0.82, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.82}]}
+[STATE] 卖出成交 -> price=0.8200 size=10.0000 status=FILLED_TRUNCATED
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1727, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1728, skip=3052, 当前seq=453 (last=347), updated_at=1769740070.61 (last=1769738611.93)
+[WS][SHARED] ✓ 检测到seq增长: 347 → 453 (+106)
+[WS][SHARED] seq=453, updates=2 (0.1/min), bid=0.81, ask=0.83, price=0.8200000000000001
+[PX] bid=0.8100 ask=0.8300 mid=0.8200 last=0.8200 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.14%
+    窗口价格(mid): 高 0.8200 / 低 0.8200
+    信号超时: 24.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 453 → 455 (+2)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[HINT][BUY] 目标 10.0000 - 当前仓位(未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558) 0.0000 -> 本次下单 10.0000
+[MAKER][BUY] 开始买入流程 -> target_size=10.0000 poll_sec=15.0s
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单 -> price=0.81 qty=10.0000 remaining=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=46.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=61.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=36.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=61.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=113.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=36.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=50.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=34.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=70.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=112.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=96.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=138.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=122.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=174.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=158.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=200.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=183.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=225.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=209.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=261.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=50.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=71.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=86.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=108.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=112.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=133.6s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=138.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=160.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=176.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=50.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=55.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=86.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=91.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=111.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=33.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=33.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=41.4s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=58.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=68.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=35.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=34.4s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=51.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=68.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=32.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=62.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=78.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=67.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=34.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=30.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=33.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=41.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=32.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=48.6s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=49.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=35.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=33.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=35.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=56.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=52.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=73.7s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=69.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=90.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=109.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=104.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=125.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=121.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=142.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=138.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=159.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=5.0000
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=156.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=177.7s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=173.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=194.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=189.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=210.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=5.0000 remaining=5.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=206.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=10.0000 remaining=0.0000 status=MATCHED
+[TRADE][BUY][MAKER] resp={'status': 'FILLED', 'avg_price': 0.8100000000000002, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0x1768598fa9d389193d0efe55cf01c1269f51e64799e1fa2e7c0e53bbcfe61a27', 'side': 'buy', 'price': 0.81, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.81}]}
+[INFO] 买入成交，延迟 60s 再查询持仓均价，等待 data-api 刷新…
+[INFO] 开始持仓均价多轮确认（目标 size≈10.0000，最多 5 轮，每轮间隔 7s）
+[TRACE] 持仓均价查询结果（第1次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.810000 size=10.000000
+[TRACE] 持仓均价查询结果（第2次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.810000 size=10.000000
+[TRACE] 持仓均价查询结果（第3次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.810000 size=10.000000
+[STATE] 持仓均价确认 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[STATE] 买入成交 -> status=FILLED price=0.8100 size=10.0000
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[MAKER][SELL] 挂单 -> price=0.82 qty=10.00 remaining=10.00
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 127.4 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 127.7 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 48.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 222.5 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 239.5 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 95.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 115.8 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.8100 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=10.00 remaining=0.00 status=MATCHED
+[TRADE][SELL][MAKER] resp={'status': 'FILLED_TRUNCATED', 'avg_price': 0.82, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0x3b6d5d7a8aa5067636eb27c4a33bd403c43f718cf88ee4d4c2d32390764789b0', 'side': 'sell', 'price': 0.82, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.82}]}
+[STATE] 卖出成交 -> price=0.8200 size=10.0000 status=FILLED_TRUNCATED
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1743, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1744, skip=3074, 当前seq=554 (last=457), updated_at=1769743193.97 (last=1769740080.05)
+[WS][SHARED] ✓ 检测到seq增长: 457 → 554 (+97)
+[WS][SHARED] seq=554, updates=5 (0.1/min), bid=0.81, ask=0.83, price=0.8200000000000001
+[PX] bid=0.8100 ask=0.8300 mid=0.8200 last=0.8200 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.16%
+    窗口价格(mid): 高 0.8200 / 低 0.8200
+    信号超时: 51.9分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 1801
+[PX] bid=0.8200 ask=0.8300 mid=0.8250 last=0.8250 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 7
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.16%
+    窗口价格(mid): 高 0.8250 / 低 0.8200
+    信号超时: 52.4分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=555, updates=7 (13.7/min), bid=0.82, ask=0.83, price=0.825
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=3202): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=555, last_seq=555, bid=0.82, ask=0.83
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1863, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1864, skip=3288, 当前seq=555 (last=555), updated_at=1769743200.46 (last=1769743200.46)
+[PX] bid=0.8200 ask=0.8300 mid=0.8250 last=0.8250 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 13
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.16%
+    窗口价格(mid): 高 0.8250 / 低 0.8200
+    信号超时: 52.9分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=555, updates=6 (12.0/min), bid=0.82, ask=0.83, price=0.825
+[WS][SHARED][TRACE] 函数调用次数: 1901
+[PX] bid=0.8200 ask=0.8300 mid=0.8250 last=0.8250 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 19
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.16%
+    窗口价格(mid): 高 0.8250 / 低 0.8200
+    信号超时: 53.4分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=555, updates=6 (12.0/min), bid=0.82, ask=0.83, price=0.825
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=3402): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=555, last_seq=555, bid=0.82, ask=0.83
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1983, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1984, skip=3504, 当前seq=555 (last=555), updated_at=1769743200.46 (last=1769743200.46)
+[PX] bid=0.8200 ask=0.8300 mid=0.8250 last=0.8250 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 25
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.16%
+    窗口价格(mid): 高 0.8250 / 低 0.8200
+    信号超时: 53.9分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=555, updates=6 (12.0/min), bid=0.82, ask=0.83, price=0.825
+[WS][SHARED][TRACE] 函数调用次数: 2001
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=3602): seq和updated_at都未变化且距上次tick仅1.5秒
+[WS][SHARED][SKIP] 当前状态: seq=555, last_seq=555, bid=0.82, ask=0.83
+[PX] bid=0.8200 ask=0.8300 mid=0.8250 last=0.8250 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 31
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.16%
+    窗口价格(mid): 高 0.8250 / 低 0.8200
+    信号超时: 54.4分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=555, updates=6 (12.0/min), bid=0.82, ask=0.83, price=0.825
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[HINT][BUY] 目标 10.0000 - 当前仓位(未在 data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558) 0.0000 -> 本次下单 10.0000
+[MAKER][BUY] 开始买入流程 -> target_size=10.0000 poll_sec=15.0s
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单 -> price=0.81 qty=10.0000 remaining=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=47.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=35.7s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=72.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=36.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=32.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=61.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=57.7s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=83.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=123.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=119.4s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=149.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=145.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=175.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=171.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=211.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=207.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=237.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=62.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=50.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=74.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=111.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=114.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=137.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=142.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=165.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=178.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=202.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=204.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=227.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=230.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=254.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=267.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=291.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=294.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.82 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=61.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=53.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=79.7s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=113.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=105.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=149.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=142.5s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=175.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=168.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=202.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=194.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=239.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=231.6s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=265.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=257.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=291.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=283.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=327.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=320.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=354.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=347.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=382.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=375.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=420.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=52.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=43.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=88.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=79.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=114.5s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=105.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=140.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=131.1s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=178.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=36.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=37.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=1.5831
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=55.2s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=56.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=71.8s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=72.8s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=88.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=89.4s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=105.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=106.0s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=1.5831
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=123.7s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=124.7s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=140.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=141.3s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=156.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=157.9s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=173.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=174.6s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=1.5831
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=192.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.81, ask=0.83 (缓存数据新鲜)
+[MAKER][BUY] 校对持仓后更新累计成交 -> filled=1.5831 remaining=8.4169
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.81 filled=10.0000 remaining=0.0000 status=MATCHED
+[DIAG][BID] 快照过期: 年龄=33.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.8, ask=0.82 (缓存数据新鲜)
+[TRADE][BUY][MAKER] resp={'status': 'FILLED', 'avg_price': 0.8100000000000002, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0x63804787d505117afe049848ec75765af8658202c20c4278c02610558a8a129a', 'side': 'buy', 'price': 0.81, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.81}]}
+[INFO] 买入成交，延迟 60s 再查询持仓均价，等待 data-api 刷新…
+[INFO] 开始持仓均价多轮确认（目标 size≈10.0000，最多 5 轮，每轮间隔 7s）
+[TRACE] 持仓均价查询结果（第1次/本轮） origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.810000 size=9.993100
+[TRACE] 持仓均价查询结果（第2次/本轮） origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.810000 size=9.993100
+[TRACE] 持仓均价查询结果（第3次/本轮） origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.810000 size=9.993100
+[STATE] 持仓均价确认 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=9.9931
+[STATE] 买入成交 -> status=FILLED price=0.8100 size=9.9931
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 97.1 秒
+[MAKER][SELL] 挂单 -> price=0.82 qty=9.99 remaining=9.99
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=9.9931
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=9.99 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=9.99 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 64.2 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.8100 size=9.9931
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=9.99 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=0.00 remaining=9.99 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 65.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 47762771985439515891493048505438381476431742366648422118840977543937503496558 当前无持仓
+[MAKER][SELL] 挂单状态 -> price=0.82 sold=9.99 remaining=0.00 status=MATCHED
+[TRADE][SELL][MAKER] resp={'status': 'FILLED_TRUNCATED', 'avg_price': 0.8199999999999998, 'filled': 9.99, 'remaining': 0.0, 'orders': [{'id': '0xa32bcd8ac3aa43401a047eab665cf6f8d1365e74581b6d2ffb3db200f2e875f9', 'side': 'sell', 'price': 0.82, 'size': 9.99, 'status': 'CANCELLED', 'filled': 9.99, 'avg_price': 0.82}]}
+[STATE] 卖出成交 -> price=0.8200 size=9.9900 status=FILLED_TRUNCATED
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2074, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2075, skip=3666, 当前seq=616 (last=556), updated_at=1769745249.76 (last=1769743360.53)
+[WS][SHARED] ✓ 检测到seq增长: 556 → 616 (+60)
+[WS][SHARED] seq=616, updates=4 (0.1/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 31.5分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 2101
+[WS][SHARED] seq=617, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 7
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 32.0分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=3802): seq和updated_at都未变化且距上次tick仅2.5秒
+[WS][SHARED][SKIP] 当前状态: seq=617, last_seq=617, bid=0.82, ask=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2194, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2195, skip=3880, 当前seq=619 (last=619), updated_at=1769745307.43 (last=1769745307.43)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 13
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 32.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=619, updates=7 (13.7/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][TRACE] 函数调用次数: 2201
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 19
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 33.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=619, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=4002): seq和updated_at都未变化且距上次tick仅3.0秒
+[WS][SHARED][SKIP] 当前状态: seq=619, last_seq=619, bid=0.82, ask=0.84
+[WS][SHARED][TRACE] 函数调用次数: 2301
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2314, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2315, skip=4096, 当前seq=619 (last=619), updated_at=1769745307.43 (last=1769745307.43)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 25
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 33.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=619, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=4202): seq和updated_at都未变化且距上次tick仅3.5秒
+[WS][SHARED][SKIP] 当前状态: seq=619, last_seq=619, bid=0.82, ask=0.84
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 31
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 34.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=619, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][TRACE] 函数调用次数: 2401
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2434, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2435, skip=4312, 当前seq=620 (last=619), updated_at=1769745432.56 (last=1769745307.43)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 38
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 34.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=620, updates=7 (10.4/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 44
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 35.0分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=4402): seq和updated_at都未变化且距上次tick仅2.5秒
+[WS][SHARED][SKIP] 当前状态: seq=622, last_seq=622, bid=0.82, ask=0.84
+[WS][SHARED][TRACE] 函数调用次数: 2501
+[WS][SHARED] seq=623, updates=8 (14.7/min), bid=0.82, ask=0.84, price=0.83
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2534, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2535, skip=4486, 当前seq=623 (last=623), updated_at=1769745475.80 (last=1769745475.80)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 50
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 35.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=623, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 57
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 36.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=4602): seq和updated_at都未变化且距上次tick仅2.0秒
+[WS][SHARED][SKIP] 当前状态: seq=623, last_seq=623, bid=0.82, ask=0.84
+[WS][SHARED][TRACE] 函数调用次数: 2601
+[WS][SHARED] seq=623, updates=5 (9.3/min), bid=0.82, ask=0.84, price=0.83
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2634, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2635, skip=4666, 当前seq=623 (last=623), updated_at=1769745475.80 (last=1769745475.80)
+[WS][SHARED] ✓ 检测到seq增长: 623 → 626 (+3)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 63
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 36.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=627, updates=7 (13.5/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][TRACE] 函数调用次数: 2701
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=4802): seq和updated_at都未变化且距上次tick仅2.0秒
+[WS][SHARED][SKIP] 当前状态: seq=627, last_seq=627, bid=0.82, ask=0.84
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 69
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 37.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=628, updates=7 (12.7/min), bid=0.82, ask=0.84, price=0.83
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2754, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2755, skip=4878, 当前seq=628 (last=628), updated_at=1769745597.42 (last=1769745597.42)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 75
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 37.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=628, updates=5 (9.7/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][TRACE] 函数调用次数: 2801
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 81
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 38.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=5002): seq和updated_at都未变化且距上次tick仅4.0秒
+[WS][SHARED][SKIP] 当前状态: seq=628, last_seq=628, bid=0.82, ask=0.84
+[WS][SHARED] seq=628, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED] ✓ 检测到seq增长: 629 → 631 (+2)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2874, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2875, skip=5088, 当前seq=633 (last=633), updated_at=1769745678.55 (last=1769745678.55)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 90
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 38.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=633, updates=9 (17.7/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][TRACE] 函数调用次数: 2901
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 94
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 39.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=634, updates=5 (9.7/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=5202): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=634, last_seq=634, bid=0.82, ask=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=2974, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=2975, skip=5264, 当前seq=635 (last=635), updated_at=1769745742.60 (last=1769745742.60)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 101
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 39.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=636, updates=7 (13.7/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][TRACE] 函数调用次数: 3001
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 107
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 40.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=5402): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=636, last_seq=636, bid=0.82, ask=0.84
+[WS][SHARED] seq=636, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3075, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3076, skip=5446, 当前seq=636 (last=636), updated_at=1769745745.37 (last=1769745745.37)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 112
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 40.7分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 3101
+[WS][SHARED] seq=636, updates=5 (8.9/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 118
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 41.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=5602): seq和updated_at都未变化且距上次tick仅3.0秒
+[WS][SHARED][SKIP] 当前状态: seq=636, last_seq=636, bid=0.82, ask=0.84
+[WS][SHARED] seq=636, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3195, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3196, skip=5662, 当前seq=636 (last=636), updated_at=1769745745.37 (last=1769745745.37)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 124
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 41.7分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 3201
+[WS][SHARED] seq=636, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 128
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 42.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=637, updates=5 (9.1/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=5802): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=639, last_seq=639, bid=0.82, ask=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3296, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3297, skip=5838, 当前seq=640 (last=640), updated_at=1769745921.50 (last=1769745921.50)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 136
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 42.7分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 3301
+[WS][SHARED] seq=641, updates=9 (17.1/min), bid=0.82, ask=0.84, price=0.84
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 143
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 43.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=6002): seq和updated_at都未变化且距上次tick仅1.5秒
+[WS][SHARED][SKIP] 当前状态: seq=641, last_seq=641, bid=0.82, ask=0.84
+[WS][SHARED] seq=641, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3397, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3398, skip=6016, 当前seq=641 (last=641), updated_at=1769745943.83 (last=1769745943.83)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 148
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 43.7分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 3401
+[WS][SHARED] seq=641, updates=5 (9.9/min), bid=0.82, ask=0.84, price=0.84
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 154
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 44.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=641, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.84
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=6202): seq和updated_at都未变化且距上次tick仅2.0秒
+[WS][SHARED][SKIP] 当前状态: seq=641, last_seq=641, bid=0.82, ask=0.84
+[WS][SHARED][TRACE] 函数调用次数: 3501
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3517, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3518, skip=6232, 当前seq=641 (last=641), updated_at=1769745943.83 (last=1769745943.83)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 160
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 44.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=642, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 165
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 45.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=642, updates=5 (9.6/min), bid=0.82, ask=0.84, price=0.83
+[WS][SHARED][TRACE] 函数调用次数: 3601
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=6402): seq和updated_at都未变化且距上次tick仅2.5秒
+[WS][SHARED][SKIP] 当前状态: seq=642, last_seq=642, bid=0.82, ask=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3616, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3617, skip=6410, 当前seq=642 (last=642), updated_at=1769746054.10 (last=1769746054.10)
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 171
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 45.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=642, updates=6 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 177
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 46.3分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 3701
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3715, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3716, skip=6584, 当前seq=644 (last=644), updated_at=1769746148.49 (last=1769746148.49)
+[WS][SHARED] seq=644, updates=8 (12.0/min), bid=0.82, ask=0.84, price=0.83
+[PX] bid=0.8200 ask=0.8400 mid=0.8300 last=0.8300 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 183
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8300 / 低 0.8300
+    信号超时: 46.8分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=6602): seq和updated_at都未变化且距上次tick仅4.5秒
+[WS][SHARED][SKIP] 当前状态: seq=644, last_seq=644, bid=0.82, ask=0.84
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 189
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8350 / 低 0.8300
+    信号超时: 47.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=645, updates=7 (13.1/min), bid=0.83, ask=0.84, price=0.835
+[WS][SHARED][TRACE] 函数调用次数: 3801
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3835, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3836, skip=6798, 当前seq=645 (last=645), updated_at=1769746177.95 (last=1769746177.95)
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 195
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8350 / 低 0.8300
+    信号超时: 47.8分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=6802): seq和updated_at都未变化且距上次tick仅3.5秒
+[WS][SHARED][SKIP] 当前状态: seq=645, last_seq=645, bid=0.83, ask=0.84
+[WS][SHARED] seq=645, updates=6 (12.0/min), bid=0.83, ask=0.84, price=0.835
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 200
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8350 / 低 0.8300
+    信号超时: 48.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=645, updates=5 (9.1/min), bid=0.83, ask=0.84, price=0.835
+[WS][SHARED][TRACE] 函数调用次数: 3901
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=3935, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=3936, skip=6974, 当前seq=647 (last=647), updated_at=1769746268.30 (last=1769746268.30)
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 207
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8350 / 低 0.8300
+    信号超时: 48.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=647, updates=8 (14.7/min), bid=0.83, ask=0.84, price=0.835
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=7002): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=647, last_seq=647, bid=0.83, ask=0.84
+[PX] bid=0.8300 ask=0.8400 mid=0.8350 last=0.8350 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 213
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8350 / 低 0.8300
+    信号超时: 49.3分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 4001
+[WS][SHARED] ✓ 检测到seq增长: 647 → 649 (+2)
+[WS][SHARED] seq=651, updates=9 (15.6/min), bid=0.83, ask=0.85, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4035, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4036, skip=7148, 当前seq=651 (last=651), updated_at=1769746323.12 (last=1769746323.12)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 220
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 49.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=651, updates=5 (9.2/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=7202): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=651, last_seq=651, bid=0.83, ask=0.85
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 226
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 50.3分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 4101
+[WS][SHARED] seq=651, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4155, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4156, skip=7364, 当前seq=651 (last=651), updated_at=1769746323.12 (last=1769746323.12)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 232
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 50.8分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=7402): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=651, last_seq=651, bid=0.83, ask=0.85
+[WS][SHARED] seq=651, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 236
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 51.3分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 4201
+[WS][SHARED] seq=651, updates=4 (7.9/min), bid=0.83, ask=0.85, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4254, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4255, skip=7542, 当前seq=651 (last=651), updated_at=1769746323.12 (last=1769746323.12)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 242
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 51.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=651, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=7602): seq和updated_at都未变化且距上次tick仅1.5秒
+[WS][SHARED][SKIP] 当前状态: seq=651, last_seq=651, bid=0.83, ask=0.85
+[WS][SHARED][TRACE] 函数调用次数: 4301
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 248
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 52.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=651, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED] ✓ 检测到seq增长: 651 → 653 (+2)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4354, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4355, skip=7722, 当前seq=653 (last=653), updated_at=1769746516.86 (last=1769746516.86)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 252
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 52.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=653, updates=5 (8.7/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=7802): seq和updated_at都未变化且距上次tick仅2.5秒
+[WS][SHARED][SKIP] 当前状态: seq=653, last_seq=653, bid=0.83, ask=0.85
+[WS][SHARED][TRACE] 函数调用次数: 4401
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 258
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 53.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=653, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4474, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4475, skip=7938, 当前seq=653 (last=653), updated_at=1769746516.86 (last=1769746516.86)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 264
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 53.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 653 → 658 (+5)
+[WS][SHARED] ✓ 检测到seq增长: 658 → 665 (+7)
+[WS][SHARED][TRACE] 函数调用次数: 4501
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=8002): seq和updated_at都未变化且距上次tick仅2.5秒
+[WS][SHARED][SKIP] 当前状态: seq=666, last_seq=666, bid=0.83, ask=0.85
+[WS][SHARED] seq=666, updates=9 (13.4/min), bid=0.83, ask=0.85, price=0.84
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 271
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 54.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=666, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4574, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4575, skip=8112, 当前seq=666 (last=666), updated_at=1769746593.39 (last=1769746593.39)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 277
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 54.8分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 4601
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=8202): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=666, last_seq=666, bid=0.83, ask=0.85
+[WS][SHARED] seq=666, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 283
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 55.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=667, updates=5 (9.9/min), bid=0.83, ask=0.85, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4674, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4675, skip=8290, 当前seq=667 (last=667), updated_at=1769746680.58 (last=1769746680.58)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 288
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 55.8分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 4701
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 294
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 56.3分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=8402): seq和updated_at都未变化且距上次tick仅4.5秒
+[WS][SHARED][SKIP] 当前状态: seq=668, last_seq=668, bid=0.83, ask=0.85
+[WS][SHARED] seq=668, updates=7 (13.1/min), bid=0.83, ask=0.85, price=0.84
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4794, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4795, skip=8502, 当前seq=670 (last=670), updated_at=1769746745.41 (last=1769746745.41)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 302
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 56.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=670, updates=8 (15.4/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED][TRACE] 函数调用次数: 4801
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 307
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 57.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=670, updates=5 (9.4/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=8602): seq和updated_at都未变化且距上次tick仅4.0秒
+[WS][SHARED][SKIP] 当前状态: seq=670, last_seq=670, bid=0.83, ask=0.85
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4893, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4894, skip=8674, 当前seq=673 (last=673), updated_at=1769746817.07 (last=1769746817.07)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 315
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 57.8分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 4901
+[WS][SHARED] seq=673, updates=8 (16.0/min), bid=0.83, ask=0.85, price=0.84
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 321
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 58.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=673, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=8802): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=673, last_seq=673, bid=0.83, ask=0.85
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=4992, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=4993, skip=8852, 当前seq=673 (last=673), updated_at=1769746817.07 (last=1769746817.07)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 326
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 58.8分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 5001
+[WS][SHARED] seq=675, updates=6 (10.6/min), bid=0.83, ask=0.85, price=0.84
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 332
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 59.3分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=675, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=9002): seq和updated_at都未变化且距上次tick仅3.5秒
+[WS][SHARED][SKIP] 当前状态: seq=675, last_seq=675, bid=0.83, ask=0.85
+[WS][SHARED][TRACE] 函数调用次数: 5101
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=5112, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=5113, skip=9066, 当前seq=675 (last=675), updated_at=1769746891.21 (last=1769746891.21)
+[PX] bid=0.8300 ask=0.8500 mid=0.8400 last=0.8400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 338
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.18%
+    窗口价格(mid): 高 0.8400 / 低 0.8300
+    信号超时: 59.8分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=675, updates=6 (12.0/min), bid=0.83, ask=0.85, price=0.84
+[SIGNAL_TIMEOUT] 60.0 分钟内无交易信号，释放队列退出
+[SIGNAL_TIMEOUT] 最后信号时间: 03:22:40
+[QUEUE] 释放队列：长时间无交易信号，已退出。
+[EXIT_RECORD] 已记录退出token: 47762771985439515891... 原因: SIGNAL_TIMEOUT (可回填)
+[EXIT] 最终状态: {'state': 'FLAT', 'awaiting': None, 'entry_price': None, 'sell_trigger': None, 'position_size': None, 'last_signal': <ActionType.BUY: 'BUY'>, 'last_buy_price': 0.81, 'last_sell_price': 0.8199999999999998, 'price_history_len': 340, 'manual_stop': True, 'manual_stop_reason': 'signal timeout (no position)', 'sell_only': False, 'sell_only_reason': None, 'last_reject_reason': None, 'last_tick': {'ts': 1769746891.112, 'best_ask': 0.85, 'best_bid': 0.83}, 'drop_stats': {'window_high': 0.84, 'window_low': 0.83, 'max_drop_ratio': 0.0, 'current_drop_ratio': 0.0, 'window_seconds': 3600.0}, 'config': {'token_id': '47762771985439515891493048505438381476431742366648422118840977543937503496558', 'buy_price_threshold': None, 'profit_ratio': 0.005, 'drop_window_minutes': 60.0, 'drop_pct': 0.0018000000000000004, 'profit_pct': 0.005, 'max_history_points': 600, 'price_band': (0.0, 1.0), 'disable_duplicate_signal': True, 'enable_incremental_drop_pct': True, 'incremental_drop_pct_step': 0.0002, 'incremental_drop_pct_cap': 0.2, 'min_market_order_size': None}}
+[CLAIM] 未检测到需要 claim 的仓位，脚本结束。
