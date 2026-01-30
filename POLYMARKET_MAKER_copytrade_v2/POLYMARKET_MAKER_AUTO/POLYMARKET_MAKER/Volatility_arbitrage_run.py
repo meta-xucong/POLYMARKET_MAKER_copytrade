@@ -2981,40 +2981,51 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print(f"[WS][SHARED] 缓存路径: {shared_ws_cache_path}")
         if not os.path.exists(shared_ws_cache_path):
             print(f"[WS][SHARED] ✗ 缓存文件不存在")
-            print(f"[WS][FALLBACK] 切换到独立 WS 模式")
-            use_shared_ws = False
+            print(f"[WS][FATAL] 共享WS不可用，禁止切换独立WS，退出")
+            _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
+                "cache_path": shared_ws_cache_path,
+                "reason": "missing",
+            })
+            strategy.stop("shared ws unavailable")
+            stop_event.set()
+            return
         else:
             # 检查文件是否过期（超过5分钟未更新）
             try:
                 file_age = time.time() - os.path.getmtime(shared_ws_cache_path)
                 if file_age > 300:
                     print(f"[WS][SHARED] ✗ 缓存文件过期（{file_age:.0f}秒未更新）")
-                    print(f"[WS][FALLBACK] 切换到独立 WS 模式")
-                    use_shared_ws = False
+                    print(f"[WS][FATAL] 共享WS缓存过期，禁止切换独立WS，退出")
+                    _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
+                        "cache_path": shared_ws_cache_path,
+                        "reason": "stale",
+                        "file_age_seconds": file_age,
+                    })
+                    strategy.stop("shared ws unavailable")
+                    stop_event.set()
+                    return
                 else:
                     print(f"[WS][SHARED] ✓ 缓存文件新鲜（{file_age:.0f}秒前更新）")
             except OSError:
                 print("[WARN] 无法读取共享 WS 缓存文件状态")
-                print("[WARN] 切换到独立 WS 模式")
-                use_shared_ws = False
+                print("[WS][FATAL] 共享WS状态不可读，禁止切换独立WS，退出")
+                _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
+                    "cache_path": shared_ws_cache_path,
+                    "reason": "stat_failed",
+                })
+                strategy.stop("shared ws unavailable")
+                stop_event.set()
+                return
 
     if not use_shared_ws:
-        print(f"[WS][INDEPENDENT] ✓ 将使用独立 WS 连接模式")
-        print(f"[WS][INDEPENDENT] 为 token {token_id} 创建专用连接")
-        ws_thread = threading.Thread(
-            target=ws_watch_by_ids,
-            kwargs={
-                "asset_ids": [token_id],
-                "label": f"{title} ({token_id})",
-                "on_event": _on_event,
-                "on_state": _on_ws_state,
-                "verbose": False,
-                "stop_event": stop_event,
-            },
-            daemon=True,
-        )
-        ws_thread.start()
-        print(f"[WS][INDEPENDENT] 独立 WS 线程已启动，等待连接建立...")
+        print("[WS][FATAL] 独立WS已被禁用，但use_shared_ws=False，退出")
+        _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
+            "cache_path": shared_ws_cache_path,
+            "reason": "disabled_fallback",
+        })
+        strategy.stop("shared ws unavailable")
+        stop_event.set()
+        return
 
     print("[RUN] 监听行情中… 输入 stop / exit 可手动停止。")
 
@@ -3284,11 +3295,26 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if cache_updated_at:
                         cache_age = time.time() - float(cache_updated_at)
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
-                            if not hasattr(_latest_best_ask, "_stale_logged"):
-                                _latest_best_ask._stale_logged = True
-                                print(f"[DIAG][ASK] ✗ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
-                                print(f"[DIAG][ASK] 缓存数据过期，返回None触发REST API fallback")
-                            return None
+                            fallback_ask = fresh_snap.get("best_ask")
+                            fallback_bid = fresh_snap.get("best_bid")
+                            if fallback_ask or fallback_bid:
+                                latest[token_id] = {
+                                    "price": float(fresh_snap.get("price") or 0.0),
+                                    "best_bid": float(fallback_bid or 0.0),
+                                    "best_ask": float(fallback_ask or 0.0),
+                                    "ts": time.time(),
+                                }
+                                snap = latest[token_id]
+                                print(
+                                    f"[DIAG][ASK] ⚠ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s，"
+                                    "使用过期缓存软降级"
+                                )
+                            else:
+                                if not hasattr(_latest_best_ask, "_stale_logged"):
+                                    _latest_best_ask._stale_logged = True
+                                    print(f"[DIAG][ASK] ✗ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
+                                    print(f"[DIAG][ASK] 缓存数据过期，返回None触发REST API fallback")
+                                return None
 
                     latest[token_id] = {
                         "price": float(fresh_snap.get("price") or 0.0),
@@ -4053,28 +4079,29 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                             f"[SIGNAL_TIMEOUT] {signal_idle_seconds / 60.0:.1f} 分钟内无交易信号，释放队列退出"
                         )
                         print(f"[SIGNAL_TIMEOUT] 最后信号时间: {time.strftime('%H:%M:%S', time.localtime(last_signal_ts))}")
-                        # 检查是否有持仓需要清仓
                         status = strategy.status()
-                        if _has_actionable_position(status):
-                            print("[SIGNAL_TIMEOUT] 检测到持仓，先执行清仓...")
-                            floor_hint = _latest_best_ask()
-                            if floor_hint is None:
-                                floor_hint = _latest_price()
-                            _execute_sell(position_size, floor_hint=floor_hint, source="[SIGNAL_TIMEOUT]")
-                        else:
-                            strategy.stop("signal timeout (no position)")
-                            print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
-                            # 获取最后的价格数据用于回填判断
-                            snap = latest.get(token_id) or {}
-                            _record_exit_token(token_id, "SIGNAL_TIMEOUT", {
-                                "signal_idle_minutes": signal_idle_seconds / 60.0,
-                                "timeout_threshold_minutes": signal_timeout_seconds / 60.0,
-                                "last_signal_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_signal_ts)),
-                                "has_position": False,  # 无持仓
-                                "last_bid": float(snap.get("best_bid") or 0.0),
-                                "last_ask": float(snap.get("best_ask") or 0.0),
-                            })
-                            stop_event.set()
+                        has_position = _has_actionable_position(status)
+                        position_size_for_exit = None
+                        if has_position:
+                            position_size_for_exit = (
+                                status.get("position_size")
+                                or status.get("size")
+                                or position_size
+                            )
+                        strategy.stop("signal timeout (force exit)")
+                        print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
+                        # 获取最后的价格数据用于回填判断
+                        snap = latest.get(token_id) or {}
+                        _record_exit_token(token_id, "SIGNAL_TIMEOUT", {
+                            "signal_idle_minutes": signal_idle_seconds / 60.0,
+                            "timeout_threshold_minutes": signal_timeout_seconds / 60.0,
+                            "last_signal_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_signal_ts)),
+                            "has_position": has_position,
+                            "position_size": position_size_for_exit,
+                            "last_bid": float(snap.get("best_bid") or 0.0),
+                            "last_ask": float(snap.get("best_ask") or 0.0),
+                        })
+                        stop_event.set()
                         if stop_event.is_set():
                             break
                         continue
