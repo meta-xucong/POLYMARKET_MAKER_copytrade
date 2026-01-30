@@ -1,0 +1,2762 @@
+[
+  {
+    "timestamp": "2026-01-28 16:56:25",
+    "exit_ts": 1769619385.6597314,
+    "token_id": "55201180171382344648128505031675400629485078801250545752063029078975592767599",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00094134807587,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 15:56:25",
+      "has_position": false,
+      "last_bid": 0.51,
+      "last_ask": 0.53
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 17:29:36",
+    "exit_ts": 1769621376.0612257,
+    "token_id": "23311563303783760858176166115231875564829760730498992986905724285046115223219",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00133454799652,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 16:29:35",
+      "has_position": false,
+      "last_bid": 0.66,
+      "last_ask": 0.68
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 17:52:17",
+    "exit_ts": 1769622737.6310704,
+    "token_id": "37937505324283813358949398177779265113103689430857670324935622028086715010576",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00323506991069,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 16:52:17",
+      "has_position": false,
+      "last_bid": 0.57,
+      "last_ask": 0.59
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 17:53:23",
+    "exit_ts": 1769622803.1260982,
+    "token_id": "22802130763821766047382314926654345322953005062130920361011056163048911488589",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 65.96171192328136,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 16:47:25",
+      "has_position": false,
+      "last_bid": 0.924,
+      "last_ask": 0.93
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 18:09:45",
+    "exit_ts": 1769623785.515664,
+    "token_id": "75440953803546459878941444326342594124490686324754533960989243260968706429300",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 65.6664252837499,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 17:04:05",
+      "has_position": false,
+      "last_bid": 0.46,
+      "last_ask": 0.48
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 18:19:02",
+    "exit_ts": 1769624342.8311746,
+    "token_id": "84179647029696184569295249591902766504666878402456968340436905262047026883194",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 149.8993979136149,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 15:49:08",
+      "has_position": false,
+      "last_bid": 0.944,
+      "last_ask": 0.953
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 18:28:54",
+    "exit_ts": 1769624934.246255,
+    "token_id": "82502710596437163348308378521149082521990735368840065096352406278737871407553",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 135.84692229032515,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 16:13:03",
+      "has_position": false,
+      "last_bid": 0.69,
+      "last_ask": 0.7
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 18:29:51",
+    "exit_ts": 1769624991.666027,
+    "token_id": "10294751913664150954490376491698671979327007140911807306258100671330452028850",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.007266306877135,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 17:29:51",
+      "has_position": false,
+      "last_bid": 0.71,
+      "last_ask": 0.73
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 18:47:32",
+    "exit_ts": 1769626052.3859842,
+    "token_id": "114421380098084026753773605667430150755820287180340356465450569515479471185603",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 106.43850201368332,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 17:00:54",
+      "has_position": false,
+      "last_bid": 0.095,
+      "last_ask": 0.096
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 19:22:04",
+    "exit_ts": 1769628124.156998,
+    "token_id": "19323538724182223051629422172260586604632454119828774685084899285092343775100",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 85.53055464824041,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 17:56:32",
+      "has_position": false,
+      "last_bid": 0.65,
+      "last_ask": 0.67
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 19:28:18",
+    "exit_ts": 1769628498.7358403,
+    "token_id": "106181075047366745139197108801635573283215248045056329679360376976893016488727",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 193.10165967146557,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 16:15:12",
+      "has_position": false,
+      "last_bid": 0.62,
+      "last_ask": 0.64
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 19:31:32",
+    "exit_ts": 1769628692.3119318,
+    "token_id": "23311563303783760858176166115231875564829760730498992986905724285046115223219",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00830448071162,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 18:31:31",
+      "has_position": false,
+      "last_bid": 0.67,
+      "last_ask": 0.68
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 19:33:20",
+    "exit_ts": 1769628800.5069423,
+    "token_id": "102493900551645701521693125055452122755587721284263456800351297341161706805154",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00199970404307,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 18:33:20",
+      "has_position": false,
+      "last_bid": 0.43,
+      "last_ask": 0.44
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 19:48:03",
+    "exit_ts": 1769629683.2258036,
+    "token_id": "104071616575689490708756996503755160411785604144351427331378560378097635400347",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00283629496892,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 18:48:03",
+      "has_position": false,
+      "last_bid": 0.46,
+      "last_ask": 0.47
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 19:59:06",
+    "exit_ts": 1769630346.3007076,
+    "token_id": "28708129422013851649799558446816240244246580395995660620346398972895141235479",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 264.21959024270376,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 15:34:53",
+      "has_position": false,
+      "last_bid": 0.97,
+      "last_ask": 0.975
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 20:31:40",
+    "exit_ts": 1769632300.900591,
+    "token_id": "44169729231600183934113609960222670358715639208411971924042241295619035924872",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00262976884842,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 19:31:40",
+      "has_position": false,
+      "last_bid": 0.5,
+      "last_ask": 0.51
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 20:37:38",
+    "exit_ts": 1769632658.795494,
+    "token_id": "13254241531379113814268623702591445764028502818838968001780086361032892261649",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 89.83482722441356,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 19:07:48",
+      "has_position": false,
+      "last_bid": 0.966,
+      "last_ask": 0.968
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 20:48:58",
+    "exit_ts": 1769633338.675409,
+    "token_id": "109485896404435445224771356926428046595093346501629729876439793593978284351864",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00115181605021,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 19:48:58",
+      "has_position": false,
+      "last_bid": 0.61,
+      "last_ask": 0.64
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:25:47",
+    "exit_ts": 1769635547.3835566,
+    "token_id": "10832696757358093775468120009000761778513405247768868107262967513475277652998",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.58,
+      "last_bid": 0.52,
+      "last_ask": 0.53,
+      "sell_floor_price": 0.5828999999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:28:13",
+    "exit_ts": 1769635693.9392395,
+    "token_id": "18289842382539867639079362738467334752951741961393928566628307174343542320349",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 74.52699762185415,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 20:13:42",
+      "has_position": false,
+      "last_bid": 0.73,
+      "last_ask": 0.75
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:32:30",
+    "exit_ts": 1769635950.0144022,
+    "token_id": "28940686238755276284465735330714794980438222573194390182349545307052602997747",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.006034195423126,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 20:32:29",
+      "has_position": false,
+      "last_bid": 0.88,
+      "last_ask": 0.89
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:37:48",
+    "exit_ts": 1769636268.0670905,
+    "token_id": "4920174600328060381478178332126683115937537315909025772685332706706025236975",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00406968990962,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 20:37:47",
+      "has_position": false,
+      "last_bid": 0.76,
+      "last_ask": 0.77
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:44:09",
+    "exit_ts": 1769636649.6728382,
+    "token_id": "13294549611854156060952327202052855585194847446707854951585060180328600525494",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.91,
+      "last_bid": 0.88,
+      "last_ask": 0.89,
+      "sell_floor_price": 0.91455,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:49:03",
+    "exit_ts": 1769636943.8664465,
+    "token_id": "39685513581015973828065061115014564319705732336697536508658294168692213551689",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00550473531087,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 20:49:03",
+      "has_position": false,
+      "last_bid": 0.91,
+      "last_ask": 0.92
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:51:58",
+    "exit_ts": 1769637118.1343675,
+    "token_id": "24286668802376412374081743293701238057227224421953022561655145028885026136261",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.81,
+      "last_bid": 0.74,
+      "last_ask": 0.75,
+      "sell_floor_price": 0.8140499999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 21:57:23",
+    "exit_ts": 1769637443.9517272,
+    "token_id": "55201180171382344648128505031675400629485078801250545752063029078975592767599",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 150.6872669617335,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 19:26:42",
+      "has_position": false,
+      "last_bid": 0.5,
+      "last_ask": 0.52
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:25:56",
+    "exit_ts": 1769639156.0664883,
+    "token_id": "47321246111074442118975317476259316020677014741172642211326874221045952834236",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.9399,
+      "last_bid": 0.93,
+      "last_ask": 0.94,
+      "sell_floor_price": 0.9445994999999998,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:28:07",
+    "exit_ts": 1769639287.1704113,
+    "token_id": "51171279104285400909666677762285621845926753560865042481170667672124752488918",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.000412766138716,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 21:28:07",
+      "has_position": false,
+      "last_bid": 0.68,
+      "last_ask": 0.69
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:32:40",
+    "exit_ts": 1769639560.330374,
+    "token_id": "93318825153882627042070230147770381194968504454313031969554302109165671382437",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00587612787883,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 21:32:39",
+      "has_position": false,
+      "last_bid": 0.247,
+      "last_ask": 0.251
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:37:57",
+    "exit_ts": 1769639877.9438162,
+    "token_id": "65776331158171098119883600447375115999924641197000014423196868505933237200018",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.005198538303375,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 21:37:57",
+      "has_position": false,
+      "last_bid": 0.64,
+      "last_ask": 0.65
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:44:45",
+    "exit_ts": 1769640285.9448278,
+    "token_id": "82886838000782972044397918838888973114431856431027405244207744342627270948784",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00533195734024,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 21:44:45",
+      "has_position": false,
+      "last_bid": 0.74,
+      "last_ask": 0.75
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:45:50",
+    "exit_ts": 1769640350.329001,
+    "token_id": "62595435619678438799673612599999067112702849851098967060818869994133628780778",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.977,
+      "last_bid": 0.98,
+      "last_ask": 0.981,
+      "sell_floor_price": 0.9818849999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:49:17",
+    "exit_ts": 1769640557.21189,
+    "token_id": "42378629981888465778376796069813771913625690526215841226738686395410621595528",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.002431499958035,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 21:49:17",
+      "has_position": false,
+      "last_bid": 0.85,
+      "last_ask": 0.86
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:52:19",
+    "exit_ts": 1769640739.16415,
+    "token_id": "48542681435247439258666128962898934229410828949745554458943224971747087131816",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00763274828593,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 21:52:18",
+      "has_position": false,
+      "last_bid": 0.06,
+      "last_ask": 0.07
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 22:55:31",
+    "exit_ts": 1769640931.9320748,
+    "token_id": "108988271800978168213949343685406694292284061166193819357568013088568150075789",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 170.59644792079925,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 20:04:56",
+      "has_position": false,
+      "last_bid": 0.36,
+      "last_ask": 0.37
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 23:06:03",
+    "exit_ts": 1769641563.6372662,
+    "token_id": "6991399421608885164106322669050008326466693363337237104945082692825908065896",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.954,
+      "last_bid": 0.935,
+      "last_ask": 0.944,
+      "sell_floor_price": 0.9587699999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 23:12:03",
+    "exit_ts": 1769641923.783995,
+    "token_id": "112847346639203630765901077163845076542730075387943895802537171945310360721295",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 222.95682823260626,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 19:29:06",
+      "has_position": false,
+      "last_bid": 0.993,
+      "last_ask": 0.995
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 23:20:36",
+    "exit_ts": 1769642436.4932048,
+    "token_id": "15704223254061637699665008299235004894744524204070683496068480275285392327272",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.36,
+      "last_bid": 0.34,
+      "last_ask": 0.35,
+      "sell_floor_price": 0.36179999999999995,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-28 23:26:49",
+    "exit_ts": 1769642809.0915248,
+    "token_id": "2791138143012434753446657502011224259420532252815498101697790519791539429743",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 83.45636454820632,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 22:03:21",
+      "has_position": false,
+      "last_bid": 0.9,
+      "last_ask": 0.92
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:05:54",
+    "exit_ts": 1769645154.5745523,
+    "token_id": "50178306595800060471430951874976657618055148106679384594654922816495456398170",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.6,
+      "last_bid": 0.55,
+      "last_ask": 0.57,
+      "sell_floor_price": 0.6029999999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:27:38",
+    "exit_ts": 1769646458.3820224,
+    "token_id": "82502710596437163348308378521149082521990735368840065096352406278737871407553",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.98675278822581,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:26:39",
+      "has_position": false,
+      "last_bid": 0.65,
+      "last_ask": 0.67
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:28:49",
+    "exit_ts": 1769646529.4777672,
+    "token_id": "23311563303783760858176166115231875564829760730498992986905724285046115223219",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00337328116099,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:28:49",
+      "has_position": false,
+      "last_bid": 0.65,
+      "last_ask": 0.66
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:37:57",
+    "exit_ts": 1769647077.8432727,
+    "token_id": "19055570823936562199192749486622783452010485635138881345426727492244796006241",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 9.99,
+      "entry_price": 0.15,
+      "last_bid": 0.06,
+      "last_ask": 0.08,
+      "sell_floor_price": 0.15074999999999997,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:38:19",
+    "exit_ts": 1769647099.5600207,
+    "token_id": "84179647029696184569295249591902766504666878402456968340436905262047026883194",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 105.1366320768992,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 22:53:11",
+      "has_position": false,
+      "last_bid": 0.954,
+      "last_ask": 0.973
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:41:03",
+    "exit_ts": 1769647263.9931605,
+    "token_id": "34465433013244737261777301958314575283534514587255327061285941306189159190135",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.93,
+      "last_bid": 0.92,
+      "last_ask": 0.93,
+      "sell_floor_price": 0.93465,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:43:15",
+    "exit_ts": 1769647395.7962017,
+    "token_id": "16206267440377108972343351482425564384973031696941663558076310969498822538172",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.435,
+      "last_bid": 0.324,
+      "last_ask": 0.326,
+      "sell_floor_price": 0.4371749999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 00:59:17",
+    "exit_ts": 1769648357.283856,
+    "token_id": "114421380098084026753773605667430150755820287180340356465450569515479471185603",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 65.33914034763971,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:53:56",
+      "has_position": false,
+      "last_bid": 0.186,
+      "last_ask": 0.195
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:03:34",
+    "exit_ts": 1769648614.7594702,
+    "token_id": "105278431224304914262575108897857144710708269283401008398765038078043727063198",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 221.04488350550335,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 21:22:32",
+      "has_position": false,
+      "last_bid": 0.771,
+      "last_ask": 0.84
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:14:23",
+    "exit_ts": 1769649263.8190265,
+    "token_id": "10294751913664150954490376491698671979327007140911807306258100671330452028850",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 100.13454152345658,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:34:15",
+      "has_position": false,
+      "last_bid": 0.68,
+      "last_ask": 0.71
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:29:40",
+    "exit_ts": 1769650180.0178385,
+    "token_id": "6991399421608885164106322669050008326466693363337237104945082692825908065896",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00659487644831,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 00:29:39",
+      "has_position": false,
+      "last_bid": 0.941,
+      "last_ask": 0.955
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:32:24",
+    "exit_ts": 1769650344.1078482,
+    "token_id": "37937505324283813358949398177779265113103689430857670324935622028086715010576",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 96.39054762125015,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:56:00",
+      "has_position": false,
+      "last_bid": 0.61,
+      "last_ask": 0.63
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:40:59",
+    "exit_ts": 1769650859.660695,
+    "token_id": "104071616575689490708756996503755160411785604144351427331378560378097635400347",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00633151133855,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 00:40:59",
+      "has_position": false,
+      "last_bid": 0.44,
+      "last_ask": 0.46
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:43:36",
+    "exit_ts": 1769651016.5520191,
+    "token_id": "47321246111074442118975317476259316020677014741172642211326874221045952834236",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 156.48472506999968,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:06:56",
+      "has_position": false,
+      "last_bid": 0.94,
+      "last_ask": 0.95
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:45:01",
+    "exit_ts": 1769651101.3147953,
+    "token_id": "109485896404435445224771356926428046595093346501629729876439793593978284351864",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.14198422431946,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:45:53",
+    "exit_ts": 1769651153.6108184,
+    "token_id": "95949957895141858444199258452803633110472396604599808168788254125381075552218",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.004964689413704,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 00:45:53",
+      "has_position": false,
+      "last_bid": 0.74,
+      "last_ask": 0.76
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:46:24",
+    "exit_ts": 1769651184.5295672,
+    "token_id": "44169729231600183934113609960222670358715639208411971924042241295619035924872",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00097480217616,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 00:46:24",
+      "has_position": false,
+      "last_bid": 0.49,
+      "last_ask": 0.5
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 01:49:35",
+    "exit_ts": 1769651375.0233448,
+    "token_id": "28940686238755276284465735330714794980438222573194390182349545307052602997747",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.1130714416504,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 02:14:55",
+    "exit_ts": 1769652895.711192,
+    "token_id": "19323538724182223051629422172260586604632454119828774685084899285092343775100",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 174.58745985825857,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:20:20",
+      "has_position": false,
+      "last_bid": 0.62,
+      "last_ask": 0.64
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 02:34:40",
+    "exit_ts": 1769654080.7321467,
+    "token_id": "28708129422013851649799558446816240244246580395995660620346398972895141235479",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 73.52686984141668,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:21:09",
+      "has_position": false,
+      "last_bid": 0.984,
+      "last_ask": 0.987
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 02:48:06",
+    "exit_ts": 1769654886.4056695,
+    "token_id": "4920174600328060381478178332126683115937537315909025772685332706706025236975",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.007303496201835,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:48:05",
+      "has_position": false,
+      "last_bid": 0.76,
+      "last_ask": 0.77
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 02:49:46",
+    "exit_ts": 1769654986.271158,
+    "token_id": "18289842382539867639079362738467334752951741961393928566628307174343542320349",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 61.33136991262436,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:48:26",
+      "has_position": false,
+      "last_bid": 0.68,
+      "last_ask": 0.69
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 02:50:01",
+    "exit_ts": 1769655001.141603,
+    "token_id": "39685513581015973828065061115014564319705732336697536508658294168692213551689",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.008187754948935,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:50:00",
+      "has_position": false,
+      "last_bid": 0.91,
+      "last_ask": 0.92
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 03:05:54",
+    "exit_ts": 1769655954.2713423,
+    "token_id": "19055570823936562199192749486622783452010485635138881345426727492244796006241",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 68.53827783664067,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:57:21",
+      "has_position": false,
+      "last_bid": 0.12,
+      "last_ask": 0.15
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 03:10:48",
+    "exit_ts": 1769656248.4597816,
+    "token_id": "42378629981888465778376796069813771913625690526215841226738686395410621595528",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.18603038787842,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 03:23:55",
+    "exit_ts": 1769657035.380456,
+    "token_id": "46746822541461330721074821991383617225657173789584499857683753079229786702095",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 102.3782160838445,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:41:32",
+      "has_position": false,
+      "last_bid": 0.72,
+      "last_ask": 0.73
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 03:36:46",
+    "exit_ts": 1769657806.9009976,
+    "token_id": "51171279104285400909666677762285621845926753560865042481170667672124752488918",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00137321154276,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 02:36:46",
+      "has_position": false,
+      "last_bid": 0.68,
+      "last_ask": 0.69
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 03:51:18",
+    "exit_ts": 1769658678.6730328,
+    "token_id": "65776331158171098119883600447375115999924641197000014423196868505933237200018",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.003372530142464,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 02:51:18",
+      "has_position": false,
+      "last_bid": 0.64,
+      "last_ask": 0.65
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 03:52:02",
+    "exit_ts": 1769658722.1187015,
+    "token_id": "82886838000782972044397918838888973114431856431027405244207744342627270948784",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00074917078018,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 02:52:02",
+      "has_position": false,
+      "last_bid": 0.74,
+      "last_ask": 0.75
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 04:10:38",
+    "exit_ts": 1769659838.719454,
+    "token_id": "13254241531379113814268623702591445764028502818838968001780086361032892261649",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 173.00517200628917,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:17:38",
+      "has_position": false,
+      "last_bid": 0.968,
+      "last_ask": 0.972
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 04:29:11",
+    "exit_ts": 1769660951.2516475,
+    "token_id": "83722296194861509737807492105325276806804014660137138811708463053968062687084",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 261.03393190701803,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 00:08:09",
+      "has_position": false,
+      "last_bid": 0.38,
+      "last_ask": 0.4
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 04:37:27",
+    "exit_ts": 1769661447.7011495,
+    "token_id": "102493900551645701521693125055452122755587721284263456800351297341161706805154",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 297.560672501723,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 23:39:54",
+      "has_position": false,
+      "last_bid": 0.42,
+      "last_ask": 0.43
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 04:54:20",
+    "exit_ts": 1769662460.8443317,
+    "token_id": "112847346639203630765901077163845076542730075387943895802537171945310360721295",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.005546879768374,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 03:54:20",
+      "has_position": false,
+      "last_bid": 0.999,
+      "last_ask": 1.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 05:12:31",
+    "exit_ts": 1769663551.244274,
+    "token_id": "23311563303783760858176166115231875564829760730498992986905724285046115223219",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00124549070994,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 04:12:31",
+      "has_position": false,
+      "last_bid": 0.65,
+      "last_ask": 0.66
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 05:31:56",
+    "exit_ts": 1769664716.7469702,
+    "token_id": "82502710596437163348308378521149082521990735368840065096352406278737871407553",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00325720310211,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 04:31:56",
+      "has_position": false,
+      "last_bid": 0.66,
+      "last_ask": 0.67
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 05:39:29",
+    "exit_ts": 1769665169.5492651,
+    "token_id": "114421380098084026753773605667430150755820287180340356465450569515479471185603",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.000798201560976,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 04:39:29",
+      "has_position": false,
+      "last_bid": 0.156,
+      "last_ask": 0.157
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 05:44:17",
+    "exit_ts": 1769665457.0717924,
+    "token_id": "48542681435247439258666128962898934229410828949745554458943224971747087131816",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.002435914675395,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 04:44:16",
+      "has_position": false,
+      "last_bid": 0.05,
+      "last_ask": 0.06
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 05:55:22",
+    "exit_ts": 1769666122.2492445,
+    "token_id": "2791138143012434753446657502011224259420532252815498101697790519791539429743",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 122.19670396248499,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 03:53:10",
+      "has_position": false,
+      "last_bid": 0.89,
+      "last_ask": 0.94
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 05:57:02",
+    "exit_ts": 1769666222.1161454,
+    "token_id": "39342171144861816896992253440408377265010285664347210041520694491243996062356",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 221.69252487023672,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 02:15:20",
+      "has_position": false,
+      "last_bid": 0.965,
+      "last_ask": 0.971
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 06:02:11",
+    "exit_ts": 1769666531.4435155,
+    "token_id": "104071616575689490708756996503755160411785604144351427331378560378097635400347",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.15670132637024,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 06:13:19",
+    "exit_ts": 1769667199.1273377,
+    "token_id": "95445253825760928229249449988904037268822895493615656805098352422989620830732",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.006728899478915,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 05:13:18",
+      "has_position": false,
+      "last_bid": 0.43,
+      "last_ask": 0.47
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 06:41:08",
+    "exit_ts": 1769668868.56917,
+    "token_id": "10294751913664150954490376491698671979327007140911807306258100671330452028850",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.002166950702666,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 05:41:08",
+      "has_position": false,
+      "last_bid": 0.7,
+      "last_ask": 0.72
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 06:57:04",
+    "exit_ts": 1769669824.7264814,
+    "token_id": "55201180171382344648128505031675400629485078801250545752063029078975592767599",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 282.5441801548004,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 02:14:32",
+      "has_position": false,
+      "last_bid": 0.52,
+      "last_ask": 0.54
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 07:03:41",
+    "exit_ts": 1769670222.0006824,
+    "token_id": "47321246111074442118975317476259316020677014741172642211326874221045952834236",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00254222949346,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 06:03:41",
+      "has_position": false,
+      "last_bid": 0.95,
+      "last_ask": 0.96
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 07:31:31",
+    "exit_ts": 1769671891.4795003,
+    "token_id": "97096867818443035903034754988462815062031529438411423419311569171727062403843",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 69.69009603659312,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 06:21:50",
+      "has_position": false,
+      "last_bid": 0.126,
+      "last_ask": 0.138
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 07:34:43",
+    "exit_ts": 1769672083.1675377,
+    "token_id": "16206267440377108972343351482425564384973031696941663558076310969498822538172",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.43499999999999994,
+      "last_bid": 0.335,
+      "last_ask": 0.351,
+      "sell_floor_price": 0.43717499999999987,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 07:41:18",
+    "exit_ts": 1769672478.7339993,
+    "token_id": "63369941481876265079669200084080935839244983653494876131040874623657755022508",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00580366849899,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 06:41:18",
+      "has_position": false,
+      "last_bid": 0.42,
+      "last_ask": 0.43
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 08:00:11",
+    "exit_ts": 1769673611.62437,
+    "token_id": "109485896404435445224771356926428046595093346501629729876439793593978284351864",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00684057076772,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 07:00:11",
+      "has_position": false,
+      "last_bid": 0.61,
+      "last_ask": 0.62
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 08:30:53",
+    "exit_ts": 1769675453.9253166,
+    "token_id": "105278431224304914262575108897857144710708269283401008398765038078043727063198",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 212.3381868004799,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 04:58:33",
+      "has_position": false,
+      "last_bid": 0.764,
+      "last_ask": 0.773
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 08:31:28",
+    "exit_ts": 1769675488.0359895,
+    "token_id": "75440953803546459878941444326342594124490686324754533960989243260968706429300",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.51,
+      "last_bid": 0.48,
+      "last_ask": 0.49,
+      "sell_floor_price": 0.51255,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 08:36:52",
+    "exit_ts": 1769675812.4538336,
+    "token_id": "44169729231600183934113609960222670358715639208411971924042241295619035924872",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.003431073824565,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 07:36:52",
+      "has_position": false,
+      "last_bid": 0.48,
+      "last_ask": 0.49
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 08:42:55",
+    "exit_ts": 1769676175.4191911,
+    "token_id": "28940686238755276284465735330714794980438222573194390182349545307052602997747",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00551580588023,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 07:42:55",
+      "has_position": false,
+      "last_bid": 0.88,
+      "last_ask": 0.89
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 08:54:27",
+    "exit_ts": 1769676867.685525,
+    "token_id": "113092139466786773400046150227283022650845595790917410904665252411285384263934",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 424.04755953947705,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 22:40:34",
+      "has_position": false,
+      "last_bid": 0.39,
+      "last_ask": 0.4
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 09:29:09",
+    "exit_ts": 1769678949.5994954,
+    "token_id": "24286668802376412374081743293701238057227224421953022561655145028885026136261",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 6.87,
+      "entry_price": 0.81,
+      "last_bid": 0.77,
+      "last_ask": 0.78,
+      "sell_floor_price": 0.8140499999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 09:29:20",
+    "exit_ts": 1769678960.6091483,
+    "token_id": "10832696757358093775468120009000761778513405247768868107262967513475277652998",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 6.8,
+      "entry_price": 0.58,
+      "last_bid": 0.52,
+      "last_ask": 0.53,
+      "sell_floor_price": 0.5828999999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 09:32:59",
+    "exit_ts": 1769679179.228604,
+    "token_id": "34465433013244737261777301958314575283534514587255327061285941306189159190135",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 481.29563139279685,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 01:31:30",
+      "has_position": false,
+      "last_bid": 0.92,
+      "last_ask": 0.93
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 09:36:59",
+    "exit_ts": 1769679419.7625172,
+    "token_id": "27911616648163853231017805596118911526202185567944724228908312975649746722206",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00102580388387,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 08:36:59",
+      "has_position": false,
+      "last_bid": 0.54,
+      "last_ask": 0.55
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 09:44:33",
+    "exit_ts": 1769679873.5190911,
+    "token_id": "4920174600328060381478178332126683115937537315909025772685332706706025236975",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.0072999159495,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 08:44:33",
+      "has_position": false,
+      "last_bid": 0.76,
+      "last_ask": 0.77
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 10:07:58",
+    "exit_ts": 1769681278.313803,
+    "token_id": "108988271800978168213949343685406694292284061166193819357568013088568150075789",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 314.5597337206205,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 04:53:24",
+      "has_position": false,
+      "last_bid": 0.61,
+      "last_ask": 0.63
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 10:25:51",
+    "exit_ts": 1769682351.633892,
+    "token_id": "15704223254061637699665008299235004894744524204070683496068480275285392327272",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 6.81,
+      "entry_price": 0.36,
+      "last_bid": 0.34,
+      "last_ask": 0.36,
+      "sell_floor_price": 0.36179999999999995,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 10:34:38",
+    "exit_ts": 1769682878.1670625,
+    "token_id": "39685513581015973828065061115014564319705732336697536508658294168692213551689",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00165966351827,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 09:34:38",
+      "has_position": false,
+      "last_bid": 0.91,
+      "last_ask": 0.92
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 10:47:17",
+    "exit_ts": 1769683637.3647695,
+    "token_id": "42378629981888465778376796069813771913625690526215841226738686395410621595528",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.000420113404594,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 09:47:17",
+      "has_position": false,
+      "last_bid": 0.85,
+      "last_ask": 0.86
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 11:01:37",
+    "exit_ts": 1769684497.3665361,
+    "token_id": "75440953803546459878941444326342594124490686324754533960989243260968706429300",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 90.49311729669571,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 09:31:07",
+      "has_position": false,
+      "last_bid": 0.48,
+      "last_ask": 0.68
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 11:03:54",
+    "exit_ts": 1769684634.6967075,
+    "token_id": "37937505324283813358949398177779265113103689430857670324935622028086715010576",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 255.1204942027728,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 06:48:47",
+      "has_position": false,
+      "last_bid": 0.63,
+      "last_ask": 0.66
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 11:07:14",
+    "exit_ts": 1769684834.4948852,
+    "token_id": "19323538724182223051629422172260586604632454119828774685084899285092343775100",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 154.21516731977462,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 08:33:01",
+      "has_position": false,
+      "last_bid": 0.63,
+      "last_ask": 0.65
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 11:17:17",
+    "exit_ts": 1769685437.0371885,
+    "token_id": "84179647029696184569295249591902766504666878402456968340436905262047026883194",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.979,
+      "last_bid": 0.971,
+      "last_ask": 0.974,
+      "sell_floor_price": 0.9838949999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 11:35:50",
+    "exit_ts": 1769686550.6504405,
+    "token_id": "51171279104285400909666677762285621845926753560865042481170667672124752488918",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00242146253586,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 10:35:50",
+      "has_position": false,
+      "last_bid": 0.68,
+      "last_ask": 0.7
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 11:49:22",
+    "exit_ts": 1769687362.5207644,
+    "token_id": "65776331158171098119883600447375115999924641197000014423196868505933237200018",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.005804371833804,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 10:49:22",
+      "has_position": false,
+      "last_bid": 0.64,
+      "last_ask": 0.65
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 12:28:23",
+    "exit_ts": 1769689703.78432,
+    "token_id": "6991399421608885164106322669050008326466693363337237104945082692825908065896",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 345.3275088508924,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 06:43:04",
+      "has_position": false,
+      "last_bid": 0.977,
+      "last_ask": 0.988
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 12:33:01",
+    "exit_ts": 1769689981.767432,
+    "token_id": "112847346639203630765901077163845076542730075387943895802537171945310360721295",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.16635727882385,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 12:37:29",
+    "exit_ts": 1769690249.5826845,
+    "token_id": "102493900551645701521693125055452122755587721284263456800351297341161706805154",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00372943878174,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 11:37:29",
+      "has_position": false,
+      "last_bid": 0.41,
+      "last_ask": 0.42
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 12:56:31",
+    "exit_ts": 1769691391.468693,
+    "token_id": "18289842382539867639079362738467334752951741961393928566628307174343542320349",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 204.6126169045766,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 09:31:54",
+      "has_position": false,
+      "last_bid": 0.68,
+      "last_ask": 0.69
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 13:58:36",
+    "exit_ts": 1769695116.8493886,
+    "token_id": "48542681435247439258666128962898934229410828949745554458943224971747087131816",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00233661731084,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 12:58:36",
+      "has_position": false,
+      "last_bid": 0.06,
+      "last_ask": 0.07
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 14:32:36",
+    "exit_ts": 1769697156.7742207,
+    "token_id": "16206267440377108972343351482425564384973031696941663558076310969498822538172",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.43499999999999994,
+      "last_bid": 0.374,
+      "last_ask": 0.378,
+      "sell_floor_price": 0.43717499999999987,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 14:52:48",
+    "exit_ts": 1769698368.51239,
+    "token_id": "114421380098084026753773605667430150755820287180340356465450569515479471185603",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 84.36060611804326,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 13:28:26",
+      "has_position": false,
+      "last_bid": 0.152,
+      "last_ask": 0.157
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 15:07:35",
+    "exit_ts": 1769699255.8608239,
+    "token_id": "28708129422013851649799558446816240244246580395995660620346398972895141235479",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.986,
+      "last_bid": 0.985,
+      "last_ask": 0.986,
+      "sell_floor_price": 0.9909299999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 15:09:14",
+    "exit_ts": 1769699354.4246185,
+    "token_id": "16206267440377108972343351482425564384973031696941663558076310969498822538172",
+    "exit_reason": "STALE_DATA_IN_TRADING",
+    "exit_data": {
+      "data_age_minutes": 36.68225250244141,
+      "threshold_minutes": 30.0,
+      "updated_at": 1769697153.4887402,
+      "last_seq": 279347,
+      "has_position": null
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 15:39:07",
+    "exit_ts": 1769701147.2957604,
+    "token_id": "19055570823936562199192749486622783452010485635138881345426727492244796006241",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.13,
+      "last_bid": 0.07,
+      "last_ask": 0.1,
+      "sell_floor_price": 0.13065,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 16:10:23",
+    "exit_ts": 1769703023.9294953,
+    "token_id": "24286668802376412374081743293701238057227224421953022561655145028885026136261",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.8099999999999999,
+      "last_bid": 0.66,
+      "last_ask": 0.68,
+      "sell_floor_price": 0.8140499999999998,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 16:10:47",
+    "exit_ts": 1769703047.0577977,
+    "token_id": "104071616575689490708756996503755160411785604144351427331378560378097635400347",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.007742234071095,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 15:10:46",
+      "has_position": false,
+      "last_bid": 0.44,
+      "last_ask": 0.46
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 16:26:55",
+    "exit_ts": 1769704015.7982483,
+    "token_id": "10832696757358093775468120009000761778513405247768868107262967513475277652998",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.5799999999999998,
+      "last_bid": 0.45,
+      "last_ask": 0.46,
+      "sell_floor_price": 0.5828999999999998,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 16:31:21",
+    "exit_ts": 1769704281.7560372,
+    "token_id": "95949957895141858444199258452803633110472396604599808168788254125381075552218",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.74,
+      "last_bid": 0.71,
+      "last_ask": 0.73,
+      "sell_floor_price": 0.7436999999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 17:03:02",
+    "exit_ts": 1769706182.2041159,
+    "token_id": "15704223254061637699665008299235004894744524204070683496068480275285392327272",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.36,
+      "last_bid": 0.32,
+      "last_ask": 0.33,
+      "sell_floor_price": 0.36179999999999995,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 17:17:00",
+    "exit_ts": 1769707020.9917624,
+    "token_id": "95445253825760928229249449988904037268822895493615656805098352422989620830732",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 62.92222787539164,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 16:14:05",
+      "has_position": false,
+      "last_bid": 0.59,
+      "last_ask": 0.6
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 17:19:56",
+    "exit_ts": 1769707196.6394322,
+    "token_id": "95949957895141858444199258452803633110472396604599808168788254125381075552218",
+    "exit_reason": "STALE_DATA_IN_TRADING",
+    "exit_data": {
+      "data_age_minutes": 48.6179630835851,
+      "threshold_minutes": 30.0,
+      "updated_at": 1769704279.5608842,
+      "last_seq": 1851,
+      "has_position": null
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 17:33:40",
+    "exit_ts": 1769708020.5512202,
+    "token_id": "55201180171382344648128505031675400629485078801250545752063029078975592767599",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00754992564519,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 16:33:40",
+      "has_position": false,
+      "last_bid": 0.5,
+      "last_ask": 0.53
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 17:58:04",
+    "exit_ts": 1769709484.7233646,
+    "token_id": "83722296194861509737807492105325276806804014660137138811708463053968062687084",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.5299,
+      "last_bid": 0.23,
+      "last_ask": 0.24,
+      "sell_floor_price": 0.5325495,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 18:27:53",
+    "exit_ts": 1769711273.5625753,
+    "token_id": "13254241531379113814268623702591445764028502818838968001780086361032892261649",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.9709,
+      "last_bid": 0.969,
+      "last_ask": 0.97,
+      "sell_floor_price": 0.9757544999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 18:32:31",
+    "exit_ts": 1769711551.9544976,
+    "token_id": "92338023949892178944669766466918011858071833335063600591564160751176113496073",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 498.7191716392835,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 09:34:30",
+      "has_position": false,
+      "last_bid": 0.27,
+      "last_ask": 0.3
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 18:34:13",
+    "exit_ts": 1769711653.2369614,
+    "token_id": "16507531654323613440839711226389584097745237130431039493320761537250304112351",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00107512871424,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 17:34:13",
+      "has_position": false,
+      "last_bid": 0.74,
+      "last_ask": 0.76
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:00:29",
+    "exit_ts": 1769713229.7269514,
+    "token_id": "81597160891975336100117101087183012959341169529180921433678346516276478487145",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00234432617823,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 18:00:29",
+      "has_position": false,
+      "last_bid": 0.67,
+      "last_ask": 0.69
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:01:09",
+    "exit_ts": 1769713269.02302,
+    "token_id": "46746822541461330721074821991383617225657173789584499857683753079229786702095",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.75,
+      "last_bid": 0.72,
+      "last_ask": 0.74,
+      "sell_floor_price": 0.7537499999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:04:24",
+    "exit_ts": 1769713464.560395,
+    "token_id": "82502710596437163348308378521149082521990735368840065096352406278737871407553",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.65,
+      "last_bid": 0.6,
+      "last_ask": 0.61,
+      "sell_floor_price": 0.65325,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:06:40",
+    "exit_ts": 1769713600.2702332,
+    "token_id": "10294751913664150954490376491698671979327007140911807306258100671330452028850",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 131.66480724016824,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 16:55:00",
+      "has_position": false,
+      "last_bid": 0.71,
+      "last_ask": 0.77
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:13:23",
+    "exit_ts": 1769714003.9449275,
+    "token_id": "47321246111074442118975317476259316020677014741172642211326874221045952834236",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 87.05372397899627,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 17:46:20",
+      "has_position": false,
+      "last_bid": 0.935,
+      "last_ask": 0.949
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:14:20",
+    "exit_ts": 1769714060.8124287,
+    "token_id": "93318825153882627042070230147770381194968504454313031969554302109165671382437",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 7.09,
+      "entry_price": 0.24900000000000003,
+      "last_bid": 0.247,
+      "last_ask": 0.25,
+      "sell_floor_price": 0.250245,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:17:17",
+    "exit_ts": 1769714237.2219627,
+    "token_id": "109485896404435445224771356926428046595093346501629729876439793593978284351864",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.14157342910767,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:28:16",
+    "exit_ts": 1769714896.4652066,
+    "token_id": "51338236787729560681434534660841415073585974762690814047670810862722808070955",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00069912274679,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 18:28:16",
+      "has_position": false,
+      "last_bid": 0.29,
+      "last_ask": 0.3
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:36:19",
+    "exit_ts": 1769715379.0098085,
+    "token_id": "99532112359377568468069899516926160236004628725764436836956241482323854540585",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 6.96,
+      "entry_price": 0.6839,
+      "last_bid": 0.56,
+      "last_ask": 0.59,
+      "sell_floor_price": 0.6873194999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 19:57:10",
+    "exit_ts": 1769716630.740135,
+    "token_id": "82886838000782972044397918838888973114431856431027405244207744342627270948784",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 530.4035783370335,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 11:06:46",
+      "has_position": false,
+      "last_bid": 0.73,
+      "last_ask": 0.76
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 20:08:14",
+    "exit_ts": 1769717294.7959676,
+    "token_id": "63369941481876265079669200084080935839244983653494876131040874623657755022508",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00525264342626,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 19:08:14",
+      "has_position": false,
+      "last_bid": 0.41,
+      "last_ask": 0.42
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 20:18:51",
+    "exit_ts": 1769717931.0491445,
+    "token_id": "44169729231600183934113609960222670358715639208411971924042241295619035924872",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.001277045408884,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 19:18:50",
+      "has_position": false,
+      "last_bid": 0.48,
+      "last_ask": 0.49
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 20:30:52",
+    "exit_ts": 1769718652.2333567,
+    "token_id": "28940686238755276284465735330714794980438222573194390182349545307052602997747",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.007003943125405,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 19:30:51",
+      "has_position": false,
+      "last_bid": 0.88,
+      "last_ask": 0.89
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 20:52:17",
+    "exit_ts": 1769719937.0674598,
+    "token_id": "83722296194861509737807492105325276806804014660137138811708463053968062687084",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 110.13563441435495,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 19:02:08",
+      "has_position": false,
+      "last_bid": 0.53,
+      "last_ask": 0.55
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 20:59:17",
+    "exit_ts": 1769720357.6171732,
+    "token_id": "37975265083682450969967223199653164268542375291978582835346444673615244164455",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.81,
+      "last_bid": 0.77,
+      "last_ask": 0.78,
+      "sell_floor_price": 0.8140499999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 21:34:11",
+    "exit_ts": 1769722451.1152105,
+    "token_id": "84179647029696184569295249591902766504666878402456968340436905262047026883194",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 7.34,
+      "entry_price": 0.979,
+      "last_bid": 0.956,
+      "last_ask": 0.964,
+      "sell_floor_price": 0.984,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 21:41:32",
+    "exit_ts": 1769722892.0466104,
+    "token_id": "2791138143012434753446657502011224259420532252815498101697790519791539429743",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.95,
+      "last_bid": 0.27,
+      "last_ask": 0.324,
+      "sell_floor_price": 0.9547499999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 21:53:37",
+    "exit_ts": 1769723617.0081818,
+    "token_id": "34465433013244737261777301958314575283534514587255327061285941306189159190135",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00448396205902,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 20:53:36",
+      "has_position": false,
+      "last_bid": 0.9,
+      "last_ask": 0.91
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 22:05:44",
+    "exit_ts": 1769724344.4834414,
+    "token_id": "4920174600328060381478178332126683115937537315909025772685332706706025236975",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.002240629990894,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 21:05:44",
+      "has_position": false,
+      "last_bid": 0.75,
+      "last_ask": 0.76
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 22:12:30",
+    "exit_ts": 1769724750.1680727,
+    "token_id": "19055570823936562199192749486622783452010485635138881345426727492244796006241",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.13,
+      "last_bid": 0.011,
+      "last_ask": 0.038,
+      "sell_floor_price": 0.13065,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 22:21:21",
+    "exit_ts": 1769725281.348675,
+    "token_id": "39342171144861816896992253440408377265010285664347210041520694491243996062356",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.9552,
+      "last_bid": 0.933,
+      "last_ask": 0.957,
+      "sell_floor_price": 0.9599759999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 22:34:06",
+    "exit_ts": 1769726046.4689844,
+    "token_id": "72095897215599895681149701722606364539867186803340437295210002622844727571825",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 1447.0782952984175,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-28 22:27:01",
+      "has_position": false,
+      "last_bid": 0.4,
+      "last_ask": 0.43
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 22:41:22",
+    "exit_ts": 1769726482.7479165,
+    "token_id": "97278843093518170983116788293559302501059038797143772070255096806379425818363",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 74.9888343334198,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 21:26:23",
+      "has_position": false,
+      "last_bid": 0.65,
+      "last_ask": 0.651
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 22:41:36",
+    "exit_ts": 1769726496.4401248,
+    "token_id": "28708129422013851649799558446816240244246580395995660620346398972895141235479",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 6.63,
+      "entry_price": 0.986,
+      "last_bid": 0.981,
+      "last_ask": 0.983,
+      "sell_floor_price": 0.9909299999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 22:46:20",
+    "exit_ts": 1769726780.1813543,
+    "token_id": "39685513581015973828065061115014564319705732336697536508658294168692213551689",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.003588354587556,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 21:46:19",
+      "has_position": false,
+      "last_bid": 0.93,
+      "last_ask": 0.94
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 23:44:15",
+    "exit_ts": 1769730255.8178928,
+    "token_id": "51171279104285400909666677762285621845926753560865042481170667672124752488918",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00615919033687,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 22:44:15",
+      "has_position": false,
+      "last_bid": 0.69,
+      "last_ask": 0.7
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-29 23:45:03",
+    "exit_ts": 1769730303.263469,
+    "token_id": "65776331158171098119883600447375115999924641197000014423196868505933237200018",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00575086275737,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 22:45:02",
+      "has_position": false,
+      "last_bid": 0.62,
+      "last_ask": 0.65
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 00:04:53",
+    "exit_ts": 1769731493.8467443,
+    "token_id": "24286668802376412374081743293701238057227224421953022561655145028885026136261",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 6.71,
+      "entry_price": 0.8099999999999999,
+      "last_bid": 0.65,
+      "last_ask": 0.67,
+      "sell_floor_price": 0.8140499999999998,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 00:16:14",
+    "exit_ts": 1769732174.787256,
+    "token_id": "89654912629452120221927493276304178127700413639374487366372839318096031724394",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 208.83193287849426,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 20:47:24",
+      "has_position": false,
+      "last_bid": 0.88,
+      "last_ask": 0.93
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 00:21:13",
+    "exit_ts": 1769732473.4344175,
+    "token_id": "112847346639203630765901077163845076542730075387943895802537171945310360721295",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.05571293830872,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 00:25:36",
+    "exit_ts": 1769732736.9480097,
+    "token_id": "97096867818443035903034754988462815062031529438411423419311569171727062403843",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 138.37961278756458,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 22:07:03",
+      "has_position": false,
+      "last_bid": 0.893,
+      "last_ask": 0.919
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 01:02:29",
+    "exit_ts": 1769734949.205349,
+    "token_id": "6991399421608885164106322669050008326466693363337237104945082692825908065896",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 130.6503732005755,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 22:51:50",
+      "has_position": false,
+      "last_bid": 0.971,
+      "last_ask": 0.979
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 01:03:07",
+    "exit_ts": 1769734987.9921117,
+    "token_id": "13254241531379113814268623702591445764028502818838968001780086361032892261649",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.9709,
+      "last_bid": 0.967,
+      "last_ask": 0.968,
+      "sell_floor_price": 0.9757544999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 01:22:24",
+    "exit_ts": 1769736144.9541037,
+    "token_id": "37114768995166166425289237419695601463774549668889181983290296242123704967930",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00239055554072,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 00:22:24",
+      "has_position": false,
+      "last_bid": 0.4,
+      "last_ask": 0.42
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 01:28:36",
+    "exit_ts": 1769736516.5625708,
+    "token_id": "48542681435247439258666128962898934229410828949745554458943224971747087131816",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.006003093719485,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 00:28:36",
+      "has_position": false,
+      "last_bid": 0.07,
+      "last_ask": 0.08
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 02:20:43",
+    "exit_ts": 1769739643.4736164,
+    "token_id": "99532112359377568468069899516926160236004628725764436836956241482323854540585",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 6.96,
+      "entry_price": 0.6839,
+      "last_bid": 0.54,
+      "last_ask": 0.55,
+      "sell_floor_price": 0.6873194999999999,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 02:44:24",
+    "exit_ts": 1769741064.7303553,
+    "token_id": "39342171144861816896992253440408377265010285664347210041520694491243996062356",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 177.58404306173324,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 23:46:39",
+      "has_position": false,
+      "last_bid": 0.947,
+      "last_ask": 0.967
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 03:01:19",
+    "exit_ts": 1769742079.282886,
+    "token_id": "105278431224304914262575108897857144710708269283401008398765038078043727063198",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 303.16578513383865,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-29 21:58:09",
+      "has_position": false,
+      "last_bid": 0.681,
+      "last_ask": 0.793
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 03:03:32",
+    "exit_ts": 1769742212.4948273,
+    "token_id": "99532112359377568468069899516926160236004628725764436836956241482323854540585",
+    "exit_reason": "STALE_DATA_IN_TRADING",
+    "exit_data": {
+      "data_age_minutes": 43.205143400033315,
+      "threshold_minutes": 30.0,
+      "updated_at": 1769739620.1855254,
+      "last_seq": 18927,
+      "has_position": null
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 03:41:40",
+    "exit_ts": 1769744500.4895499,
+    "token_id": "2913769663567203581057192194783178640271101775179557758271454045473237605773",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 123.33220095634461,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 01:38:20",
+      "has_position": false,
+      "last_bid": 0.44,
+      "last_ask": 0.47
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 03:45:29",
+    "exit_ts": 1769744729.7236192,
+    "token_id": "50005952796518586292778222685298750447930027597009327781466731324939399757427",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00604556401571,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 02:45:29",
+      "has_position": false,
+      "last_bid": 0.73,
+      "last_ask": 0.74
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 03:45:36",
+    "exit_ts": 1769744736.2465427,
+    "token_id": "92338023949892178944669766466918011858071833335063600591564160751176113496073",
+    "exit_reason": "AGGREGATOR_NO_DATA",
+    "exit_data": {
+      "duration_seconds": 180.10613465309143,
+      "timeout_seconds": 180,
+      "has_position": false
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 04:18:35",
+    "exit_ts": 1769746715.7469969,
+    "token_id": "42378629981888465778376796069813771913625690526215841226738686395410621595528",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.92,
+      "last_bid": 0.9,
+      "last_ask": 0.91,
+      "sell_floor_price": 0.9246,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 04:18:42",
+    "exit_ts": 1769746722.6119974,
+    "token_id": "24394670903706558879845790079760859552309100903651562795058188175118941818512",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.16,
+      "last_bid": 0.15,
+      "last_ask": 0.16,
+      "sell_floor_price": 0.1608,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 04:22:40",
+    "exit_ts": 1769746960.8842618,
+    "token_id": "47762771985439515891493048505438381476431742366648422118840977543937503496558",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.001390008131665,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 03:22:40",
+      "has_position": false,
+      "last_bid": 0.83,
+      "last_ask": 0.85
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 04:32:40",
+    "exit_ts": 1769747560.8081448,
+    "token_id": "75440953803546459878941444326342594124490686324754533960989243260968706429300",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00374986330668,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 03:32:40",
+      "has_position": false,
+      "last_bid": 0.069,
+      "last_ask": 0.07
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 04:47:53",
+    "exit_ts": 1769748473.3618116,
+    "token_id": "81597160891975336100117101087183012959341169529180921433678346516276478487145",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00481903553009,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 03:47:53",
+      "has_position": false,
+      "last_bid": 0.67,
+      "last_ask": 0.69
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 04:47:59",
+    "exit_ts": 1769748479.6995935,
+    "token_id": "16507531654323613440839711226389584097745237130431039493320761537250304112351",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00467460155487,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 03:47:59",
+      "has_position": false,
+      "last_bid": 0.73,
+      "last_ask": 0.74
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 05:03:40",
+    "exit_ts": 1769749420.9751103,
+    "token_id": "62919033509924867694767701004592687606178662324885693114076158765690429760946",
+    "exit_reason": "SELL_ABANDONED",
+    "exit_data": {
+      "has_position": true,
+      "position_size": 10.0,
+      "entry_price": 0.25,
+      "last_bid": 0.17,
+      "last_ask": 0.19,
+      "sell_floor_price": 0.25125,
+      "inactive_timeout_hours": 6.0
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 05:15:10",
+    "exit_ts": 1769750110.018005,
+    "token_id": "37937505324283813358949398177779265113103689430857670324935622028086715010576",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 219.36771111488343,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 01:35:47",
+      "has_position": false,
+      "last_bid": 0.8,
+      "last_ask": 0.83
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 05:19:24",
+    "exit_ts": 1769750364.9810483,
+    "token_id": "26346959244807884603988171159762120179231559488340424548744818595827744357639",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00294936100642,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 04:19:24",
+      "has_position": false,
+      "last_bid": 0.81,
+      "last_ask": 0.82
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 05:24:43",
+    "exit_ts": 1769750683.9739325,
+    "token_id": "82886838000782972044397918838888973114431856431027405244207744342627270948784",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.007364229361215,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 04:24:43",
+      "has_position": false,
+      "last_bid": 0.76,
+      "last_ask": 0.77
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 05:47:13",
+    "exit_ts": 1769752033.2374969,
+    "token_id": "36321425691780366613511860100699549713165321630331934332666834056143249700098",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 236.93269364833833,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 01:50:17",
+      "has_position": false,
+      "last_bid": 0.7,
+      "last_ask": 0.72
+    },
+    "refillable": true
+  },
+  {
+    "timestamp": "2026-01-30 05:48:49",
+    "exit_ts": 1769752129.5445507,
+    "token_id": "34465433013244737261777301958314575283534514587255327061285941306189159190135",
+    "exit_reason": "SIGNAL_TIMEOUT",
+    "exit_data": {
+      "signal_idle_minutes": 60.00239576896032,
+      "timeout_threshold_minutes": 60.0,
+      "last_signal_time": "2026-01-30 04:48:49",
+      "has_position": false,
+      "last_bid": 0.94,
+      "last_ask": 0.95
+    },
+    "refillable": true
+  }
+]
