@@ -1819,6 +1819,25 @@ def _cancel_open_orders_for_token(client: Any, token_id: str) -> int:
     return canceled
 
 
+def _cancel_open_buy_orders_for_token(client: Any, token_id: str) -> int:
+    open_orders = _fetch_open_orders_norm(client)
+    canceled = 0
+    for order in open_orders:
+        if str(order.get("token_id")) != str(token_id):
+            continue
+        if str(order.get("side", "")).upper() != "BUY":
+            continue
+        order_id = order.get("order_id")
+        if not order_id:
+            continue
+        try:
+            _cancel_order(client, str(order_id))
+            canceled += 1
+        except Exception:
+            continue
+    return canceled
+
+
 # ===== 主流程 =====
 def main(run_config: Optional[Dict[str, Any]] = None):
     client = _get_client()
@@ -2333,6 +2352,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         strategy.stop("sell signal")
         stop_event.set()
 
+    def _cancel_open_buy_orders_before_exit(reason: str) -> None:
+        canceled = _cancel_open_buy_orders_for_token(client, token_id)
+        if canceled:
+            print(f"[EXIT] {reason} -> 已撤销 BUY 挂单数量={canceled}")
+
     if exit_only:
         _exit_cleanup_only("exit-only cleanup")
         return
@@ -2747,6 +2771,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 print(f"[EXIT] 释放队列：token {token_id} 无法从聚合器获取数据")
                 print(f"[HINT] 请检查：1) 聚合器是否运行 2) 是否订阅了此token")
                 sys.stdout.flush()
+                _cancel_open_buy_orders_before_exit("AGGREGATOR_NO_DATA")
                 _log_error("AGGREGATOR_NO_DATA", {
                     "token_id": token_id,
                     "message": "聚合器缓存中持续无此token数据",
@@ -2771,6 +2796,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
         if _is_market_closed(snapshot):
             print("[MARKET] 收到市场关闭事件，准备退出…")
+            _cancel_open_buy_orders_before_exit("MARKET_CLOSED")
             strategy.stop("market closed")
             stop_event.set()
             return
@@ -2794,6 +2820,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 print(f"[STALE_DATA] 缓存数据过期 {data_age/60:.1f} 分钟（阈值 {STALE_DATA_THRESHOLD/60:.0f} 分钟）")
                 print(f"[STALE_DATA] 该token市场可能失去流动性，退出交易释放队列位置")
 
+                _cancel_open_buy_orders_before_exit("STALE_DATA_IN_TRADING")
                 _log_error("STALE_DATA_IN_TRADING", {
                     "token_id": token_id,
                     "data_age_seconds": data_age,
@@ -2982,6 +3009,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         if not os.path.exists(shared_ws_cache_path):
             print(f"[WS][SHARED] ✗ 缓存文件不存在")
             print(f"[WS][FATAL] 共享WS不可用，禁止切换独立WS，退出")
+            _cancel_open_buy_orders_before_exit("SHARED_WS_UNAVAILABLE")
             _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
                 "cache_path": shared_ws_cache_path,
                 "reason": "missing",
@@ -2996,6 +3024,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if file_age > 300:
                     print(f"[WS][SHARED] ✗ 缓存文件过期（{file_age:.0f}秒未更新）")
                     print(f"[WS][FATAL] 共享WS缓存过期，禁止切换独立WS，退出")
+                    _cancel_open_buy_orders_before_exit("SHARED_WS_UNAVAILABLE")
                     _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
                         "cache_path": shared_ws_cache_path,
                         "reason": "stale",
@@ -3009,6 +3038,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             except OSError:
                 print("[WARN] 无法读取共享 WS 缓存文件状态")
                 print("[WS][FATAL] 共享WS状态不可读，禁止切换独立WS，退出")
+                _cancel_open_buy_orders_before_exit("SHARED_WS_UNAVAILABLE")
                 _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
                     "cache_path": shared_ws_cache_path,
                     "reason": "stat_failed",
@@ -3019,6 +3049,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     if not use_shared_ws:
         print("[WS][FATAL] 独立WS已被禁用，但use_shared_ws=False，退出")
+        _cancel_open_buy_orders_before_exit("SHARED_WS_UNAVAILABLE")
         _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
             "cache_path": shared_ws_cache_path,
             "reason": "disabled_fallback",
@@ -3056,6 +3087,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if is_closed:
                     print(f"[WAIT][CLOSED] 检测到市场已关闭，提前退出")
                     print("[QUEUE] 释放队列：市场已关闭。")
+                    _cancel_open_buy_orders_before_exit("MARKET_CLOSED")
                     _log_error("MARKET_CLOSED", {
                         "token_id": token_id,
                         "elapsed_seconds": elapsed_wait,
@@ -3073,6 +3105,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if data_age > 300:
                     print(f"[WAIT][STALE] 缓存数据过期{data_age:.0f}秒，该token可能无流动性")
                     print("[QUEUE] 释放队列：token长期无数据更新，提前退出。")
+                    _cancel_open_buy_orders_before_exit("STALE_DATA_TIMEOUT")
                     _log_error("STALE_DATA_TIMEOUT", {
                         "token_id": token_id,
                         "elapsed_seconds": elapsed_wait,
@@ -3107,6 +3140,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 "shared_ws_cache_path": shared_ws_cache_path if use_shared_ws else None,
                 "message": "启动后等待行情超时"
             })
+            _cancel_open_buy_orders_before_exit("STARTUP_TIMEOUT")
             _record_exit_token(token_id, "STARTUP_TIMEOUT", {
                 "elapsed_seconds": elapsed_wait,
                 "use_shared_ws": use_shared_ws,
@@ -3778,6 +3812,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             # 获取当前持仓和价格信息用于回填
             snap = latest.get(token_id) or {}
             status = strategy.status()
+            _cancel_open_buy_orders_before_exit("SELL_ABANDONED")
             _record_exit_token(token_id, "SELL_ABANDONED", {
                 "has_position": True,  # 仍有持仓
                 "position_size": float(sell_resp.get("remaining") or eff_qty),
@@ -3913,6 +3948,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             strategy.stop("price stagnation")
             print("[QUEUE] 释放队列：价格停滞且无持仓，已退出。")
             snap = latest.get(token_id) or {}
+            _cancel_open_buy_orders_before_exit("STAGNATION_NO_POSITION")
             _record_exit_token(token_id, "STAGNATION_NO_POSITION", {
                 "has_position": False,
                 "change_ratio": change_ratio,
@@ -3947,6 +3983,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             strategy.stop("price stagnation (no feed)")
             print("[QUEUE] 释放队列：长时间无行情且无持仓，已退出。")
             snap = latest.get(token_id) or {}
+            _cancel_open_buy_orders_before_exit("NO_FEED_NO_POSITION")
             _record_exit_token(token_id, "NO_FEED_NO_POSITION", {
                 "has_position": False,
                 "idle_minutes": idle_seconds / 60.0,
@@ -4092,6 +4129,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
                         # 获取最后的价格数据用于回填判断
                         snap = latest.get(token_id) or {}
+                        _cancel_open_buy_orders_before_exit("SIGNAL_TIMEOUT")
                         _record_exit_token(token_id, "SIGNAL_TIMEOUT", {
                             "signal_idle_minutes": signal_idle_seconds / 60.0,
                             "timeout_threshold_minutes": signal_timeout_seconds / 60.0,
