@@ -1,0 +1,1054 @@
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/run_params_2913769663567203581057192194783178640271101775179557758271454045473237605773.json
+[INIT] API 凭证已验证。
+[INIT] ClobClient 就绪。
+[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。
+[INFO] 市场/子问题标题: Will Israel strike Lebanon on January 31, 2026?
+[INFO] 使用 token_id: 2913769663567203581057192194783178640271101775179557758271454045473237605773
+[INFO] 市场标注时区: America/New_York
+[INFO] 市场计划截止时间 (UTC): 2026-01-31T00:00:00+00:00
+[WARN] 自动获取的截止日期缺少具体时刻，已按默认配置设置截止时间为 2026-01-31T23:59:00-05:00 (America/New_York)。
+[INFO] 监控目标结束时间 (UTC): 2026-02-01T04:59:00+00:00
+[INFO] 未能识别市场价格精度，默认按盈利百分比下限 0.300% 执行。
+[INIT] 目标 token_id: 2913769663567203581057192194783178640271101775179557758271454045473237605773
+[INIT] 已读取手动份数 10.0，模式：总持仓目标。
+[INIT] 卖出挂单模式：aggressive
+[INIT] 卖出后递增买入阈值已启用，步长 0.0200%。
+[INIT] 价格停滞监控窗口 120.0 分钟，阈值 0.2000%。
+[INIT] 启动后无行情自动退出阈值 10.0 分钟。
+[INIT] 交易信号超时退出阈值 60.0 分钟（长时间无买入/卖出信号将退出）。
+[INIT] 卖出挂单空窗释放阈值 6.0 小时。
+[INFO] 倒计时卖出模式将在市场结束前 300 分钟开启。
+[INIT] Maker 配置: poll_sec=15.0s, position_sync_interval=90.0s
+[WS][SHARED] ✓ 将使用共享 WS 缓存模式
+[WS][SHARED] 缓存路径: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/ws_cache.json
+[WS][SHARED] ✓ 缓存文件新鲜（0秒前更新）
+[RUN] 监听行情中… 输入 stop / exit 可手动停止。
+[WS][SHARED][TRACE] 函数调用次数: 1
+[WS][SHARED][DEBUG] 读取统计: read=1, skip=0, 当前seq=91 (last=0), updated_at=1769736163.94 (last=0.00)
+[WS][SHARED] ✓ 检测到seq增长: 0 → 91 (+91)
+[WS][SHARED] 开始从共享缓存读取数据 (token=2913769663567203581057192194783178640271101775179557758271454045473237605773)
+[WS][SHARED] seq=91, updates=1 (2.0/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][TRACE] ✓ 函数执行完成，准备返回 (latest已设置: True)
+[WAIT][TRACE] _apply_shared_ws_snapshot()返回，latest已设置: True, stop_event: False
+[WAIT][TRACE] Loop iteration 1, latest: True, stop: False
+[WAIT][END] ✓ Waiting loop结束，latest已设置: True
+[WAIT][END] ✓ stop_event未设置，继续初始化...
+[INIT][TRACE] 1. 准备启动input_listener线程...
+[INIT][TRACE] 2. input_listener线程已启动
+[INIT][TRACE] 3. 准备初始化变量和策略状态...
+[INIT][TRACE] 4. 策略状态已获取
+[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts=1769903940.0, market_deadline_ts=1769921940.0)
+[INIT][TRACE] 7. 启动countdown_monitor线程...
+[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...
+[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws=True)
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2): seq和updated_at都未变化且距上次tick仅0.2秒
+[WS][SHARED][SKIP] 当前状态: seq=91, last_seq=91, bid=0.44, ask=0.46
+[HEARTBEAT] 主循环运行中... (use_shared_ws=True) (首次心跳)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 0.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 91 → 93 (+2)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 5
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 0.5分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=93, updates=5 (9.5/min), bid=0.44, ask=0.46, price=0.45
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=99, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=100, skip=176, 当前seq=93 (last=93), updated_at=1769736180.38 (last=1769736180.38)
+[WS][SHARED][TRACE] 函数调用次数: 101
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 11
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 1.0分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=93, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=202): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=93, last_seq=93, bid=0.44, ask=0.46
+[WS][SHARED] seq=93, updates=6 (9.3/min), bid=0.44, ask=0.46, price=0.45
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 18
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 1.7分钟无信号 / 阈值 60分钟
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=200, use_shared_ws=True)
+[WS][SHARED][TRACE] 函数调用次数: 201
+[WS][SHARED][DEBUG] 读取统计: read=201, skip=356, 当前seq=94 (last=94), updated_at=1769736281.45 (last=1769736281.45)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 24
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 2.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=94, updates=7 (13.1/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=402): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=94, last_seq=94, bid=0.44, ask=0.46
+[WS][SHARED] ✓ 检测到seq增长: 94 → 96 (+2)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 31
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 2.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=96, updates=7 (13.5/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][TRACE] 函数调用次数: 301
+[WS][SHARED] ✓ 检测到seq增长: 96 → 98 (+2)
+[WS][SHARED] ✓ 检测到seq增长: 98 → 100 (+2)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=320, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=321, skip=568, 当前seq=100 (last=100), updated_at=1769736351.88 (last=1769736351.88)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 37
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 3.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=100, updates=6 (11.1/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=602): seq和updated_at都未变化且距上次tick仅3.5秒
+[WS][SHARED][SKIP] 当前状态: seq=100, last_seq=100, bid=0.44, ask=0.46
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 43
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 3.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=100, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][TRACE] 函数调用次数: 401
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=420, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=421, skip=748, 当前seq=100 (last=100), updated_at=1769736351.88 (last=1769736351.88)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 49
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 4.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=802): seq和updated_at都未变化且距上次tick仅4.0秒
+[WS][SHARED][SKIP] 当前状态: seq=100, last_seq=100, bid=0.44, ask=0.46
+[WS][SHARED] seq=100, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 53
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 4.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=101, updates=4 (7.9/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][TRACE] 函数调用次数: 501
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=520, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=521, skip=928, 当前seq=101 (last=101), updated_at=1769736453.54 (last=1769736453.54)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 59
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 5.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=102, updates=7 (13.7/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1002): seq和updated_at都未变化且距上次tick仅4.5秒
+[WS][SHARED][SKIP] 当前状态: seq=102, last_seq=102, bid=0.44, ask=0.46
+[WS][SHARED][TRACE] 函数调用次数: 601
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 65
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 5.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=102, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=640, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=641, skip=1142, 当前seq=102 (last=102), updated_at=1769736481.34 (last=1769736481.34)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 70
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 6.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=102, updates=5 (8.6/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1202): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=102, last_seq=102, bid=0.44, ask=0.46
+[WS][SHARED][TRACE] 函数调用次数: 701
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 76
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 6.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=102, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=740, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=741, skip=1322, 当前seq=103 (last=103), updated_at=1769736590.49 (last=1769736590.49)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 82
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 7.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 104 → 107 (+3)
+[WS][SHARED] ✓ 检测到seq增长: 107 → 109 (+2)
+[WS][SHARED] seq=110, updates=9 (17.1/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1402): seq和updated_at都未变化且距上次tick仅1.5秒
+[WS][SHARED][SKIP] 当前状态: seq=110, last_seq=110, bid=0.44, ask=0.46
+[WS][SHARED][TRACE] 函数调用次数: 801
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 89
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 7.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=110, updates=5 (8.9/min), bid=0.44, ask=0.46, price=0.45
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=840, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=841, skip=1496, 当前seq=110 (last=110), updated_at=1769736612.36 (last=1769736612.36)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 95
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 8.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=110, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1602): seq和updated_at都未变化且距上次tick仅3.5秒
+[WS][SHARED][SKIP] 当前状态: seq=110, last_seq=110, bid=0.44, ask=0.46
+[WS][SHARED][TRACE] 函数调用次数: 901
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 101
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 8.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=110, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=960, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=961, skip=1712, 当前seq=110 (last=110), updated_at=1769736612.36 (last=1769736612.36)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 105
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 9.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=110, updates=4 (7.9/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][TRACE] 函数调用次数: 1001
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=1802): seq和updated_at都未变化且距上次tick仅0.5秒
+[WS][SHARED][SKIP] 当前状态: seq=111, last_seq=111, bid=0.44, ask=0.46
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 111
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 9.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=111, updates=7 (12.3/min), bid=0.44, ask=0.46, price=0.44
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1060, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1061, skip=1890, 当前seq=112 (last=111), updated_at=1769736776.23 (last=1769736750.68)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 118
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 10.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 1101
+[WS][SHARED] seq=113, updates=8 (11.5/min), bid=0.44, ask=0.46, price=0.44
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 123
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 10.7分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2002): seq和updated_at都未变化且距上次tick仅1.0秒
+[WS][SHARED][SKIP] 当前状态: seq=113, last_seq=113, bid=0.44, ask=0.46
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1159, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1160, skip=2066, 当前seq=113 (last=113), updated_at=1769736789.97 (last=1769736789.97)
+[WS][SHARED] seq=113, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.44
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4400 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 129
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 11.2分钟无信号 / 阈值 60分钟
+[WS][SHARED][TRACE] 函数调用次数: 1201
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2202): seq和updated_at都未变化且距上次tick仅4.0秒
+[WS][SHARED][SKIP] 当前状态: seq=114, last_seq=114, bid=0.44, ask=0.46
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4600 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 135
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 11.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=114, updates=7 (12.9/min), bid=0.44, ask=0.46, price=0.46
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1279, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1280, skip=2280, 当前seq=115 (last=115), updated_at=1769736893.69 (last=1769736893.69)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 140
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 12.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=115, updates=5 (9.5/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED][TRACE] 函数调用次数: 1301
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 146
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 12.7分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2402): seq和updated_at都未变化且距上次tick仅3.5秒
+[WS][SHARED][SKIP] 当前状态: seq=115, last_seq=115, bid=0.44, ask=0.46
+[WS][SHARED] seq=115, updates=6 (12.0/min), bid=0.44, ask=0.46, price=0.45
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1399, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1400, skip=2496, 当前seq=115 (last=115), updated_at=1769736893.69 (last=1769736893.69)
+[WS][SHARED][TRACE] 函数调用次数: 1401
+[WS][SHARED] ✓ 检测到seq增长: 115 → 117 (+2)
+[PX] bid=0.4400 ask=0.4600 mid=0.4500 last=0.4500 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 153
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4500 / 低 0.4500
+    信号超时: 13.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=118, updates=7 (13.7/min), bid=0.44, ask=0.46, price=0.45
+[WS][SHARED] ✓ 检测到seq增长: 118 → 130 (+12)
+[WS][SHARED] ✓ 检测到seq增长: 130 → 134 (+4)
+[WS][SHARED] ✓ 检测到seq增长: 136 → 139 (+3)
+[PX] bid=0.4500 ask=0.4600 mid=0.4550 last=0.4550 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 160
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4550 / 低 0.4500
+    信号超时: 13.7分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 139 → 141 (+2)
+[WS][SHARED] seq=141, updates=8 (14.3/min), bid=0.45, ask=0.46, price=0.455
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2602): seq和updated_at都未变化且距上次tick仅2.5秒
+[WS][SHARED][SKIP] 当前状态: seq=141, last_seq=141, bid=0.45, ask=0.46
+[WS][SHARED] ✓ 检测到seq增长: 141 → 143 (+2)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1499, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1500, skip=2664, 当前seq=144 (last=144), updated_at=1769737015.57 (last=1769737015.57)
+[WS][SHARED][TRACE] 函数调用次数: 1501
+[PX] bid=0.4500 ask=0.4600 mid=0.4550 last=0.4550 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 167
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4550 / 低 0.4500
+    信号超时: 14.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] seq=144, updates=8 (13.9/min), bid=0.45, ask=0.46, price=0.455
+[PX] bid=0.4500 ask=0.4600 mid=0.4550 last=0.4550 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 173
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4550 / 低 0.4500
+    信号超时: 14.7分钟无信号 / 阈值 60分钟
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2802): seq和updated_at都未变化且距上次tick仅4.0秒
+[WS][SHARED][SKIP] 当前状态: seq=144, last_seq=144, bid=0.45, ask=0.46
+[WS][SHARED] seq=144, updates=6 (12.0/min), bid=0.45, ask=0.46, price=0.455
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1599, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1600, skip=2844, 当前seq=144 (last=144), updated_at=1769737015.57 (last=1769737015.57)
+[WS][SHARED][TRACE] 函数调用次数: 1601
+[PX] bid=0.4500 ask=0.4600 mid=0.4550 last=0.4550 | state=FLAT awaiting=None entry=None
+    时间窗口: 60.0m | 采样点数: 178
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 0.10%
+    窗口价格(mid): 高 0.4550 / 低 0.4500
+    信号超时: 15.2分钟无信号 / 阈值 60分钟
+[WS][SHARED] ✓ 检测到seq增长: 144 → 146 (+2)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[HINT][BUY] 目标 10.0000 - 当前仓位(未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 2913769663567203581057192194783178640271101775179557758271454045473237605773) 0.0000 -> 本次下单 10.0000
+[MAKER][BUY] 开始买入流程 -> target_size=10.0000 poll_sec=15.0s
+[DIAG][BID] latest字典中的token数据: {'price': 0.45, 'best_bid': 0.44, 'best_ask': 0.46, 'ts': 1769737100.5537524}
+[DIAG][BID] ORDERBOOK_STALE_AFTER_SEC = 30.0
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER 中找到 token 2913769663567203581057192194783178640271101775179557758271454045473237605773 当前无持仓
+[MAKER][BUY] 挂单 -> price=0.44 qty=10.0000 remaining=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.44 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=58.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.44, ask=0.46 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.44 filled=0.0000 remaining=10.0000 status=LIVE
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 2913769663567203581057192194783178640271101775179557758271454045473237605773 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.44 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=62.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.45, ask=0.47 (缓存数据新鲜)
+[MAKER][BUY] 买一上行 -> 撤单重挂 | old=0.44 new=0.45
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 2913769663567203581057192194783178640271101775179557758271454045473237605773 当前无持仓
+[MAKER][BUY] 挂单 -> price=0.45 qty=10.0000 remaining=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=37.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=35.6s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=62.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.45, ask=0.47 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 2913769663567203581057192194783178640271101775179557758271454045473237605773 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=36.6s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.45, ask=0.47 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=51.1s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.45, ask=0.47 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 2913769663567203581057192194783178640271101775179557758271454045473237605773 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=35.9s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.45, ask=0.46 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=50.3s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✗ 缓存数据过期: 年龄=67.2s > 阈值=30.0s
+[DIAG][BID] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket bid 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][BUY] 持仓检查 -> origin=未在 data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER 中找到 token 2913769663567203581057192194783178640271101775179557758271454045473237605773 当前无持仓
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=87.0s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.45, ask=0.47 (缓存数据新鲜)
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=0.0000 remaining=10.0000 status=LIVE
+[DIAG][BID] 快照过期: 年龄=50.4s > 阈值=30.0s
+[DIAG][BID] 尝试从缓存刷新数据...
+[DIAG][BID] ✓ 已刷新快照: bid=0.45, ask=0.46 (缓存数据新鲜)
+[WATCHDOG][BUY] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][BUY] 挂单状态 -> price=0.45 filled=10.0000 remaining=0.0000 status=MATCHED
+[TRADE][BUY][MAKER] resp={'status': 'FILLED', 'avg_price': 0.45, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0xc59da94fe7150c4597f5f77091f4ec31125513d2c72de394ee4073eb5a7bbd4e', 'side': 'buy', 'price': 0.44, 'size': 10.0, 'status': 'CANCELLED', 'filled': 0.0, 'avg_price': 0.44}, {'id': '0xd12ff0ee2377a060feef9f3da2d6fde4c889d4cfaac6d99b951bded1d8265f0c', 'side': 'buy', 'price': 0.45, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.45}]}
+[INFO] 买入成交，延迟 60s 再查询持仓均价，等待 data-api 刷新…
+[INFO] 开始持仓均价多轮确认（目标 size≈10.0000，最多 5 轮，每轮间隔 7s）
+[TRACE] 持仓均价查询结果（第1次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.450000 size=10.000000
+[TRACE] 持仓均价查询结果（第2次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.450000 size=10.000000
+[TRACE] 持仓均价查询结果（第3次/本轮） origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.450000 size=10.000000
+[STATE] 持仓均价确认 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[STATE] 买入成交 -> status=FILLED price=0.4500 size=10.0000
+[DIAG][ASK] ✓ 已刷新快照: bid=0.45, ask=0.46 (缓存数据新鲜)
+[MAKER][SELL] 挂单 -> price=0.46 qty=10.00 remaining=10.00
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][ASK] ✗ 缓存数据过期: 年龄=31.6s > 阈值=30.0s
+[DIAG][ASK] 缓存数据过期，返回None触发REST API fallback
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.6 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 46.8 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.4 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.4 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 127.2 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 80.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.4 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 142.6 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 48.3 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 79.2 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 63.8 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.3 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=24, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 64.8 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 159.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 128.3 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.1 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 127.1 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.7 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 63.9 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.4 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 查询订单状态异常：PolyApiException[status_code=None, error_message=Request exception!]
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=UNKNOWN
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.7 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.4 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.1 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.6 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 46.7 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=23, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 48.2 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.7 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 46.6 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.4 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 32.7 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.2 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 46.9 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.4 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 48.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 15.0 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[MAKER][SELL] 价格恢复有效，无效持续时间 16.2 秒
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=20, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 32.0 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 46.9 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=21, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 48.1 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格无效，开始计时等待恢复...
+[DIAG][WS] WebSocket ask 返回 None（可能原因：快照过期或数据缺失）
+[MAKER][SELL] 价格恢复有效，无效持续时间 31.5 秒
+[WATCHDOG][SELL] 持仓检查 -> origin=data-api positions(limit=500, total=22, param=user) via env:POLY_FUNDER avg=0.4500 size=10.0000
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=0.00 remaining=10.00 status=LIVE
+[MAKER][SELL] 挂单状态 -> price=0.46 sold=10.00 remaining=0.00 status=MATCHED
+[TRADE][SELL][MAKER] resp={'status': 'FILLED_TRUNCATED', 'avg_price': 0.4600000000000001, 'filled': 10.0, 'remaining': 0.0, 'orders': [{'id': '0xd4eee475aa7836fe3dc0ecfe377030570ac335e6fcdd930bebc8697d85d46409', 'side': 'sell', 'price': 0.46, 'size': 10.0, 'status': 'CANCELLED', 'filled': 10.0, 'avg_price': 0.46}]}
+[STATE] 卖出成交 -> price=0.4600 size=10.0000 status=FILLED_TRUNCATED
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=1626, use_shared_ws=True)
+[WS][SHARED][DEBUG] 读取统计: read=1627, skip=2890, 当前seq=791 (last=146), updated_at=1769744499.85 (last=1769737100.18)
+[WS][SHARED] ✓ 检测到seq增长: 146 → 791 (+645)
+[WS][SHARED] seq=791, updates=6 (0.0/min), bid=0.44, ask=0.47, price=0.45499999999999996
+[SIGNAL_TIMEOUT] 123.3 分钟内无交易信号，释放队列退出
+[SIGNAL_TIMEOUT] 最后信号时间: 01:38:20
+[QUEUE] 释放队列：长时间无交易信号，已退出。
+[EXIT_RECORD] 已记录退出token: 29137696635672035810... 原因: SIGNAL_TIMEOUT (可回填)
+[EXIT] 最终状态: {'state': 'FLAT', 'awaiting': None, 'entry_price': None, 'sell_trigger': None, 'position_size': None, 'last_signal': <ActionType.BUY: 'BUY'>, 'last_buy_price': 0.45, 'last_sell_price': 0.4600000000000001, 'price_history_len': 1, 'manual_stop': True, 'manual_stop_reason': 'signal timeout (no position)', 'sell_only': False, 'sell_only_reason': None, 'last_reject_reason': None, 'last_tick': {'ts': 1769744499.737, 'best_ask': 0.47, 'best_bid': 0.44}, 'drop_stats': {'window_high': 0.45499999999999996, 'window_low': 0.45499999999999996, 'max_drop_ratio': 0.0, 'current_drop_ratio': 0.0, 'window_seconds': 3600.0}, 'config': {'token_id': '2913769663567203581057192194783178640271101775179557758271454045473237605773', 'buy_price_threshold': None, 'profit_ratio': 0.005, 'drop_window_minutes': 60.0, 'drop_pct': 0.0012000000000000001, 'profit_pct': 0.005, 'max_history_points': 600, 'price_band': (0.0, 1.0), 'disable_duplicate_signal': True, 'enable_incremental_drop_pct': True, 'incremental_drop_pct_step': 0.0002, 'incremental_drop_pct_cap': 0.2, 'min_market_order_size': None}}
+[CLAIM] 未检测到需要 claim 的仓位，脚本结束。
