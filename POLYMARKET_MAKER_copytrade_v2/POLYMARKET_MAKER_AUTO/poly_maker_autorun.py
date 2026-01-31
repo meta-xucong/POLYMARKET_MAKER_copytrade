@@ -63,7 +63,7 @@ DEFAULT_GLOBAL_CONFIG = {
 }
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
-POSITION_CHECK_CACHE_TTL_SEC = 5.0
+POSITION_CHECK_CACHE_TTL_SEC = 300.0
 DATA_API_RATE_LIMIT_SEC = 1.0
 _data_api_last_request_ts = 0.0
 _data_api_request_lock = threading.Lock()
@@ -548,6 +548,7 @@ class AutoRunManager:
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
+        self._handled_sell_signals: set[str] = set()
         self._position_snapshot_cache: Dict[str, Dict[str, Any]] = {}
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
@@ -2280,7 +2281,7 @@ class AutoRunManager:
         )
         has_position = bool(pos_size and pos_size > 0)
         if info != "ok" and not has_position:
-            print(f"[COPYTRADE][WARN] 持仓检查失败 token={token_id} info={info}")
+            print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={info}")
         self._position_snapshot_cache[token_id] = {
             "ts": now,
             "has_position": has_position,
@@ -2290,7 +2291,11 @@ class AutoRunManager:
     def _apply_sell_signals(self, sell_signals: set[str]) -> None:
         if not sell_signals:
             return
-        for token_id in sell_signals:
+        new_signals = sell_signals - self._handled_sell_signals
+        if not new_signals:
+            return
+        self._handled_sell_signals.update(new_signals)
+        for token_id in new_signals:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
             has_history = token_id in self.handled_topics
