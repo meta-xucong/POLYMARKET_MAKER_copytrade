@@ -64,6 +64,9 @@ DEFAULT_GLOBAL_CONFIG = {
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 POSITION_CHECK_CACHE_TTL_SEC = 5.0
+DATA_API_RATE_LIMIT_SEC = 1.0
+_data_api_last_request_ts = 0.0
+_data_api_request_lock = threading.Lock()
 
 
 # ========== 错误日志记录函数 ==========
@@ -157,6 +160,13 @@ def _fetch_position_size_from_data_api(
             "sizeThreshold": 0,
         }
         try:
+            with _data_api_request_lock:
+                global _data_api_last_request_ts
+                now = time.time()
+                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
+                if wait_sec > 0:
+                    time.sleep(wait_sec)
+                _data_api_last_request_ts = time.time()
             resp = requests.get(url, params=params, timeout=10)
             if resp.status_code == 404:
                 return None, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
