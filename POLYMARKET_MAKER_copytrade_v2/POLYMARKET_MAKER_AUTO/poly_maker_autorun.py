@@ -1518,7 +1518,14 @@ class AutoRunManager:
             self._debug_shared_ws_check = True
             self._first_child_started = True
 
-        self._wait_for_shared_ws_ready(topic_id)
+        if not self._wait_for_shared_ws_ready(topic_id):
+            print(
+                f"[WS][WAIT] topic={topic_id[:8]}... 缓存未就绪，稍后重试"
+            )
+            self._next_topic_start_at = time.time() + max(
+                1.0, float(self.config.topic_start_cooldown_sec)
+            )
+            return False
         should_use_shared = self._should_use_shared_ws()
 
         # 禁用调试输出（避免刷屏）
