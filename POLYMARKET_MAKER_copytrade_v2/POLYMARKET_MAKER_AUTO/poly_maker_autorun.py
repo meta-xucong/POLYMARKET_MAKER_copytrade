@@ -1026,12 +1026,19 @@ class AutoRunManager:
 
     def _flush_ws_cache_if_needed(self) -> None:
         now = time.time()
+        heartbeat_interval = 30.0
         # ✅ 从1.0秒改为0.1秒：提高缓存写入频率，让子进程能更快看到seq更新
-        if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 0.1:
+        if not self._ws_cache_dirty and now - self._ws_cache_last_flush < heartbeat_interval:
             return
         with self._ws_cache_lock:
-            if not self._ws_cache_dirty and now - self._ws_cache_last_flush < 0.1:
+            if not self._ws_cache_dirty and now - self._ws_cache_last_flush < heartbeat_interval:
                 return
+            if (
+                not self._ws_cache_dirty
+                and self._ws_cache
+                and now - self._ws_cache_last_flush >= heartbeat_interval
+            ):
+                self._ws_cache_dirty = True
             # ✅ 使用深拷贝避免多线程并发修改导致 "dictionary changed size during iteration" 错误
             data = {
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1451,6 +1458,31 @@ class AutoRunManager:
 
         return aggregator_alive and ws_alive
 
+    def _wait_for_shared_ws_ready(
+        self, topic_id: str, timeout_sec: float = 20.0, poll_interval: float = 0.5
+    ) -> bool:
+        """
+        等待共享 WS 缓存就绪（确保缓存新鲜且包含目标 token）。
+
+        返回 True 表示共享缓存已就绪，False 表示超时或停止事件触发。
+        """
+        deadline = time.time() + max(0.0, timeout_sec)
+        while time.time() < deadline and not self.stop_event.is_set():
+            now = time.time()
+            with self._ws_cache_lock:
+                cached = self._ws_cache.get(topic_id)
+            if cached:
+                updated_at = cached.get("updated_at", 0)
+                if updated_at and (now - float(updated_at)) < 120:
+                    self._flush_ws_cache_if_needed()
+                    return True
+            if self._ws_cache_path.exists():
+                cache_age = now - self._ws_cache_path.stat().st_mtime
+                if cache_age < 120:
+                    return True
+            time.sleep(max(0.1, float(poll_interval)))
+        return False
+
     def _start_topic_process(self, topic_id: str) -> bool:
         config_data = self._build_run_config(topic_id)
         cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(topic_id)}.json"
@@ -1486,6 +1518,14 @@ class AutoRunManager:
             self._debug_shared_ws_check = True
             self._first_child_started = True
 
+        if not self._wait_for_shared_ws_ready(topic_id):
+            print(
+                f"[WS][WAIT] topic={topic_id[:8]}... 缓存未就绪，稍后重试"
+            )
+            self._next_topic_start_at = time.time() + max(
+                1.0, float(self.config.topic_start_cooldown_sec)
+            )
+            return False
         should_use_shared = self._should_use_shared_ws()
 
         # 禁用调试输出（避免刷屏）
