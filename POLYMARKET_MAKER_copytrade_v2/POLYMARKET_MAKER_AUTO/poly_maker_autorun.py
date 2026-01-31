@@ -60,6 +60,11 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_cooldown_minutes": 30.0,
     "max_refill_retries": 3,
     "refill_check_interval_sec": 60.0,
+    # Shared WS 等待配置
+    "shared_ws_wait_timeout_sec": 20.0,
+    "shared_ws_wait_poll_sec": 0.5,
+    "shared_ws_wait_failures_before_pause": 3,
+    "shared_ws_wait_pause_minutes": 5.0,
 }
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
@@ -359,6 +364,17 @@ class GlobalConfig:
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["runtime_status_path"])
     )
     ws_debug_raw: bool = bool(DEFAULT_GLOBAL_CONFIG["ws_debug_raw"])
+    # Shared WS 等待配置
+    shared_ws_wait_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_wait_timeout_sec"
+    ]
+    shared_ws_wait_poll_sec: float = DEFAULT_GLOBAL_CONFIG["shared_ws_wait_poll_sec"]
+    shared_ws_wait_failures_before_pause: int = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_wait_failures_before_pause"
+    ]
+    shared_ws_wait_pause_minutes: float = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_wait_pause_minutes"
+    ]
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
@@ -456,6 +472,30 @@ class GlobalConfig:
                 or debug.get("ws_raw")
                 or merged.get("ws_debug_raw", cls.ws_debug_raw)
             ),
+            shared_ws_wait_timeout_sec=float(
+                merged.get(
+                    "shared_ws_wait_timeout_sec",
+                    cls.shared_ws_wait_timeout_sec,
+                )
+            ),
+            shared_ws_wait_poll_sec=float(
+                merged.get(
+                    "shared_ws_wait_poll_sec",
+                    cls.shared_ws_wait_poll_sec,
+                )
+            ),
+            shared_ws_wait_failures_before_pause=int(
+                merged.get(
+                    "shared_ws_wait_failures_before_pause",
+                    cls.shared_ws_wait_failures_before_pause,
+                )
+            ),
+            shared_ws_wait_pause_minutes=float(
+                merged.get(
+                    "shared_ws_wait_pause_minutes",
+                    cls.shared_ws_wait_pause_minutes,
+                )
+            ),
             # Slot refill (回填) 配置
             enable_slot_refill=bool(
                 scheduler.get("enable_slot_refill", merged.get("enable_slot_refill", True))
@@ -546,6 +586,9 @@ class AutoRunManager:
         self._refill_retry_counts: Dict[str, int] = {}  # token_id -> 已重试次数
         self._next_refill_check: float = 0.0
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
+        # Shared WS 等待保护
+        self._shared_ws_wait_failures: Dict[str, int] = {}
+        self._shared_ws_paused_until: Dict[str, float] = {}
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
         self._handled_sell_signals: set[str] = set()
@@ -1302,15 +1345,24 @@ class AutoRunManager:
 
     def _schedule_pending_topics(self) -> None:
         running = sum(1 for t in self.tasks.values() if t.is_running())
+        checks_remaining = len(self.pending_topics)
         while (
             self.pending_topics
             and running < max(1, int(self.config.max_concurrent_tasks))
         ):
+            if checks_remaining <= 0:
+                break
             now = time.time()
             if now < self._next_topic_start_at:
                 break
             topic_id = self.pending_topics.pop(0)
+            paused_until = self._shared_ws_paused_until.get(topic_id)
+            if paused_until and now < paused_until:
+                self.pending_topics.append(topic_id)
+                checks_remaining -= 1
+                continue
             if topic_id in self.tasks and self.tasks[topic_id].is_running():
+                checks_remaining -= 1
                 continue
             try:
                 started = self._start_topic_process(topic_id)
@@ -1332,6 +1384,7 @@ class AutoRunManager:
                     0.0, float(self.config.topic_start_cooldown_sec)
                 )
             running = sum(1 for t in self.tasks.values() if t.is_running())
+            checks_remaining -= 1
 
     def _schedule_pending_exit_cleanup(self) -> None:
         running = sum(1 for t in self.tasks.values() if t.is_running())
@@ -1459,14 +1512,27 @@ class AutoRunManager:
         return aggregator_alive and ws_alive
 
     def _wait_for_shared_ws_ready(
-        self, topic_id: str, timeout_sec: float = 20.0, poll_interval: float = 0.5
+        self,
+        topic_id: str,
+        timeout_sec: Optional[float] = None,
+        poll_interval: Optional[float] = None,
     ) -> bool:
         """
         等待共享 WS 缓存就绪（确保缓存新鲜且包含目标 token）。
 
         返回 True 表示共享缓存已就绪，False 表示超时或停止事件触发。
         """
-        deadline = time.time() + max(0.0, timeout_sec)
+        timeout_sec = (
+            self.config.shared_ws_wait_timeout_sec
+            if timeout_sec is None
+            else timeout_sec
+        )
+        poll_interval = (
+            self.config.shared_ws_wait_poll_sec
+            if poll_interval is None
+            else poll_interval
+        )
+        deadline = time.time() + max(0.0, float(timeout_sec))
         while time.time() < deadline and not self.stop_event.is_set():
             now = time.time()
             with self._ws_cache_lock:
@@ -1475,10 +1541,6 @@ class AutoRunManager:
                 updated_at = cached.get("updated_at", 0)
                 if updated_at and (now - float(updated_at)) < 120:
                     self._flush_ws_cache_if_needed()
-                    return True
-            if self._ws_cache_path.exists():
-                cache_age = now - self._ws_cache_path.stat().st_mtime
-                if cache_age < 120:
                     return True
             time.sleep(max(0.1, float(poll_interval)))
         return False
@@ -1518,7 +1580,35 @@ class AutoRunManager:
             self._debug_shared_ws_check = True
             self._first_child_started = True
 
+        paused_until = self._shared_ws_paused_until.get(topic_id)
+        now = time.time()
+        if paused_until and now < paused_until:
+            remaining = paused_until - now
+            print(
+                f"[WS][PAUSE] topic={topic_id[:8]}... 等待共享WS冷却 "
+                f"{remaining:.0f}s 后再尝试"
+            )
+            return False
+
         if not self._wait_for_shared_ws_ready(topic_id):
+            failures = self._shared_ws_wait_failures.get(topic_id, 0) + 1
+            self._shared_ws_wait_failures[topic_id] = failures
+            max_failures = max(1, int(self.config.shared_ws_wait_failures_before_pause))
+            if failures >= max_failures:
+                pause_seconds = max(
+                    60.0, float(self.config.shared_ws_wait_pause_minutes) * 60.0
+                )
+                self._shared_ws_paused_until[topic_id] = time.time() + pause_seconds
+                self._shared_ws_wait_failures[topic_id] = 0
+                print(
+                    f"[WS][WAIT] topic={topic_id[:8]}... 共享WS连续未就绪 "
+                    f"{max_failures} 次，暂停 {pause_seconds:.0f}s"
+                )
+            else:
+                print(
+                    f"[WS][WAIT] topic={topic_id[:8]}... 缓存未就绪，"
+                    f"等待重试 ({failures}/{max_failures})"
+                )
             print(
                 f"[WS][WAIT] topic={topic_id[:8]}... 缓存未就绪，稍后重试"
             )
@@ -1537,6 +1627,7 @@ class AutoRunManager:
             cmd.append(f"--shared-ws-cache={self._ws_cache_path}")
             print(f"[WS][CHILD] topic={topic_id[:8]}... → 共享 WS 模式 ✓")
         else:
+            self._shared_ws_wait_failures[topic_id] = 0
             print(f"[WS][CHILD] topic={topic_id[:8]}... → 独立 WS 模式 ✗")
 
         proc: Optional[subprocess.Popen] = None
