@@ -1911,10 +1911,6 @@ class AutoRunManager:
             if token_id in self._refilled_tokens:
                 continue
 
-            # 检查数据有效期（24小时内的退出记录才回填）
-            if exit_ts > 0 and (now - exit_ts) > 86400:  # 24小时
-                continue
-
             refillable.append(record)
 
         # 排序优先级：
