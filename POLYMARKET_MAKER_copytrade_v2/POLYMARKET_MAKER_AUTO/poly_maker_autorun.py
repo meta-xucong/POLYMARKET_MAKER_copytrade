@@ -14,6 +14,7 @@ import math
 import os
 import random
 import queue
+import requests
 import select
 import signal
 import subprocess
@@ -61,6 +62,8 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_check_interval_sec": 60.0,
 }
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
+DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
+POSITION_CHECK_CACHE_TTL_SEC = 5.0
 
 
 # ========== 错误日志记录函数 ==========
@@ -92,6 +95,100 @@ def _log_error(error_type: str, error_data: Dict[str, Any]) -> None:
     except Exception as e:
         # 错误日志记录失败时，仅打印到控制台，不中断程序
         print(f"[ERROR_LOG] 写入错误日志失败: {e}")
+
+
+def _resolve_position_address_from_env() -> tuple[Optional[str], str]:
+    env_candidates = (
+        "POLY_DATA_ADDRESS",
+        "POLY_FUNDER",
+        "POLY_WALLET",
+        "POLY_ADDRESS",
+    )
+    for env_name in env_candidates:
+        cand = os.getenv(env_name)
+        if cand and str(cand).strip():
+            return str(cand).strip(), f"env:{env_name}"
+    return None, "缺少地址，无法从数据接口拉取持仓。"
+
+
+def _position_matches_token(entry: Dict[str, Any], token_id: str) -> bool:
+    token_keys = ("token_id", "tokenId", "token", "asset", "asset_id")
+    for key in token_keys:
+        val = entry.get(key)
+        if val and str(val) == token_id:
+            return True
+    return False
+
+
+def _extract_position_size(entry: Dict[str, Any]) -> Optional[float]:
+    size_keys = (
+        "size",
+        "position_size",
+        "quantity",
+        "balance",
+        "shares",
+        "amount",
+    )
+    for key in size_keys:
+        val = entry.get(key)
+        if val is None or isinstance(val, bool):
+            continue
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _fetch_position_size_from_data_api(
+    address: str,
+    token_id: str,
+) -> tuple[Optional[float], str]:
+    if not address:
+        return None, "缺少地址，无法查询持仓。"
+    url = f"{DATA_API_ROOT}/positions"
+    limit = 500
+    offset = 0
+    while True:
+        params = {
+            "user": address,
+            "limit": limit,
+            "offset": offset,
+            "sizeThreshold": 0,
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 404:
+                return None, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
+            resp.raise_for_status()
+            payload = resp.json()
+        except requests.RequestException as exc:
+            return None, f"数据接口请求失败：{exc}"
+        except ValueError:
+            return None, "数据接口响应解析失败"
+
+        if isinstance(payload, dict):
+            positions = payload.get("data") or payload.get("positions")
+        else:
+            positions = None
+        if positions is None:
+            return None, "数据接口返回格式异常，缺少 data 字段。"
+        if not isinstance(positions, list):
+            return None, "数据接口返回格式异常，positions 非列表。"
+
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            if not _position_matches_token(pos, token_id):
+                continue
+            pos_size = _extract_position_size(pos)
+            return pos_size, "ok"
+
+        if not positions:
+            break
+
+        offset += len(positions)
+    return None, "未找到持仓记录"
 
 
 def _topic_id_from_entry(entry: Any) -> str:
@@ -433,6 +530,10 @@ class AutoRunManager:
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
+        self._position_snapshot_cache: Dict[str, Dict[str, Any]] = {}
+        self._position_address: Optional[str] = None
+        self._position_address_origin: Optional[str] = None
+        self._position_address_warned: bool = False
         # 日志清理相关（每天清理7天前的日志）
         self._next_log_cleanup: float = 0.0
         self._log_cleanup_interval_sec: float = 3600.0  # 每小时检查一次
@@ -2132,6 +2233,42 @@ class AutoRunManager:
         }
         _dump_json_file(path, payload)
 
+    def _has_account_position(self, token_id: str) -> bool:
+        if not token_id:
+            return False
+        now = time.time()
+        cached = self._position_snapshot_cache.get(token_id)
+        if cached and now - cached.get("ts", 0.0) <= POSITION_CHECK_CACHE_TTL_SEC:
+            return bool(cached.get("has_position", False))
+
+        if not self._position_address:
+            address, origin = _resolve_position_address_from_env()
+            self._position_address = address
+            self._position_address_origin = origin
+            if not address and not self._position_address_warned:
+                self._position_address_warned = True
+                print(f"[COPYTRADE][WARN] {origin}")
+
+        if not self._position_address:
+            self._position_snapshot_cache[token_id] = {
+                "ts": now,
+                "has_position": False,
+            }
+            return False
+
+        pos_size, info = _fetch_position_size_from_data_api(
+            self._position_address,
+            token_id,
+        )
+        has_position = bool(pos_size and pos_size > 0)
+        if info != "ok" and not has_position:
+            print(f"[COPYTRADE][WARN] 持仓检查失败 token={token_id} info={info}")
+        self._position_snapshot_cache[token_id] = {
+            "ts": now,
+            "has_position": has_position,
+        }
+        return has_position
+
     def _apply_sell_signals(self, sell_signals: set[str]) -> None:
         if not sell_signals:
             return
@@ -2151,11 +2288,16 @@ class AutoRunManager:
                 continue
 
             if not has_running_task and not has_history:
+                if not self._has_account_position(token_id):
+                    print(
+                        "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
+                        f"token_id={token_id}"
+                    )
+                    continue
                 print(
-                    "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
+                    "[COPYTRADE] SELL 信号触发持仓清仓: "
                     f"token_id={token_id}"
                 )
-                continue
             if token_id in self.pending_topics:
                 try:
                     self.pending_topics.remove(token_id)
