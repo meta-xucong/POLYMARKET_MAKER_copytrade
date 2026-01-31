@@ -1812,7 +1812,7 @@ class AutoRunManager:
 
         条件：
         1. 回填功能已启用
-        2. pending_topics 队列为空（所有token已进入过maker逻辑）
+        2. 当前运行数 + pending_topics 数 < max_concurrent_tasks
         3. 当前运行的任务数 < max_concurrent_tasks
 
         Returns:
@@ -1821,15 +1821,12 @@ class AutoRunManager:
         if not self.config.enable_slot_refill:
             return False
 
-        # pending队列为空
-        if self.pending_topics:
-            return False
-
-        # 有空闲slot
         running = sum(1 for t in self.tasks.values() if t.is_running())
-        has_capacity = running < max(1, int(self.config.max_concurrent_tasks))
+        max_slots = max(1, int(self.config.max_concurrent_tasks))
+        pending = len(self.pending_topics)
+        has_capacity = (running + pending) < max_slots
 
-        return has_capacity
+        return has_capacity and running < max_slots
 
     def _filter_refillable_tokens(
         self, exit_records: List[Dict[str, Any]]
@@ -1914,10 +1911,6 @@ class AutoRunManager:
             if token_id in self._refilled_tokens:
                 continue
 
-            # 检查数据有效期（24小时内的退出记录才回填）
-            if exit_ts > 0 and (now - exit_ts) > 86400:  # 24小时
-                continue
-
             refillable.append(record)
 
         # 排序优先级：
@@ -1944,10 +1937,18 @@ class AutoRunManager:
 
         exit_records = self._load_exit_tokens()
         if not exit_records:
+            print("[REFILL] 无退出记录，跳过回填")
             return
 
         refillable = self._filter_refillable_tokens(exit_records)
         if not refillable:
+            running = sum(1 for t in self.tasks.values() if t.is_running())
+            print(
+                "[REFILL] 无可回填token，记录=%s 运行=%s pending=%s",
+                len(exit_records),
+                running,
+                len(self.pending_topics),
+            )
             return
 
         # 计算可用slot数
