@@ -2280,7 +2280,7 @@ class AutoRunManager:
         )
         has_position = bool(pos_size and pos_size > 0)
         if info != "ok" and not has_position:
-            print(f"[COPYTRADE][WARN] 持仓检查失败 token={token_id} info={info}")
+            print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={info}")
         self._position_snapshot_cache[token_id] = {
             "ts": now,
             "has_position": has_position,
