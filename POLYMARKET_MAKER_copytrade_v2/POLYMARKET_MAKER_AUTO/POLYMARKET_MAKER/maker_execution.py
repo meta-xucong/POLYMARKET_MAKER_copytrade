@@ -26,6 +26,7 @@ fill statistics so that the strategy layer can update its internal state.
 """
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import math
 import time
