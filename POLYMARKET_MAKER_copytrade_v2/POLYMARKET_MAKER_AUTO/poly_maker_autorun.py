@@ -60,6 +60,10 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_cooldown_minutes": 30.0,
     "max_refill_retries": 3,
     "refill_check_interval_sec": 60.0,
+    # Pending 软淘汰（避免无数据 token 长期卡在 pending）
+    "enable_pending_soft_eviction": True,
+    "pending_soft_eviction_minutes": 60.0,
+    "pending_soft_eviction_check_interval_sec": 300.0,
     # Shared WS 等待配置
     "shared_ws_wait_timeout_sec": 20.0,
     "shared_ws_wait_poll_sec": 0.5,
@@ -419,6 +423,15 @@ class GlobalConfig:
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
     max_refill_retries: int = DEFAULT_GLOBAL_CONFIG["max_refill_retries"]
     refill_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG["refill_check_interval_sec"]
+    enable_pending_soft_eviction: bool = DEFAULT_GLOBAL_CONFIG[
+        "enable_pending_soft_eviction"
+    ]
+    pending_soft_eviction_minutes: float = DEFAULT_GLOBAL_CONFIG[
+        "pending_soft_eviction_minutes"
+    ]
+    pending_soft_eviction_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "pending_soft_eviction_check_interval_sec"
+    ]
     # Maker 子进程配置
     maker_poll_sec: float = 10.0  # 挂单轮询间隔（秒）
     maker_position_sync_interval: float = 60.0  # 仓位同步间隔（秒）
@@ -548,6 +561,24 @@ class GlobalConfig:
             refill_check_interval_sec=float(
                 scheduler.get("refill_check_interval_sec", merged.get("refill_check_interval_sec", 60.0))
             ),
+            enable_pending_soft_eviction=bool(
+                scheduler.get(
+                    "enable_pending_soft_eviction",
+                    merged.get("enable_pending_soft_eviction", True),
+                )
+            ),
+            pending_soft_eviction_minutes=float(
+                scheduler.get(
+                    "pending_soft_eviction_minutes",
+                    merged.get("pending_soft_eviction_minutes", 60.0),
+                )
+            ),
+            pending_soft_eviction_check_interval_sec=float(
+                scheduler.get(
+                    "pending_soft_eviction_check_interval_sec",
+                    merged.get("pending_soft_eviction_check_interval_sec", 300.0),
+                )
+            ),
             # Maker 子进程配置
             maker_poll_sec=float(
                 maker.get("poll_sec", merged.get("maker_poll_sec", 10.0))
@@ -629,6 +660,8 @@ class AutoRunManager:
         # Shared WS 等待保护
         self._shared_ws_wait_failures: Dict[str, int] = {}
         self._shared_ws_paused_until: Dict[str, float] = {}
+        self._pending_first_seen: Dict[str, float] = {}
+        self._next_pending_eviction: float = 0.0
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
         self._handled_sell_signals: set[str] = set()
@@ -667,6 +700,14 @@ class AutoRunManager:
                     if self.config.enable_slot_refill and now >= self._next_refill_check:
                         self._schedule_refill()
                         self._next_refill_check = now + self.config.refill_check_interval_sec
+                    if (
+                        self.config.enable_pending_soft_eviction
+                        and now >= self._next_pending_eviction
+                    ):
+                        self._evict_stale_pending_topics()
+                        self._next_pending_eviction = now + float(
+                            self.config.pending_soft_eviction_check_interval_sec
+                        )
                     if now >= self._next_status_dump:
                         self._print_status()
                         self._dump_runtime_status()
@@ -1373,8 +1414,7 @@ class AutoRunManager:
             if task.restart_attempts < max_retries:
                 running = sum(1 for t in self.tasks.values() if t.is_running())
                 if running >= max(1, int(self.config.max_concurrent_tasks)):
-                    if task.topic_id not in self.pending_topics:
-                        self.pending_topics.append(task.topic_id)
+                    self._enqueue_pending_topic(task.topic_id)
                     task.status = "pending"
                     task.heartbeat("restart deferred due to max concurrency")
                     return
@@ -1386,8 +1426,8 @@ class AutoRunManager:
                 time.sleep(self.config.process_retry_delay_sec)
                 if self._start_topic_process(task.topic_id):
                     return
-                if task.restart_attempts < max_retries and task.topic_id not in self.pending_topics:
-                    self.pending_topics.append(task.topic_id)
+                if task.restart_attempts < max_retries:
+                    self._enqueue_pending_topic(task.topic_id)
             task.status = "error"
 
     def _update_log_excerpt(self, task: TopicTask, max_bytes: int = 2000) -> None:
@@ -1439,7 +1479,7 @@ class AutoRunManager:
             topic_id = self.pending_topics.pop(0)
             paused_until = self._shared_ws_paused_until.get(topic_id)
             if paused_until and now < paused_until:
-                self.pending_topics.append(topic_id)
+                self._enqueue_pending_topic(topic_id)
                 checks_remaining -= 1
                 continue
             if topic_id in self.tasks and self.tasks[topic_id].is_running():
@@ -1457,9 +1497,9 @@ class AutoRunManager:
                     "traceback": traceback.format_exc()
                 })
                 started = False
-            if not started and topic_id not in self.pending_topics:
+            if not started:
                 # 启动失败时重新入队，避免话题被遗忘
-                self.pending_topics.append(topic_id)
+                self._enqueue_pending_topic(topic_id)
             elif started:
                 self._next_topic_start_at = now + max(
                     0.0, float(self.config.topic_start_cooldown_sec)
@@ -1478,6 +1518,96 @@ class AutoRunManager:
                 continue
             self._start_exit_cleanup(token_id)
             running = sum(1 for t in self.tasks.values() if t.is_running())
+
+    def _enqueue_pending_topic(self, topic_id: str) -> None:
+        if not topic_id:
+            return
+        if topic_id not in self.pending_topics:
+            self.pending_topics.append(topic_id)
+        self._pending_first_seen.setdefault(topic_id, time.time())
+
+    def _remove_pending_topic(self, topic_id: str) -> None:
+        if topic_id in self.pending_topics:
+            try:
+                self.pending_topics.remove(topic_id)
+            except ValueError:
+                pass
+        self._pending_first_seen.pop(topic_id, None)
+        self._shared_ws_wait_failures.pop(topic_id, None)
+        self._shared_ws_paused_until.pop(topic_id, None)
+
+    def _append_exit_token_record(
+        self,
+        token_id: str,
+        exit_reason: str,
+        *,
+        exit_data: Optional[Dict[str, Any]] = None,
+        refillable: bool = False,
+    ) -> None:
+        if not token_id:
+            return
+        records = self._load_exit_tokens()
+        if not isinstance(records, list):
+            records = []
+        records.append(
+            {
+                "token_id": token_id,
+                "exit_ts": time.time(),
+                "exit_reason": exit_reason,
+                "exit_data": exit_data or {},
+                "refillable": refillable,
+            }
+        )
+        try:
+            self._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._exit_tokens_path.open("w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+        except OSError as exc:  # pragma: no cover - 文件系统异常
+            print(f"[WARN] 写入 exit_tokens.json 失败: {exc}")
+
+    def _evict_stale_pending_topics(self) -> None:
+        if not self.config.enable_pending_soft_eviction:
+            return
+        if not self.pending_topics:
+            return
+
+        now = time.time()
+        cutoff_sec = max(0.0, float(self.config.pending_soft_eviction_minutes)) * 60.0
+        if cutoff_sec <= 0:
+            return
+
+        evicted: List[str] = []
+        for topic_id in list(self.pending_topics):
+            first_seen = self._pending_first_seen.get(topic_id, now)
+            if now - first_seen < cutoff_sec:
+                continue
+            with self._ws_cache_lock:
+                cached = self._ws_cache.get(topic_id)
+            if cached:
+                updated_at = cached.get("updated_at", 0)
+                if updated_at and (now - float(updated_at)) < cutoff_sec:
+                    continue
+                cache_age = now - float(updated_at) if updated_at else None
+            else:
+                cache_age = None
+
+            exit_data = {
+                "pending_age_sec": round(now - first_seen, 1),
+                "cache_age_sec": round(cache_age, 1) if cache_age is not None else None,
+            }
+            self._remove_pending_topic(topic_id)
+            self._append_exit_token_record(
+                topic_id,
+                "NO_DATA_TIMEOUT",
+                exit_data=exit_data,
+                refillable=False,
+            )
+            evicted.append(topic_id)
+
+        if evicted:
+            print(
+                f"[PENDING] 软淘汰 {len(evicted)} 个token（无缓存/长期未更新）"
+            )
 
     def _get_order_base_volume(self) -> Optional[float]:
         return None
@@ -1767,10 +1897,7 @@ class AutoRunManager:
         if task and task.is_running():
             return
         if token_id in self.pending_topics:
-            try:
-                self.pending_topics.remove(token_id)
-            except ValueError:
-                pass
+            self._remove_pending_topic(token_id)
         if token_id in self.pending_exit_topics:
             try:
                 self.pending_exit_topics.remove(token_id)
@@ -1931,10 +2058,7 @@ class AutoRunManager:
             self.handled_topics.add(topic_id)
             write_handled_topics(self.config.handled_topics_path, self.handled_topics)
         if topic_id in self.pending_topics:
-            try:
-                self.pending_topics.remove(topic_id)
-            except ValueError:
-                pass
+            self._remove_pending_topic(topic_id)
         self._terminate_task(task, reason="stopped by user")
         self._purge_inactive_tasks()
         print(f"[CHOICE] stop topic={topic_id}")
@@ -1990,10 +2114,7 @@ class AutoRunManager:
         for topic_id in removable:
             self.tasks.pop(topic_id, None)
             if topic_id in self.pending_topics:
-                try:
-                    self.pending_topics.remove(topic_id)
-                except ValueError:
-                    pass
+                self._remove_pending_topic(topic_id)
 
     # ========== 市场关闭时自动清理 token ==========
     def _remove_token_from_copytrade_files(self, token_id: str) -> None:
@@ -2063,11 +2184,8 @@ class AutoRunManager:
 
         # 3. 从内存队列中移除
         if token_id in self.pending_topics:
-            try:
-                self.pending_topics.remove(token_id)
-                print(f"[CLEANUP] 已从 pending_topics 移除 token={token_id[:20]}...")
-            except ValueError:
-                pass
+            self._remove_pending_topic(token_id)
+            print(f"[CLEANUP] 已从 pending_topics 移除 token={token_id[:20]}...")
 
         if token_id in self.pending_exit_topics:
             try:
@@ -2151,8 +2269,7 @@ class AutoRunManager:
 
         条件：
         1. 回填功能已启用
-        2. 当前运行数 + pending_topics 数 < max_concurrent_tasks
-        3. 当前运行的任务数 < max_concurrent_tasks
+        2. 当前运行的任务数 < max_concurrent_tasks
 
         Returns:
             True 表示需要回填
@@ -2165,14 +2282,14 @@ class AutoRunManager:
         running = sum(1 for t in self.tasks.values() if t.is_running())
         max_slots = max(1, int(self.config.max_concurrent_tasks))
         pending = len(self.pending_topics)
-        has_capacity = (running + pending) < max_slots
+        has_capacity = running < max_slots
         if self._refill_debug:
             print(
                 "[REFILL][DEBUG] slot检查: "
                 f"running={running} pending={pending} max={max_slots} "
                 f"has_capacity={has_capacity}"
             )
-        return has_capacity and running < max_slots
+        return has_capacity
 
     def _filter_refillable_tokens(
         self, exit_records: List[Dict[str, Any]]
@@ -2323,7 +2440,7 @@ class AutoRunManager:
 
         # 计算可用slot数
         running = sum(1 for t in self.tasks.values() if t.is_running())
-        available_slots = max(0, self.config.max_concurrent_tasks - running - len(self.pending_topics))
+        available_slots = max(0, self.config.max_concurrent_tasks - running)
 
         if available_slots <= 0:
             return
@@ -2366,7 +2483,7 @@ class AutoRunManager:
             self.topic_details[token_id]["refill_retry_count"] = retry_count
 
             # 加入pending队列
-            self.pending_topics.append(token_id)
+            self._enqueue_pending_topic(token_id)
 
             state_hint = "有持仓→等待卖出" if has_position else "无持仓→等待买入"
             print(
@@ -2422,7 +2539,7 @@ class AutoRunManager:
                         continue
                     if topic_id in self.tasks and self.tasks[topic_id].is_running():
                         continue
-                    self.pending_topics.append(topic_id)
+                    self._enqueue_pending_topic(topic_id)
                     added_topics.append(topic_id)
                 # 立即标记为已处理，防止下次轮询时重复检测到同一 token
                 if added_topics:
@@ -2572,10 +2689,7 @@ class AutoRunManager:
                     f"token_id={token_id}"
                 )
             if token_id in self.pending_topics:
-                try:
-                    self.pending_topics.remove(token_id)
-                except ValueError:
-                    pass
+                self._remove_pending_topic(token_id)
             if task and task.is_running():
                 task.no_restart = True
                 task.end_reason = "sell signal"
@@ -2732,7 +2846,7 @@ class AutoRunManager:
             if topic_id in self.pending_topics:
                 continue
             restored_topics.append(topic_id)
-            self.pending_topics.append(topic_id)
+            self._enqueue_pending_topic(topic_id)
 
         for topic_id, info in tasks_snapshot.items():
             topic_id = str(topic_id)
@@ -2740,7 +2854,7 @@ class AutoRunManager:
             # 即使在 handled 中也应恢复，以确保任务不丢失
             if topic_id not in self.pending_topics:
                 restored_topics.append(topic_id)
-                self.pending_topics.append(topic_id)
+                self._enqueue_pending_topic(topic_id)
 
             task = TopicTask(topic_id=topic_id)
             task.status = "pending"
