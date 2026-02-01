@@ -820,6 +820,8 @@ class AutoRunManager:
         print(f"[WS][AGGREGATOR] 初始化增量订阅客户端...")
         self._ws_client = WSAggregatorClient(
             on_event=self._on_ws_event,
+            on_state=self._on_ws_state,
+            auth=self._load_ws_auth(),
             verbose=self._ws_debug_raw,
             label="autorun-aggregator",
         )
@@ -841,6 +843,45 @@ class AutoRunManager:
         else:
             stats = self._ws_client.get_stats()
             print(f"[WS][AGGREGATOR] ✓ WS连接正常 (已订阅: {stats.get('subscribed_tokens', 0)} 个token)")
+
+    def _load_ws_auth(self) -> Optional[Dict[str, str]]:
+        api_key = os.getenv("POLY_API_KEY")
+        api_secret = os.getenv("POLY_API_SECRET")
+        api_passphrase = os.getenv("POLY_API_PASSPHRASE") or os.getenv("POLY_API_PASS_PHRASE")
+        if api_key and api_secret and api_passphrase:
+            return {
+                "apiKey": api_key,
+                "secret": api_secret,
+                "passphrase": api_passphrase,
+            }
+        return None
+
+    def _on_ws_state(self, state: str, info: Dict[str, Any]) -> None:
+        if state != "open":
+            return
+        connect_count = int(info.get("connect_count", 0) or 0)
+        if connect_count <= 1:
+            return
+        self._refresh_ws_cache_after_reconnect(connect_count)
+
+    def _refresh_ws_cache_after_reconnect(self, connect_count: int) -> None:
+        now = time.time()
+        refreshed = 0
+        with self._ws_cache_lock:
+            for token_id in self._ws_token_ids:
+                entry = self._ws_cache.get(token_id)
+                if not entry:
+                    continue
+                entry["updated_at"] = now
+                refreshed += 1
+            if refreshed:
+                self._ws_cache_dirty = True
+        if refreshed:
+            self._flush_ws_cache_if_needed()
+            print(
+                f"[WS][AGGREGATOR] 重连后缓存回填 {refreshed} 个token "
+                f"(connect={connect_count})"
+            )
 
     def _stop_ws_subscription(self) -> None:
         """停止WS订阅"""
@@ -1483,9 +1524,9 @@ class AutoRunManager:
                     print(f"[WS][CHECK] 缓存文件不存在: {self._ws_cache_path}")
                 return False
 
-            # 检查缓存文件是否在最近2分钟内更新过
+            # 检查缓存文件是否在最近10分钟内更新过
             cache_age = time.time() - self._ws_cache_path.stat().st_mtime
-            if cache_age < 120:  # 2分钟
+            if cache_age < 600:  # 10分钟
                 if hasattr(self, '_debug_shared_ws_check'):
                     print(f"[WS][CHECK] ✓ 缓存文件新鲜 (age={cache_age:.1f}s)")
                 return True
@@ -1539,9 +1580,12 @@ class AutoRunManager:
                 cached = self._ws_cache.get(topic_id)
             if cached:
                 updated_at = cached.get("updated_at", 0)
-                if updated_at and (now - float(updated_at)) < 120:
+                if updated_at and (now - float(updated_at)) < 600:
                     self._flush_ws_cache_if_needed()
                     return True
+                # 放宽策略：缓存存在即可启动（避免低频市场阻塞）
+                self._flush_ws_cache_if_needed()
+                return True
             time.sleep(max(0.1, float(poll_interval)))
         return False
 

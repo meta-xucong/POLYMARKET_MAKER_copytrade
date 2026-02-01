@@ -68,11 +68,13 @@ class WSAggregatorClient:
         self,
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_state: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        auth: Optional[Dict[str, str]] = None,
         verbose: bool = False,
         label: str = "aggregator",
     ):
         self._on_event = on_event
         self._on_state = on_state
+        self._auth = auth or None
         self._verbose = verbose
         self._label = label
 
@@ -286,6 +288,8 @@ class WSAggregatorClient:
         # 发送初始握手消息（空订阅列表）
         # Polymarket要求先发送type消息建立channel
         initial_msg = {"type": CHANNEL, "assets_ids": []}
+        if self._auth:
+            initial_msg["auth"] = self._auth
         try:
             ws.send(json.dumps(initial_msg))
         except Exception as e:
@@ -363,6 +367,8 @@ class WSAggregatorClient:
 
         if unsubscribe_batch:
             msg = {"operation": "unsubscribe", "assets_ids": unsubscribe_batch}
+            if self._auth:
+                msg["auth"] = self._auth
             try:
                 ws.send(json.dumps(msg))
                 self._unsubscribe_count += len(unsubscribe_batch)
@@ -387,6 +393,8 @@ class WSAggregatorClient:
 
         if subscribe_batch:
             msg = {"operation": "subscribe", "assets_ids": subscribe_batch}
+            if self._auth:
+                msg["auth"] = self._auth
             try:
                 ws.send(json.dumps(msg))
                 self._subscribe_count += len(subscribe_batch)
