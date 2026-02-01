@@ -26,6 +26,8 @@ fill statistics so that the strategy layer can update its internal state.
 """
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import math
 import time
 from collections import deque
@@ -469,6 +471,64 @@ def _cancel_order(client: Any, order_id: Optional[str]) -> bool:
     return False
 
 
+def _normalize_open_order(order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(order, dict):
+        return None
+    order_id = order.get("order_id") or order.get("id") or order.get("orderId")
+    token_id = order.get("token_id") or order.get("tokenId") or order.get("asset_id")
+    side = order.get("side") or order.get("orderType") or order.get("type")
+    if not order_id or not token_id:
+        return None
+    return {
+        "order_id": str(order_id),
+        "token_id": str(token_id),
+        "side": str(side) if side is not None else "",
+    }
+
+
+def _fetch_open_orders_norm(client: Any) -> List[Dict[str, Any]]:
+    get_orders = getattr(client, "get_orders", None)
+    if not callable(get_orders):
+        return []
+    try:
+        payload = get_orders()
+    except TypeError:
+        spec = importlib.util.find_spec("py_clob_client.clob_types")
+        if spec is None:
+            return []
+        module = importlib.import_module("py_clob_client.clob_types")
+        OpenOrderParams = getattr(module, "OpenOrderParams", None)
+        if OpenOrderParams is None:
+            return []
+        try:
+            payload = get_orders(OpenOrderParams())
+        except Exception:
+            return []
+    except Exception:
+        return []
+    orders = payload if isinstance(payload, list) else []
+    normalized: List[Dict[str, Any]] = []
+    for order in orders:
+        parsed = _normalize_open_order(order)
+        if parsed:
+            normalized.append(parsed)
+    return normalized
+
+
+def _open_buy_order_ids_for_token(client: Any, token_id: str) -> List[str]:
+    open_orders = _fetch_open_orders_norm(client)
+    order_ids: List[str] = []
+    for order in open_orders:
+        if str(order.get("token_id")) != str(token_id):
+            continue
+        if str(order.get("side", "")).upper() != "BUY":
+            continue
+        order_id = order.get("order_id")
+        if order_id:
+            order_ids.append(str(order_id))
+    return order_ids
+
+
 def _order_tick(dp: int) -> float:
     return 10 ** (-dp)
 
@@ -763,6 +823,22 @@ def maker_buy_follow_bid(
             if api_min_qty and remaining + _MIN_FILL_EPS < api_min_qty:
                 final_status = "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
                 break
+            open_buy_orders = _open_buy_order_ids_for_token(client, token_id)
+            if open_buy_orders:
+                canceled = 0
+                for order_id in open_buy_orders:
+                    if _cancel_order(client, order_id):
+                        canceled += 1
+                if canceled:
+                    print(
+                        f"[MAKER][BUY] 检测到遗留 BUY 挂单，已撤销数量={canceled}，等待撮合层更新..."
+                    )
+                else:
+                    print(
+                        "[MAKER][BUY] 检测到遗留 BUY 挂单，但撤销失败，等待重试..."
+                    )
+                sleep_fn(poll_sec)
+                continue
             bid_info = _best_bid_info(client, token_id, best_bid_fn)
             if bid_info is None:
                 # 价格无效超时检测：如果连续 10 分钟无法获取有效价格，退出
