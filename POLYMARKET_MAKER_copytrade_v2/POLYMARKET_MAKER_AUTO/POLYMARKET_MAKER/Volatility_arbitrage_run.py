@@ -2340,7 +2340,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             stop_event.set()
             return
         exit_price = 0.01
-        best_bid = _fetch_best_price(client, str(token_id), "bid")
+        try:
+            best_bid = _fetch_best_price(client, str(token_id), "bid")
+        except OrderbookNotFoundError as exc:
+            print(f"[EXIT] orderbook 不存在，使用默认清仓价: {exc}")
+            best_bid = None
         if best_bid is not None and best_bid.price and best_bid.price > 0:
             exit_price = float(best_bid.price)
         try:
