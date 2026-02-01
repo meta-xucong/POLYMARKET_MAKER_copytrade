@@ -47,6 +47,8 @@
 | `paths.run_state_file` | 运行状态快照文件。 | 字符串 | 默认写入 `POLYMARKET_MAKER/data/autorun_status.json`。 |
 | `paths.copytrade_tokens_file` | copytrade 产出的 token 文件路径。 | 字符串 | 指向 `copytrade/tokens_from_copytrade.json`。 |
 | `paths.copytrade_sell_signals_file` | copytrade 产出的 sell 信号文件路径。 | 字符串 | 指向 `copytrade/copytrade_sell_signals.json`。 |
+| `debug.ws_debug_raw` | 是否输出 WS 原始数据/订阅调试信息。 | 布尔 | 默认 `false`，仅排障时启用。 |
+| `debug.refill_debug` | 是否输出 Slot Refill（回填）调试信息。 | 布尔 | 默认 `false`，排查回填问题时开启。 |
 
 ## strategy_defaults.json —— 策略模板
 为不同话题/主题提供默认下单参数与覆盖示例。【F:POLYMARKET_MAKER/config/strategy_defaults.json†L1-L24】
