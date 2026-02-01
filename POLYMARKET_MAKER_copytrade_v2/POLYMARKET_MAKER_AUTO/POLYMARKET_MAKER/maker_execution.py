@@ -58,6 +58,33 @@ _BACKOFF_MAX_SEC = 60.0
 _BACKOFF_MAX_LEVEL = 5  # 2^5 = 32s, 之后固定60s
 # 避退状态记录 {(token_id, side): {"until": float, "level": int, "last_error": str}}
 _api_backoff_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+_orderbook_404_state: Dict[str, Dict[str, Any]] = {}
+_ORDERBOOK_404_MAX_CONSECUTIVE = 5
+
+
+class OrderbookNotFoundError(RuntimeError):
+    def __init__(self, token_id: str, message: str) -> None:
+        super().__init__(message)
+        self.token_id = token_id
+
+
+def _is_orderbook_not_found_error(err: Exception) -> bool:
+    text = str(err)
+    if "No orderbook exists for the requested token id" in text:
+        return True
+    if "status_code=404" in text and "orderbook" in text.lower():
+        return True
+    return False
+
+
+def _update_orderbook_404_state(token_id: str, hit: bool) -> int:
+    state = _orderbook_404_state.get(token_id, {"count": 0})
+    if hit:
+        state["count"] = int(state.get("count", 0)) + 1
+    else:
+        state["count"] = 0
+    _orderbook_404_state[token_id] = state
+    return int(state["count"])
 
 
 def _round_up_to_dp(value: float, dp: int) -> float:
@@ -280,6 +307,7 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
     attempted_methods = []
     last_error = None
     encountered_rate_limit = False
+    missing_orderbook = False
 
     for name, kwargs in method_candidates:
         fn = getattr(client, name, None)
@@ -293,6 +321,8 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
             continue
         except Exception as e:
             last_error = f"{name}: {type(e).__name__} - {e}"
+            if _is_orderbook_not_found_error(e):
+                missing_orderbook = True
             # 检测 rate limit 错误
             if _is_rate_limit_error(e):
                 encountered_rate_limit = True
@@ -309,10 +339,20 @@ def _fetch_best_price(client: Any, token_id: str, side: str) -> Optional[PriceSa
         if best is not None:
             # 成功获取价格，重置避退状态
             _record_api_success(token_id, side)
+            _update_orderbook_404_state(token_id, hit=False)
             return PriceSample(float(best.price), best.decimals)
 
     # 所有方法都失败，记录避退状态
     if attempted_methods and last_error:
+        if missing_orderbook:
+            consecutive = _update_orderbook_404_state(token_id, hit=True)
+            if consecutive >= _ORDERBOOK_404_MAX_CONSECUTIVE:
+                raise OrderbookNotFoundError(
+                    token_id,
+                    f"token {token_id} 连续 {consecutive} 次 orderbook 404",
+                )
+        else:
+            _update_orderbook_404_state(token_id, hit=False)
         _record_api_failure(token_id, side, last_error, is_rate_limit=encountered_rate_limit)
 
         # 限制频率打印警告
