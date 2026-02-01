@@ -55,6 +55,7 @@ from maker_execution import (
     maker_buy_follow_bid,
     maker_sell_follow_ask_with_floor_wait,
     _fetch_best_price,
+    OrderbookNotFoundError,
 )
 
 # ========== 错误日志记录函数 ==========
@@ -2763,10 +2764,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 _apply_shared_ws_snapshot._last_missing_log = time.time()
 
-            # ✅ P0修复：缩短超时到3分钟，避免长时间占用队列位置
-            # 原因：如果聚合器未订阅此token，10分钟太长会浪费资源
-            if elapsed > 180:  # 3分钟超时（从600秒缩短）
-                print(f"[ERROR] 共享WS缓存中持续3分钟无此token数据，聚合器可能未订阅")
+            # ✅ 长时间无缓存数据则退出，释放队列位置
+            if elapsed > 1800:  # 30分钟超时
+                print(f"[ERROR] 共享WS缓存中持续30分钟无此token数据，聚合器可能未订阅")
                 print(f"[ERROR] ⚠ 策略无法获取价格数据，无法生成交易信号！")
                 print(f"[EXIT] 释放队列：token {token_id} 无法从聚合器获取数据")
                 print(f"[HINT] 请检查：1) 聚合器是否运行 2) 是否订阅了此token")
@@ -2775,11 +2775,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 _log_error("AGGREGATOR_NO_DATA", {
                     "token_id": token_id,
                     "message": "聚合器缓存中持续无此token数据",
-                    "timeout_seconds": 180
+                    "timeout_seconds": 1800
                 })
                 _record_exit_token(token_id, "AGGREGATOR_NO_DATA", {
                     "duration_seconds": elapsed,
-                    "timeout_seconds": 180,
+                    "timeout_seconds": 1800,
                     "has_position": False,  # 启动阶段，无持仓
                 })
                 strategy.stop("aggregator no data")
@@ -3101,8 +3101,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     stop_event.set()
                     return
 
-                # 数据过期超过5分钟，认为token可能无流动性
-                if data_age > 300:
+                # 数据过期超过30分钟，认为token可能无流动性
+                if data_age > 1800:
                     print(f"[WAIT][STALE] 缓存数据过期{data_age:.0f}秒，该token可能无流动性")
                     print("[QUEUE] 释放队列：token长期无数据更新，提前退出。")
                     _cancel_open_buy_orders_before_exit("STALE_DATA_TIMEOUT")
@@ -4687,6 +4687,23 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     except KeyboardInterrupt:
         print("[CMD] 捕获到 Ctrl+C，准备退出…")
         strategy.stop("keyboard interrupt")
+        stop_event.set()
+
+    except OrderbookNotFoundError as not_found_exc:
+        print(f"[ERROR] orderbook连续404，退出token: {not_found_exc}")
+        _cancel_open_buy_orders_before_exit("ORDERBOOK_NOT_FOUND")
+        _record_exit_token(token_id, "ORDERBOOK_NOT_FOUND", {
+            "token_id": token_id,
+            "message": str(not_found_exc),
+            "consecutive_404": 5,
+            "has_position": None,
+        })
+        _log_error("ORDERBOOK_NOT_FOUND", {
+            "token_id": token_id,
+            "message": str(not_found_exc),
+            "consecutive_404": 5,
+        })
+        strategy.stop("orderbook not found")
         stop_event.set()
 
     except Exception as main_loop_exc:

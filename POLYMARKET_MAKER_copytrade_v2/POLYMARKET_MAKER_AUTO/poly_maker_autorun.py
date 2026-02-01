@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
 import json
 import math
 import os
@@ -1214,13 +1215,17 @@ class AutoRunManager:
         try:
             self._ws_cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # 使用原子写入：先写临时文件，再重命名
-            tmp_path = self._ws_cache_path.with_suffix('.tmp')
-            with tmp_path.open("w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            lock_path = self._ws_cache_path.with_suffix('.lock')
+            with lock_path.open("w", encoding="utf-8") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                # 使用原子写入：先写临时文件，再重命名
+                tmp_path = self._ws_cache_path.with_suffix('.tmp')
+                with tmp_path.open("w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
 
-            # 原子操作：重命名（在 Unix 系统上是原子的）
-            tmp_path.replace(self._ws_cache_path)
+                # 原子操作：重命名（在 Unix 系统上是原子的）
+                tmp_path.replace(self._ws_cache_path)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
         except OSError as exc:
             print(f"[ERROR] 写入 WS 聚合缓存失败: {exc}")
