@@ -74,6 +74,45 @@ _data_api_last_request_ts = 0.0
 _data_api_request_lock = threading.Lock()
 
 
+class _TeeStream:
+    def __init__(self, primary: Any, secondary: Any) -> None:
+        self._primary = primary
+        self._secondary = secondary
+        self._lock = threading.Lock()
+
+    def write(self, data: str) -> int:
+        with self._lock:
+            written = self._primary.write(data)
+            self._secondary.write(data)
+            self._secondary.flush()
+            return written
+
+    def flush(self) -> None:
+        with self._lock:
+            self._primary.flush()
+            self._secondary.flush()
+
+    def isatty(self) -> bool:
+        return bool(getattr(self._primary, "isatty", lambda: False)())
+
+    def fileno(self) -> int:
+        return int(getattr(self._primary, "fileno", lambda: -1)())
+
+
+def _setup_main_log(log_dir: Path) -> Optional[Path]:
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        filename = time.strftime("autorun_main_%Y%m%d_%H%M%S.log", time.localtime())
+        log_path = log_dir / filename
+        log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+        sys.stdout = _TeeStream(sys.stdout, log_file)
+        sys.stderr = _TeeStream(sys.stderr, log_file)
+        return log_path
+    except Exception as exc:
+        print(f"[WARN] 无法创建主程序日志文件: {exc}")
+        return None
+
+
 # ========== 错误日志记录函数 ==========
 def _log_error(error_type: str, error_data: Dict[str, Any]) -> None:
     """
@@ -579,6 +618,7 @@ class AutoRunManager:
         self._ws_token_ids: List[str] = []
         self._ws_aggregator_thread: Optional[threading.Thread] = None
         self._ws_debug_raw = _env_flag("POLY_WS_DEBUG_RAW") or self.config.ws_debug_raw
+        self._refill_debug = _env_flag("POLY_REFILL_DEBUG")
         # 增量订阅客户端（替代完全重启WS的方式）
         self._ws_client: Optional[Any] = None  # WSAggregatorClient 实例
         # Slot refill (回填) 相关
@@ -2056,12 +2096,16 @@ class AutoRunManager:
             退出token记录列表
         """
         if not self._exit_tokens_path.exists():
+            if self._refill_debug:
+                print(f"[REFILL][DEBUG] exit_tokens.json 不存在: {self._exit_tokens_path}")
             return []
         try:
             with self._exit_tokens_path.open("r", encoding="utf-8") as f:
                 records = json.load(f)
             if not isinstance(records, list):
                 return []
+            if self._refill_debug:
+                print(f"[REFILL][DEBUG] 读取 exit_tokens 记录数: {len(records)}")
             return records
         except (json.JSONDecodeError, OSError) as exc:
             print(f"[REFILL] 读取退出token记录失败: {exc}")
@@ -2114,13 +2158,20 @@ class AutoRunManager:
             True 表示需要回填
         """
         if not self.config.enable_slot_refill:
+            if self._refill_debug:
+                print("[REFILL][DEBUG] 回填已关闭 enable_slot_refill=False")
             return False
 
         running = sum(1 for t in self.tasks.values() if t.is_running())
         max_slots = max(1, int(self.config.max_concurrent_tasks))
         pending = len(self.pending_topics)
         has_capacity = (running + pending) < max_slots
-
+        if self._refill_debug:
+            print(
+                "[REFILL][DEBUG] slot检查: "
+                f"running={running} pending={pending} max={max_slots} "
+                f"has_capacity={has_capacity}"
+            )
         return has_capacity and running < max_slots
 
     def _filter_refillable_tokens(
@@ -2155,6 +2206,7 @@ class AutoRunManager:
 
         refillable: List[Dict[str, Any]] = []
         seen_tokens: set[str] = set()  # 避免重复
+        skip_stats: Dict[str, int] = {}
 
         # 按退出时间倒序处理（最新的优先，避免处理过期记录）
         sorted_records = sorted(
@@ -2166,10 +2218,12 @@ class AutoRunManager:
         for record in sorted_records:
             token_id = record.get("token_id")
             if not token_id:
+                skip_stats["missing_token_id"] = skip_stats.get("missing_token_id", 0) + 1
                 continue
 
             # 去重：同一个token只取最新记录
             if token_id in seen_tokens:
+                skip_stats["duplicate_token"] = skip_stats.get("duplicate_token", 0) + 1
                 continue
             seen_tokens.add(token_id)
 
@@ -2179,31 +2233,39 @@ class AutoRunManager:
 
             # 检查是否可重试
             if exit_reason in NON_RETRYABLE_REASONS:
+                skip_stats["non_retryable"] = skip_stats.get("non_retryable", 0) + 1
                 continue
 
             # 检查是否标记为不可回填
             if not refillable_flag:
+                skip_stats["not_refillable"] = skip_stats.get("not_refillable", 0) + 1
                 continue
 
             # 检查冷却时间（exit_ts 到现在的时间间隔）
             if exit_ts > 0 and (now - exit_ts) < cooldown_seconds:
+                skip_stats["cooldown"] = skip_stats.get("cooldown", 0) + 1
                 continue
 
             # 检查重试次数
             retry_count = self._refill_retry_counts.get(token_id, 0)
             if retry_count >= max_retries:
+                skip_stats["max_retries"] = skip_stats.get("max_retries", 0) + 1
                 continue
 
             # 检查是否已在运行或pending
             if token_id in self.tasks and self.tasks[token_id].is_running():
+                skip_stats["already_running"] = skip_stats.get("already_running", 0) + 1
                 continue
             if token_id in self.pending_topics:
+                skip_stats["already_pending"] = skip_stats.get("already_pending", 0) + 1
                 continue
             if token_id in self.pending_exit_topics:
+                skip_stats["pending_exit"] = skip_stats.get("pending_exit", 0) + 1
                 continue
 
             # 检查是否最近已被回填过（避免短时间内重复回填）
             if token_id in self._refilled_tokens:
+                skip_stats["recent_refilled"] = skip_stats.get("recent_refilled", 0) + 1
                 continue
 
             refillable.append(record)
@@ -2220,6 +2282,14 @@ class AutoRunManager:
             return (0 if has_position else 1, exit_ts)
 
         refillable.sort(key=_sort_key)
+        if self._refill_debug:
+            print(
+                "[REFILL][DEBUG] 过滤结果: "
+                f"exit_records={len(exit_records)} refillable={len(refillable)} "
+                f"cooldown_sec={int(cooldown_seconds)} max_retries={max_retries}"
+            )
+            if skip_stats:
+                print(f"[REFILL][DEBUG] 跳过统计: {skip_stats}")
 
         return refillable
 
@@ -2228,6 +2298,13 @@ class AutoRunManager:
         执行回填调度：从退出记录中选取可回填的token重新加入pending队列。
         """
         if not self._should_refill_slots():
+            if self._refill_debug:
+                running = sum(1 for t in self.tasks.values() if t.is_running())
+                print(
+                    "[REFILL][DEBUG] slot不足，跳过回填: "
+                    f"running={running} pending={len(self.pending_topics)} "
+                    f"max={self.config.max_concurrent_tasks}"
+                )
             return
 
         exit_records = self._load_exit_tokens()
@@ -2239,10 +2316,8 @@ class AutoRunManager:
         if not refillable:
             running = sum(1 for t in self.tasks.values() if t.is_running())
             print(
-                "[REFILL] 无可回填token，记录=%s 运行=%s pending=%s",
-                len(exit_records),
-                running,
-                len(self.pending_topics),
+                "[REFILL] 无可回填token，记录="
+                f"{len(exit_records)} 运行={running} pending={len(self.pending_topics)}"
             )
             return
 
@@ -2808,13 +2883,15 @@ def load_configs(
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    args = parse_args(argv)
+    global_conf, strategy_conf, run_params_template = load_configs(args)
+    log_path = _setup_main_log(global_conf.log_dir)
     print("=" * 60)
     print("[INIT] Polymarket Maker AutoRun - 聚合器启动")
     print("[VERSION] 支持book/tick事件处理 (2026-01-21)")
+    if log_path:
+        print(f"[INIT] 主程序日志: {log_path}")
     print("=" * 60)
-
-    args = parse_args(argv)
-    global_conf, strategy_conf, run_params_template = load_configs(args)
 
     manager = AutoRunManager(global_conf, strategy_conf, run_params_template)
 
