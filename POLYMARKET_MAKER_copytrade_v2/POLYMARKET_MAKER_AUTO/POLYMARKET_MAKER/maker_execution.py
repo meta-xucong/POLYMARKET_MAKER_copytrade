@@ -1451,6 +1451,13 @@ def maker_sell_follow_ask_with_floor_wait(
                             rec["status"] = "CANCELLED"
                         active_order = None
                         active_price = None
+                    try:
+                        canceled = _cancel_open_orders_for_token(client, token_id)
+                    except Exception as cancel_exc:
+                        print(f"[MAKER][SELL] 撤销挂单失败: {cancel_exc}")
+                        canceled = 0
+                    if canceled:
+                        print(f"[MAKER][SELL] 已撤销当前token挂单数量={canceled}")
                     print("[MAKER][SELL] 下单失败，疑似仓位不足，等待60s后刷新仓位。")
                     sleep_fn(60)
                     refreshed_goal: Optional[float] = None
