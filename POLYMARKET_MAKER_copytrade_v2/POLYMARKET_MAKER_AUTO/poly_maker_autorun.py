@@ -821,6 +821,7 @@ class AutoRunManager:
         self._ws_client = WSAggregatorClient(
             on_event=self._on_ws_event,
             on_state=self._on_ws_state,
+            auth=self._load_ws_auth(),
             verbose=self._ws_debug_raw,
             label="autorun-aggregator",
         )
@@ -842,6 +843,18 @@ class AutoRunManager:
         else:
             stats = self._ws_client.get_stats()
             print(f"[WS][AGGREGATOR] ✓ WS连接正常 (已订阅: {stats.get('subscribed_tokens', 0)} 个token)")
+
+    def _load_ws_auth(self) -> Optional[Dict[str, str]]:
+        api_key = os.getenv("POLY_API_KEY")
+        api_secret = os.getenv("POLY_API_SECRET")
+        api_passphrase = os.getenv("POLY_API_PASSPHRASE") or os.getenv("POLY_API_PASS_PHRASE")
+        if api_key and api_secret and api_passphrase:
+            return {
+                "apiKey": api_key,
+                "secret": api_secret,
+                "passphrase": api_passphrase,
+            }
+        return None
 
     def _on_ws_state(self, state: str, info: Dict[str, Any]) -> None:
         if state != "open":
