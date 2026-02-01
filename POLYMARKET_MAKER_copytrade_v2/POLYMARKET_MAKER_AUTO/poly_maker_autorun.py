@@ -2438,15 +2438,12 @@ class AutoRunManager:
             )
             return
 
-        # 计算可用slot数
+        # 计算可用slot数（仅用于日志展示）
         running = sum(1 for t in self.tasks.values() if t.is_running())
         available_slots = max(0, self.config.max_concurrent_tasks - running)
 
-        if available_slots <= 0:
-            return
-
-        # 取前 N 个可回填token
-        to_refill = refillable[:available_slots]
+        # 回填加入 pending 不受 slot 限制，由 running 控制实际子进程数量
+        to_refill = refillable
 
         print(f"\n[REFILL] ========== Slot回填检查 ==========")
         print(f"[REFILL] 当前运行: {running}/{self.config.max_concurrent_tasks}")
