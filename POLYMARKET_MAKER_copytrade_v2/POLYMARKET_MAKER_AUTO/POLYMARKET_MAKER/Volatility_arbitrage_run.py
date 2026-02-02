@@ -3692,17 +3692,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         return
                     time.sleep(0.2)
 
-    print(f"[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts={sell_only_start_ts}, market_deadline_ts={market_deadline_ts})")
-
-    if sell_only_start_ts and time.time() >= sell_only_start_ts:
-        print("[INIT][TRACE] 6. 调用_activate_sell_only()...")
-        _activate_sell_only("countdown window")
-
-    if market_deadline_ts:
-        print("[INIT][TRACE] 7. 启动countdown_monitor线程...")
-        threading.Thread(target=_countdown_monitor, daemon=True).start()
-
-    print("[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...")
+    # NOTE: sell_only / countdown 初始化已移到 _execute_sell 定义之后，
+    # 避免 _activate_sell_only → _maybe_refresh_position_size → _execute_sell
+    # 在 _execute_sell 尚未定义时被调用导致 NameError。
 
     def _execute_sell(
         order_qty: Optional[float],
@@ -3811,8 +3803,16 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         sell_status = str(sell_resp.get("status") or "").upper()
         if sell_status == "ABANDONED":
             print(
-                "[RELEASE] 卖出挂单长期无动作，停止做市逻辑但保留挂单。"
+                "[RELEASE] 卖出挂单长期无动作，准备退出。"
             )
+            # 防御性撤单：确保不残留卖单锁定仓位（maker_execution 层已尝试撤单，
+            # 此处作为第二道防线以防上层撤单失败或遗漏）
+            try:
+                canceled = _cancel_open_orders_for_token(client, token_id)
+                if canceled:
+                    print(f"[RELEASE] ABANDONED 退出前撤销 {canceled} 个残留挂单")
+            except Exception:
+                pass
             # 获取当前持仓和价格信息用于回填
             snap = latest.get(token_id) or {}
             status = strategy.status()
@@ -3995,6 +3995,19 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 "last_ask": float(snap.get("best_ask") or 0.0),
             })
             stop_event.set()
+
+    # --- 所有内部函数已定义，安全执行 sell_only / countdown 初始化 ---
+    print(f"[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts={sell_only_start_ts}, market_deadline_ts={market_deadline_ts})")
+
+    if sell_only_start_ts and time.time() >= sell_only_start_ts:
+        print("[INIT][TRACE] 6. 调用_activate_sell_only()...")
+        _activate_sell_only("countdown window")
+
+    if market_deadline_ts:
+        print("[INIT][TRACE] 7. 启动countdown_monitor线程...")
+        threading.Thread(target=_countdown_monitor, daemon=True).start()
+
+    print("[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...")
 
     # 主循环诊断变量（用于追踪循环是否正常执行）
     loop_iteration_count = 0
