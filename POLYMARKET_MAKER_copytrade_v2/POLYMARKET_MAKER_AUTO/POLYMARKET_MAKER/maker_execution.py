@@ -686,9 +686,12 @@ def maker_buy_follow_bid(
     base_price_dp = BUY_PRICE_DP if price_dp is None else max(int(price_dp), 0)
     price_dp_active = base_price_dp
     tick = _order_tick(price_dp_active)
-    # 采用统一的两级缩减步长，先用 0.01，多次失败后升级到 0.1
+    # 余额不足缩减策略：先折半快速探测，再线性微调
     size_tick = 0.01
     shortage_retry_count = 0
+    halving_phase = True   # 是否处于折半快速探测阶段
+    halving_count = 0      # 已折半次数
+    max_halvings = 4       # 最多折半 4 次（缩至 1/16）
     base_min_shrink_interval = 1.0
     min_shrink_interval = base_min_shrink_interval
     last_shrink_time = 0.0
@@ -749,15 +752,22 @@ def maker_buy_follow_bid(
 
     def _reset_shortage_recovery(note: str) -> None:
         nonlocal shortage_retry_count, min_shrink_interval, last_shrink_time
+        nonlocal halving_phase, halving_count, size_tick
 
         if shortage_retry_count > 0 or min_shrink_interval != base_min_shrink_interval:
             shortage_retry_count = 0
             min_shrink_interval = base_min_shrink_interval
             last_shrink_time = time.monotonic()
+            # 恢复折半探测状态，以便下一轮余额不足时重新快速探测
+            halving_phase = True
+            halving_count = 0
+            size_tick = 0.01
             print(note)
 
     def _handle_balance_shortage(reason: str, min_viable: float) -> bool:
-        nonlocal goal_size, remaining, active_order, active_price, final_status, shortage_retry_count, size_tick, last_shrink_time, min_shrink_interval
+        nonlocal goal_size, remaining, active_order, active_price, final_status
+        nonlocal shortage_retry_count, size_tick, last_shrink_time, min_shrink_interval
+        nonlocal halving_phase, halving_count
 
         print(reason)
         min_shrink_interval = max(min_shrink_interval, base_min_shrink_interval)
@@ -773,9 +783,6 @@ def maker_buy_follow_bid(
             final_status = "FILLED" if filled_total > _MIN_FILL_EPS else final_status
             return True
         shortage_retry_count += 1
-        if shortage_retry_count > 100 and size_tick < 0.1:
-            size_tick = 0.1
-            print("[MAKER][BUY] 余额不足重试超过 100 次，提升缩减步长至 0.1。")
 
         now = time.monotonic()
         elapsed = now - last_shrink_time
@@ -786,13 +793,30 @@ def maker_buy_follow_bid(
             now = time.monotonic()
         last_shrink_time = now
 
-        shrink_candidate = _ceil_to_dp(max(current_remaining - size_tick, 0.0), BUY_SIZE_DP)
+        # 阶段一：折半快速探测可用余额上限
+        if halving_phase and halving_count < max_halvings:
+            halving_count += 1
+            shrink_candidate = _ceil_to_dp(
+                max(current_remaining / 2.0, 0.0), BUY_SIZE_DP
+            )
+            mode_hint = f"折半#{halving_count}"
+        else:
+            # 阶段二：线性微调，步长直接用 0.1
+            if halving_phase:
+                halving_phase = False
+                size_tick = 0.1
+                print("[MAKER][BUY] 折半探测结束，切换为线性缩减 (步长=0.1)。")
+            shrink_candidate = _ceil_to_dp(
+                max(current_remaining - size_tick, 0.0), BUY_SIZE_DP
+            )
+            mode_hint = "线性"
+
         min_viable = max(min_viable or 0.0, api_min_qty or 0.0)
         if shrink_candidate > _MIN_FILL_EPS and (
             not min_viable or shrink_candidate + _MIN_FILL_EPS >= min_viable
         ):
             print(
-                "[MAKER][BUY] 重新调整买入目标 -> "
+                f"[MAKER][BUY] 缩减买入目标({mode_hint}) -> "
                 f"old={current_remaining:.{BUY_SIZE_DP}f} new={shrink_candidate:.{BUY_SIZE_DP}f}"
             )
             goal_size = filled_total + shrink_candidate
@@ -907,6 +931,8 @@ def maker_buy_follow_bid(
             except Exception as exc:
                 min_viable = max(min_qty or 0.0, api_min_qty or 0.0)
                 if _is_insufficient_balance(exc):
+                    if shortage_retry_count == 0:
+                        print(f"[MAKER][BUY][DIAG] 首次余额不足异常详情: {exc}")
                     should_stop = _handle_balance_shortage(
                         "[MAKER][BUY] 下单失败，疑似余额不足，尝试缩减买入目标后重试。",
                         min_viable,
@@ -1268,6 +1294,15 @@ def maker_sell_follow_ask_with_floor_wait(
 
         now = time.time()
         if inactive_timeout_sec and now - last_activity_ts >= inactive_timeout_sec:
+            # 撤销残留的 active sell order，避免锁定 token 仓位
+            if active_order:
+                try:
+                    _cancel_order(client, active_order)
+                    rec = records.get(active_order)
+                    if rec is not None:
+                        rec["status"] = "CANCELLED"
+                except Exception as cancel_exc:
+                    print(f"[MAKER][SELL] ABANDONED 撤单失败: {cancel_exc}")
             final_status = "ABANDONED"
             break
         if (
