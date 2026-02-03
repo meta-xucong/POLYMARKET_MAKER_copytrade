@@ -1410,6 +1410,8 @@ class AutoRunManager:
         # 记录到已完成集合，防止重复触发清仓
         if task.end_reason in ("sell signal", "sell signal cleanup"):
             self._completed_exit_cleanup_tokens.add(task.topic_id)
+            # 从 handled_topics 移除，允许后续 copytrade 再次发出买入信号时重新交易
+            self._remove_from_handled_topics(task.topic_id)
 
         if task.no_restart:
             return
@@ -1646,11 +1648,12 @@ class AutoRunManager:
                 "cache_age_sec": round(cache_age, 1) if cache_age is not None else None,
             }
             self._remove_pending_topic(topic_id)
+            # NO_DATA_TIMEOUT 允许回填，但在 _filter_refillable_tokens 中有更严格的次数限制
             self._append_exit_token_record(
                 topic_id,
                 "NO_DATA_TIMEOUT",
                 exit_data=exit_data,
-                refillable=False,
+                refillable=True,
             )
             evicted.append(topic_id)
 
@@ -2026,6 +2029,20 @@ class AutoRunManager:
             return
         self.handled_topics.update(new_topics)
         write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+
+    def _remove_from_handled_topics(self, token_id: str) -> None:
+        """
+        从 handled_topics 中移除指定 token，允许后续重新交易。
+
+        用于：当 token 完成一个完整的交易周期（买入→卖出清仓）后，
+        从 handled_topics 中移除，这样 copytrade 再次发出买入信号时可以重新触发交易。
+        """
+        if not token_id:
+            return
+        if token_id in self.handled_topics:
+            self.handled_topics.discard(token_id)
+            write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+            print(f"[HANDLED] 已从 handled_topics 移除 token={token_id[:16]}...（允许后续重新交易）")
 
     # ========== 命令处理 ==========
     def enqueue_command(self, command: str) -> None:
@@ -2414,8 +2431,12 @@ class AutoRunManager:
                 continue
 
             # 检查重试次数
+            # NO_DATA_TIMEOUT 有更严格的限制（最多1次），避免反复回填无数据的token
             retry_count = self._refill_retry_counts.get(token_id, 0)
-            if retry_count >= max_retries:
+            effective_max_retries = max_retries
+            if exit_reason == "NO_DATA_TIMEOUT":
+                effective_max_retries = min(max_retries, 1)  # NO_DATA_TIMEOUT 最多回填1次
+            if retry_count >= effective_max_retries:
                 skip_stats["max_retries"] = skip_stats.get("max_retries", 0) + 1
                 continue
 
