@@ -1938,6 +1938,10 @@ class AutoRunManager:
         self._update_handled_topics([topic_id])
         # 启动成功后，从回填标记中移除（允许后续再次回填）
         self._refilled_tokens.discard(topic_id)
+        # 从已完成清仓集合中移除，确保新一轮交易的 sell 信号能被正常处理
+        self._completed_exit_cleanup_tokens.discard(topic_id)
+        # 重置回填重试计数，新一轮交易从0开始计数
+        self._refill_retry_counts.pop(topic_id, None)
         # 清理 topic_details 中的 resume_state（已被使用）
         if topic_id in self.topic_details:
             self.topic_details[topic_id].pop("resume_state", None)
