@@ -1504,6 +1504,8 @@ class AutoRunManager:
             self._remove_token_from_copytrade_files(topic_id)
             # 从 pending 相关状态中清理
             self._remove_pending_topic(topic_id)
+            # 清理可能残留的 task 对象（从恢复阶段创建的）
+            self.tasks.pop(topic_id, None)
             return True
 
         return False
