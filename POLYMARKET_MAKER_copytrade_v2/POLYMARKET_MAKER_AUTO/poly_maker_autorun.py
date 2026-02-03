@@ -1469,6 +1469,45 @@ class AutoRunManager:
         )
         return any(p.lower() in excerpt for p in patterns)
 
+    def _check_market_closed_before_start(self, topic_id: str) -> bool:
+        """
+        在启动子进程前检查市场状态。
+
+        返回 True 表示市场已关闭（应跳过），False 表示可以继续启动。
+        只有在 WS 缓存中明确标记为 closed 时才返回 True，避免误判。
+        """
+        cache_data = self._ws_cache.get(topic_id)
+        if not cache_data:
+            # 缓存中无数据，不能确定市场状态，允许继续（由子进程判断）
+            return False
+
+        # 检查市场关闭标记
+        is_closed = (
+            cache_data.get("market_closed")
+            or cache_data.get("is_closed")
+            or cache_data.get("closed")
+        )
+
+        if is_closed:
+            print(
+                f"[SCHEDULE] {topic_id[:8]}... 市场已关闭（缓存标记），"
+                f"跳过启动并清理"
+            )
+            # 记录到 exit_tokens，供后续清理
+            self._append_exit_token_record(
+                topic_id,
+                "MARKET_CLOSED",
+                exit_data={"detected_at": "schedule_before_start"},
+                refillable=False,
+            )
+            # 从 copytrade 文件中移除
+            self._remove_token_from_copytrade_files(topic_id)
+            # 从 pending 相关状态中清理
+            self._remove_pending_topic(topic_id)
+            return True
+
+        return False
+
     def _schedule_pending_topics(self) -> None:
         running = sum(1 for t in self.tasks.values() if t.is_running())
         checks_remaining = len(self.pending_topics)
@@ -1482,6 +1521,10 @@ class AutoRunManager:
             if now < self._next_topic_start_at:
                 break
             topic_id = self.pending_topics.pop(0)
+            # 启动前检查市场状态，若已关闭则跳过（不重新入队）
+            if self._check_market_closed_before_start(topic_id):
+                checks_remaining -= 1
+                continue
             paused_until = self._shared_ws_paused_until.get(topic_id)
             if paused_until and now < paused_until:
                 self._enqueue_pending_topic(topic_id)
@@ -2840,9 +2883,24 @@ class AutoRunManager:
         if handled_topics:
             self.handled_topics.update(str(t) for t in handled_topics)
 
+        # ===== 构建黑名单：确定已死亡的 token =====
+        # 只过滤 MARKET_CLOSED 的 token，避免误删正常 token
+        dead_tokens: set = set()
+        for record in self._load_exit_tokens():
+            if record.get("exit_reason") == "MARKET_CLOSED":
+                tid = record.get("token_id")
+                if tid:
+                    dead_tokens.add(str(tid))
+
         restored_topics: List[str] = []
+        skipped_dead: List[str] = []
+
         for topic_id in pending_topics:
             topic_id = str(topic_id)
+            # 跳过确定已死亡的 token（市场已关闭）
+            if topic_id in dead_tokens:
+                skipped_dead.append(topic_id)
+                continue
             # 只检查是否已在 pending 队列中，不检查 handled_topics
             # 因为保存的 pending_topics 代表"还未完成的任务"，即使在 handled 中也应恢复
             if topic_id in self.pending_topics:
@@ -2852,6 +2910,11 @@ class AutoRunManager:
 
         for topic_id, info in tasks_snapshot.items():
             topic_id = str(topic_id)
+            # 跳过确定已死亡的 token（市场已关闭）
+            if topic_id in dead_tokens:
+                if topic_id not in skipped_dead:
+                    skipped_dead.append(topic_id)
+                continue
             # 不检查 handled_topics，因为保存的 tasks 代表"上次运行中的任务"
             # 即使在 handled 中也应恢复，以确保任务不丢失
             if topic_id not in self.pending_topics:
@@ -2868,6 +2931,10 @@ class AutoRunManager:
             if log_path:
                 task.log_path = Path(log_path)
             self.tasks[topic_id] = task
+
+        if skipped_dead:
+            preview = ", ".join(t[:8] + "..." for t in skipped_dead[:5])
+            print(f"[RESTORE] 跳过 {len(skipped_dead)} 个已关闭市场的 token: {preview}")
 
         if restored_topics:
             preview = ", ".join(restored_topics[:5])
