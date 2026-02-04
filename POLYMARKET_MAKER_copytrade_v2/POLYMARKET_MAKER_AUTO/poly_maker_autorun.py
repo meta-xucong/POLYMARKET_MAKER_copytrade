@@ -1940,8 +1940,15 @@ class AutoRunManager:
         self._refilled_tokens.discard(topic_id)
         # 从已完成清仓集合中移除，确保新一轮交易的 sell 信号能被正常处理
         self._completed_exit_cleanup_tokens.discard(topic_id)
-        # 重置回填重试计数，新一轮交易从0开始计数
-        self._refill_retry_counts.pop(topic_id, None)
+        # 检查是否是回填启动（有 resume_state 表示是回填/恢复场景）
+        is_refill_start = bool(
+            topic_id in self.topic_details
+            and self.topic_details[topic_id].get("resume_state")
+        )
+        # 只有非回填启动（新交易周期）时才重置回填重试计数
+        # 回填启动时保留计数，确保 NO_DATA_TIMEOUT 的重试限制生效
+        if not is_refill_start:
+            self._refill_retry_counts.pop(topic_id, None)
         # 清理 topic_details 中的 resume_state（已被使用）
         if topic_id in self.topic_details:
             self.topic_details[topic_id].pop("resume_state", None)
