@@ -39,6 +39,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "copytrade_poll_sec": 30.0,
     "command_poll_sec": 5.0,
     "max_concurrent_tasks": 10,
+    "max_exit_cleanup_tasks": 3,  # 清仓任务独立槽位，不受 max_concurrent_tasks 限制
     "log_dir": str(PROJECT_ROOT / "logs" / "autorun"),
     "data_dir": str(PROJECT_ROOT / "data"),
     "handled_topics_path": str(PROJECT_ROOT / "data" / "handled_topics.json"),
@@ -385,6 +386,7 @@ class GlobalConfig:
     copytrade_poll_sec: float = DEFAULT_GLOBAL_CONFIG["copytrade_poll_sec"]
     command_poll_sec: float = DEFAULT_GLOBAL_CONFIG["command_poll_sec"]
     max_concurrent_tasks: int = DEFAULT_GLOBAL_CONFIG["max_concurrent_tasks"]
+    max_exit_cleanup_tasks: int = DEFAULT_GLOBAL_CONFIG["max_exit_cleanup_tasks"]
     log_dir: Path = field(default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["log_dir"]))
     data_dir: Path = field(default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["data_dir"]))
     handled_topics_path: Path = field(
@@ -492,6 +494,11 @@ class GlobalConfig:
             max_concurrent_tasks=int(
                 scheduler.get(
                     "max_concurrent_tasks", DEFAULT_GLOBAL_CONFIG["max_concurrent_tasks"]
+                )
+            ),
+            max_exit_cleanup_tasks=int(
+                scheduler.get(
+                    "max_exit_cleanup_tasks", DEFAULT_GLOBAL_CONFIG["max_exit_cleanup_tasks"]
                 )
             ),
             log_dir=log_dir,
@@ -1560,16 +1567,19 @@ class AutoRunManager:
             checks_remaining -= 1
 
     def _schedule_pending_exit_cleanup(self) -> None:
-        running = sum(1 for t in self.tasks.values() if t.is_running())
-        while (
-            self.pending_exit_topics
-            and running < max(1, int(self.config.max_concurrent_tasks))
-        ):
+        # 清仓任务使用独立的槽位限制，不受 max_concurrent_tasks 约束
+        # 这确保了当普通任务槽位已满时，清仓任务仍能及时执行
+        exit_running = sum(
+            1 for t in self.tasks.values()
+            if t.is_running() and t.end_reason == "sell signal cleanup"
+        )
+        max_exit_slots = max(1, int(self.config.max_exit_cleanup_tasks))
+        while self.pending_exit_topics and exit_running < max_exit_slots:
             token_id = self.pending_exit_topics.pop(0)
             if token_id in self.tasks and self.tasks[token_id].is_running():
                 continue
             self._start_exit_cleanup(token_id)
-            running = sum(1 for t in self.tasks.values() if t.is_running())
+            exit_running += 1
 
     def _enqueue_pending_topic(self, topic_id: str) -> None:
         if not topic_id:

@@ -1736,6 +1736,21 @@ def _place_sell_fok(client, token_id: str, price: float, size: float) -> Dict[st
     return client.post_order(signed, OrderType.FOK)
 
 
+def _place_sell_ioc(client, token_id: str, price: float, size: float) -> Dict[str, Any]:
+    """
+    发出 IOC (Immediate or Cancel) 卖单，允许部分成交。
+    注意：py_clob_client 使用 FAK (Fill and Kill) 来模拟 IOC 行为。
+    """
+    from py_clob_client.clob_types import OrderArgs, OrderType
+    from py_clob_client.order_builder.constants import SELL
+    eff_p, eff_s = _normalize_sell_pair(price, size)
+    order = OrderArgs(token_id=str(token_id), side=SELL, price=float(eff_p), size=float(eff_s))
+    signed = client.create_order(order)
+    # py_clob_client 使用 FAK 来实现 IOC 语义（部分成交，剩余取消）
+    order_type = getattr(OrderType, "FAK", None) or getattr(OrderType, "IOC", OrderType.FOK)
+    return client.post_order(signed, order_type)
+
+
 def _normalize_open_order(order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not isinstance(order, dict):
         return None
@@ -2327,39 +2342,91 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print(f"[REFILL] ========================================\n")
 
     def _exit_cleanup_only(reason: str) -> None:
+        """
+        清仓专用函数：使用 IOC 循环卖出，直到持仓全部清完才退出。
+        - IOC (Immediate or Cancel) 允许部分成交，未成交部分自动取消
+        - 每次循环重新获取最新 best_bid 价格
+        - 设置最大重试次数防止死循环
+        """
         print(f"[EXIT] 收到清仓信号: {reason}")
+
+        # 1. 撤销所有挂单
         canceled = _cancel_open_orders_for_token(client, token_id)
         if canceled:
             print(f"[EXIT] 已尝试撤销挂单数量={canceled}")
-        snapshot, _ = _fetch_position_snapshot_with_cache(
-            client=client,
-            token_id=token_id,
-            cache=None,
-            cache_ts=0.0,
-            log_errors=True,
-            force=True,
-        )
-        total_pos = snapshot[1] if snapshot else None
-        if total_pos is None or total_pos <= 0:
-            print("[EXIT] 未检测到持仓，直接退出。")
-            strategy.stop("sell signal")
-            stop_event.set()
-            return
-        exit_price = 0.01
-        try:
-            best_bid = _fetch_best_price(client, str(token_id), "bid")
-        except OrderbookNotFoundError as exc:
-            print(f"[EXIT] orderbook 不存在，使用默认清仓价: {exc}")
-            best_bid = None
-        if best_bid is not None and best_bid.price and best_bid.price > 0:
-            exit_price = float(best_bid.price)
-        try:
-            _place_sell_fok(client, token_id=token_id, price=exit_price, size=total_pos)
-            print(
-                f"[EXIT] 已发出清仓卖单 token_id={token_id} size={total_pos:.4f} price={exit_price:.4f}"
+
+        # 清仓参数
+        DUST_THRESHOLD = 0.5  # 小于此数量视为清仓完成（尘埃量）
+        MAX_ITERATIONS = 60   # 最大循环次数
+        RETRY_INTERVAL_SEC = 5.0  # 每次循环间隔（秒）
+        MIN_PRICE = 0.01      # 最低清仓价格
+
+        iteration = 0
+        while iteration < MAX_ITERATIONS:
+            iteration += 1
+
+            # 2. 查询当前持仓
+            snapshot, _ = _fetch_position_snapshot_with_cache(
+                client=client,
+                token_id=token_id,
+                cache=None,
+                cache_ts=0.0,
+                log_errors=True,
+                force=True,
             )
-        except Exception as exc:
-            print(f"[EXIT] 清仓卖单失败: {exc}")
+            remaining_pos = snapshot[1] if snapshot else None
+
+            # 检查是否已清仓完成
+            if remaining_pos is None or remaining_pos <= DUST_THRESHOLD:
+                print(f"[EXIT] 清仓完成，剩余持仓={remaining_pos or 0:.4f}（低于尘埃阈值 {DUST_THRESHOLD}）")
+                break
+
+            print(f"[EXIT] 第 {iteration}/{MAX_ITERATIONS} 次清仓尝试，剩余持仓={remaining_pos:.4f}")
+
+            # 3. 获取最新 best_bid 价格
+            exit_price = MIN_PRICE
+            try:
+                best_bid = _fetch_best_price(client, str(token_id), "bid")
+                if best_bid is not None and best_bid.price and best_bid.price > 0:
+                    exit_price = float(best_bid.price)
+            except OrderbookNotFoundError:
+                print(f"[EXIT] orderbook 不存在，使用最低清仓价: {MIN_PRICE}")
+            except Exception as exc:
+                print(f"[EXIT] 获取 best_bid 失败: {exc}，使用最低清仓价: {MIN_PRICE}")
+
+            # 4. 发出 IOC 卖单（允许部分成交）
+            try:
+                resp = _place_sell_ioc(
+                    client,
+                    token_id=token_id,
+                    price=exit_price,
+                    size=remaining_pos
+                )
+                print(
+                    f"[EXIT] 已发出 IOC 清仓卖单 size={remaining_pos:.4f} price={exit_price:.4f} resp={resp}"
+                )
+            except Exception as exc:
+                print(f"[EXIT] IOC 清仓卖单失败: {exc}")
+
+            # 5. 等待一段时间后再次检查
+            time.sleep(RETRY_INTERVAL_SEC)
+
+        # 最终状态检查
+        if iteration >= MAX_ITERATIONS:
+            final_snapshot, _ = _fetch_position_snapshot_with_cache(
+                client=client,
+                token_id=token_id,
+                cache=None,
+                cache_ts=0.0,
+                log_errors=True,
+                force=True,
+            )
+            final_pos = final_snapshot[1] if final_snapshot else 0
+            print(
+                f"[EXIT][WARN] 达到最大清仓次数 {MAX_ITERATIONS}，"
+                f"剩余持仓={final_pos:.4f}（可能需要人工处理）"
+            )
+
         strategy.stop("sell signal")
         stop_event.set()
 
