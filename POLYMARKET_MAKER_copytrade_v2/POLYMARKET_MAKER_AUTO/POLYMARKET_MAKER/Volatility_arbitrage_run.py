@@ -3489,40 +3489,97 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         return bool(exit_signal_path and exit_signal_path.exists())
 
     def _force_exit(reason: str) -> None:
+        """
+        正在运行的进程收到 exit signal 时的清仓函数。
+        使用 IOC 循环卖出，直到持仓全部清完才退出。
+        """
         if stop_event.is_set():
             return
         print(f"[EXIT] 收到清仓信号: {reason}")
+
+        # 1. 撤销所有挂单
         canceled = _cancel_open_orders_for_token(client, token_id)
         if canceled:
             print(f"[EXIT] 已尝试撤销挂单数量={canceled}")
-        snapshot, _ = _fetch_position_snapshot_with_cache(
-            client=client,
-            token_id=token_id,
-            cache=None,
-            cache_ts=0.0,
-            log_errors=True,
-            force=True,
-        )
-        total_pos = snapshot[1] if snapshot else None
-        if total_pos is None or total_pos <= 0:
-            print("[EXIT] 未检测到持仓，直接退出。")
-            strategy.stop("sell signal")
-            stop_event.set()
-            return
-        exit_price = _latest_best_bid()
-        if exit_price is None:
-            exit_price = _latest_best_ask()
-        if exit_price is None:
-            exit_price = _latest_price()
-        if exit_price is None or exit_price <= 0:
-            exit_price = 0.01
-        try:
-            _place_sell_fok(client, token_id=token_id, price=exit_price, size=total_pos)
-            print(
-                f"[EXIT] 已发出清仓卖单 token_id={token_id} size={total_pos:.4f} price={exit_price:.4f}"
+
+        # 清仓参数
+        DUST_THRESHOLD = 0.5  # 小于此数量视为清仓完成（尘埃量）
+        MAX_ITERATIONS = 60   # 最大循环次数
+        RETRY_INTERVAL_SEC = 5.0  # 每次循环间隔（秒）
+        MIN_PRICE = 0.01      # 最低清仓价格
+
+        iteration = 0
+        while iteration < MAX_ITERATIONS:
+            iteration += 1
+
+            # 2. 查询当前持仓
+            snapshot, _ = _fetch_position_snapshot_with_cache(
+                client=client,
+                token_id=token_id,
+                cache=None,
+                cache_ts=0.0,
+                log_errors=True,
+                force=True,
             )
-        except Exception as exc:
-            print(f"[EXIT] 清仓卖单失败: {exc}")
+            remaining_pos = snapshot[1] if snapshot else None
+
+            # 检查是否已清仓完成
+            if remaining_pos is None or remaining_pos <= DUST_THRESHOLD:
+                print(f"[EXIT] 清仓完成，剩余持仓={remaining_pos or 0:.4f}（低于尘埃阈值 {DUST_THRESHOLD}）")
+                break
+
+            print(f"[EXIT] 第 {iteration}/{MAX_ITERATIONS} 次清仓尝试，剩余持仓={remaining_pos:.4f}")
+
+            # 3. 获取最新价格（优先使用 WebSocket 缓存的价格）
+            exit_price = _latest_best_bid()
+            if exit_price is None:
+                exit_price = _latest_best_ask()
+            if exit_price is None:
+                exit_price = _latest_price()
+            if exit_price is None or exit_price <= 0:
+                # 回退到 API 查询
+                try:
+                    best_bid = _fetch_best_price(client, str(token_id), "bid")
+                    if best_bid is not None and best_bid.price and best_bid.price > 0:
+                        exit_price = float(best_bid.price)
+                    else:
+                        exit_price = MIN_PRICE
+                except Exception:
+                    exit_price = MIN_PRICE
+
+            # 4. 发出 IOC 卖单（允许部分成交）
+            try:
+                resp = _place_sell_ioc(
+                    client,
+                    token_id=token_id,
+                    price=exit_price,
+                    size=remaining_pos
+                )
+                print(
+                    f"[EXIT] 已发出 IOC 清仓卖单 size={remaining_pos:.4f} price={exit_price:.4f} resp={resp}"
+                )
+            except Exception as exc:
+                print(f"[EXIT] IOC 清仓卖单失败: {exc}")
+
+            # 5. 等待一段时间后再次检查
+            time.sleep(RETRY_INTERVAL_SEC)
+
+        # 最终状态检查
+        if iteration >= MAX_ITERATIONS:
+            final_snapshot, _ = _fetch_position_snapshot_with_cache(
+                client=client,
+                token_id=token_id,
+                cache=None,
+                cache_ts=0.0,
+                log_errors=True,
+                force=True,
+            )
+            final_pos = final_snapshot[1] if final_snapshot else 0
+            print(
+                f"[EXIT][WARN] 达到最大清仓次数 {MAX_ITERATIONS}，"
+                f"剩余持仓={final_pos:.4f}（可能需要人工处理）"
+            )
+
         strategy.stop("sell signal")
         stop_event.set()
 
