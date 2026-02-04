@@ -2138,6 +2138,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     print(f"[INIT] 卖出挂单模式：{sell_mode}")
 
     buy_threshold = _coerce_float(run_cfg.get("buy_price_threshold"))
+    max_buy_price = _coerce_float(run_cfg.get("max_buy_price"))
+    if max_buy_price is None:
+        max_buy_price = 0.98  # 默认买入价格上限 0.98
     drop_window = _coerce_float(run_cfg.get("drop_window_minutes")) or 10.0
     drop_pct = _normalize_ratio(run_cfg.get("drop_pct"), 0.05)
     profit_pct = _normalize_ratio(run_cfg.get("profit_pct"), 0.05)
@@ -2158,6 +2161,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         )
     else:
         print("[INIT] 未启用递增跌幅阈值，保持固定阈值运行。")
+
+    print(f"[INIT] 买入价格上限: {max_buy_price:.4f}（价格>=此值时不买入）")
 
     stagnation_window_minutes = _coerce_float(run_cfg.get("stagnation_window_minutes"))
     if stagnation_window_minutes is None:
@@ -2259,6 +2264,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     cfg = StrategyConfig(
         token_id=token_id,
         buy_price_threshold=buy_threshold,
+        max_buy_price=max_buy_price,
         drop_window_minutes=drop_window,
         drop_pct=drop_pct,
         profit_pct=profit_pct,
@@ -3776,6 +3782,24 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             _avg_px, total_pos, _origin = snapshot
             return total_pos
 
+        # 动态SELL超时：根据entry_price计算超时时间
+        # entry_price >= 0.95: 1小时, >= 0.90: 2小时, else: 4小时
+        dynamic_sell_timeout_sec = sell_inactive_timeout_sec  # 默认使用配置值
+        current_status = strategy.status()
+        current_entry_price = current_status.get("entry_price")
+        if current_entry_price is not None and sell_inactive_timeout_sec > 0:
+            if current_entry_price >= 0.95:
+                dynamic_sell_timeout_sec = min(sell_inactive_timeout_sec, 1.0 * 3600.0)  # 1小时
+            elif current_entry_price >= 0.90:
+                dynamic_sell_timeout_sec = min(sell_inactive_timeout_sec, 2.0 * 3600.0)  # 2小时
+            else:
+                dynamic_sell_timeout_sec = min(sell_inactive_timeout_sec, 4.0 * 3600.0)  # 4小时
+            if dynamic_sell_timeout_sec != sell_inactive_timeout_sec:
+                print(
+                    f"[SELL] 动态超时调整: entry_price={current_entry_price:.4f} -> "
+                    f"timeout={dynamic_sell_timeout_sec/3600.0:.1f}h (原配置: {sell_inactive_timeout_sec/3600.0:.1f}h)"
+                )
+
         try:
             sell_resp = maker_sell_follow_ask_with_floor_wait(
                 client=client,
@@ -3787,7 +3811,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 best_ask_fn=_latest_best_ask,
                 stop_check=stop_event.is_set,
                 sell_mode=sell_mode,
-                inactive_timeout_sec=sell_inactive_timeout_sec,
+                inactive_timeout_sec=dynamic_sell_timeout_sec,
                 progress_probe=_sell_progress_probe,
                 progress_probe_interval=60.0,
                 position_fetcher=_position_size_fetcher,
@@ -3824,7 +3848,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 "last_bid": float(snap.get("best_bid") or 0.0),
                 "last_ask": float(snap.get("best_ask") or 0.0),
                 "sell_floor_price": floor_price,
-                "inactive_timeout_hours": sell_inactive_timeout_sec / 3600.0,
+                "inactive_timeout_hours": dynamic_sell_timeout_sec / 3600.0,
             })
             strategy.stop("sell inactive release")
             stop_event.set()
