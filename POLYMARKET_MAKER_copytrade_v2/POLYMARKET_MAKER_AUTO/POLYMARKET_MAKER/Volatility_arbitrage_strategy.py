@@ -24,6 +24,7 @@ class ActionType(str, Enum):
 class StrategyConfig:
     token_id: str
     buy_price_threshold: Optional[float] = None        # 触发买入的目标价格（可选）
+    max_buy_price: Optional[float] = None              # 买入价格上限，超过此价格不买入（可选）
     profit_ratio: float = 0.05                        # 兼容旧字段，默认 5%
 
     # 新增参数：基于窗口的跌幅/涨幅监控
@@ -178,6 +179,10 @@ class VolArbStrategy:
 
         if not drop_trigger and not threshold_trigger:
             return None
+
+        # 买入价格上限检查：如果当前价格超过上限，不买入
+        if self.cfg.max_buy_price is not None and best_bid >= self.cfg.max_buy_price:
+            return None  # 价格过高，不买入
 
         reasons = []
         extra = {
