@@ -650,11 +650,13 @@ def maker_buy_follow_bid(
     progress_probe_interval: float = 60.0,
     price_dp: Optional[int] = None,
     external_fill_probe: Optional[Callable[[], Optional[float]]] = None,
+    max_buy_price: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Continuously maintain a maker buy order following the market bid."""
 
     # P0修复：函数入口日志，确认函数被调用
     print(f"[MAKER][BUY] 开始买入流程 -> target_size={target_size:.4f} poll_sec={poll_sec:.1f}s")
+    buy_price_cap = float(max_buy_price) if max_buy_price is not None else None
 
     goal_size = max(_ceil_to_dp(float(target_size), BUY_SIZE_DP), 0.0)
     api_min_qty = 0.0
@@ -902,6 +904,12 @@ def maker_buy_follow_bid(
             if bid <= 0:
                 sleep_fn(poll_sec)
                 continue
+            if buy_price_cap is not None and bid >= buy_price_cap - 1e-12:
+                print(
+                    f"[MAKER][BUY] 当前买一 {bid:.{price_dp_active}f} 已达到上限 {buy_price_cap:.{price_dp_active}f}，等待回落"
+                )
+                sleep_fn(poll_sec)
+                continue
             _maybe_update_price_dp(bid_info.decimals)
             px = _round_up_to_dp(bid, price_dp_active)
             if px <= 0:
@@ -1095,7 +1103,12 @@ def maker_buy_follow_bid(
                 final_status = "FILLED_TRUNCATED" if filled_total > _MIN_FILL_EPS else "SKIPPED_TOO_SMALL"
             break
 
-        if current_bid is not None and active_price is not None and current_bid >= active_price + tick - 1e-12:
+        if (
+            current_bid is not None
+            and active_price is not None
+            and (buy_price_cap is None or current_bid < buy_price_cap - 1e-12)
+            and current_bid >= active_price + tick - 1e-12
+        ):
             print(
                 f"[MAKER][BUY] 买一上行 -> 撤单重挂 | old={active_price:.{price_dp_active}f} new={current_bid:.{price_dp_active}f}"
             )

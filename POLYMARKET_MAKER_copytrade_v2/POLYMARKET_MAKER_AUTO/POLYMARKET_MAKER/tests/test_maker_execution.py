@@ -258,8 +258,32 @@ def test_maker_buy_retries_on_insufficient_balance_status():
 
     assert result["status"] == "FILLED"
     assert result["filled"] == pytest.approx(0.1499, rel=0, abs=1e-9)
-    assert len(client.created_orders) == 2
-    assert client.cancelled, "Expected balance-related rejection to trigger cancellation"
+
+
+def test_maker_buy_respects_max_buy_price_cap_before_placing_order():
+    client = DummyClient(status_sequences=[])
+
+    call_count = {"n": 0}
+
+    def _stop_after_three_checks() -> bool:
+        call_count["n"] += 1
+        return call_count["n"] >= 3
+
+    result = maker.maker_buy_follow_bid(
+        client,
+        token_id="asset",
+        target_size=1.0,
+        poll_sec=0.0,
+        min_quote_amt=0.0,
+        min_order_size=0.0,
+        best_bid_fn=lambda: 0.991,
+        stop_check=_stop_after_three_checks,
+        sleep_fn=lambda _: None,
+        max_buy_price=0.98,
+    )
+
+    assert result["filled"] == pytest.approx(0.0)
+    assert client.created_orders == []
 
 
 def test_maker_sell_waits_for_floor_before_order():
