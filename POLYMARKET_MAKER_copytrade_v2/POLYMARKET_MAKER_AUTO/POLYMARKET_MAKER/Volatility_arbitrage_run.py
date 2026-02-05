@@ -4665,6 +4665,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         client=client,
                         token_id=token_id,
                         target_size=order_size,
+                        max_buy_price=max_buy_price,
                         poll_sec=maker_poll_sec,
                         min_quote_amt=1.0,
                         min_order_size=API_MIN_ORDER_SIZE,
