@@ -677,6 +677,9 @@ class AutoRunManager:
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
         self._position_address_warned: bool = False
+        # WS 健康分层清理状态
+        self._ws_recent_recovery_ts: Dict[str, float] = {}
+        self._ws_prev_stale_state: Dict[str, bool] = {}
         # 日志清理相关（每天清理7天前的日志）
         self._next_log_cleanup: float = 0.0
         self._log_cleanup_interval_sec: float = 3600.0  # 每小时检查一次
@@ -1309,11 +1312,13 @@ class AutoRunManager:
 
             # 分级阈值检查（秒）
             THRESHOLD_WARNING = 1800  # 30分钟 - 警告
-            THRESHOLD_CLEANUP = 3600  # 60分钟 - 清理
+            THRESHOLD_CLEANUP_DEFAULT = 1800  # 默认30分钟清理
+            THRESHOLD_CLEANUP_EXTENDED = 3600  # 白名单续命后60分钟清理
+            RECOVERY_GRACE_WINDOW = 1800  # 最近30分钟内有恢复信号可续命
 
             now = time.time()
             warning_tokens = []  # 30分钟未更新
-            cleanup_tokens = []  # 60分钟未更新或市场已关闭
+            cleanup_tokens = []  # 达到清理阈值（默认30分钟，恢复白名单可至60分钟）或市场已关闭
             closed_market_tokens = []  # 市场已关闭
 
             for token_id, data in list(self._ws_cache.items()):
@@ -1327,11 +1332,24 @@ class AutoRunManager:
                     or data.get("closed")
                 )
 
+                was_stale = self._ws_prev_stale_state.get(token_id, False)
+                is_stale_now = age > THRESHOLD_WARNING
+                if was_stale and not is_stale_now:
+                    self._ws_recent_recovery_ts[token_id] = now
+                self._ws_prev_stale_state[token_id] = is_stale_now
+
+                recent_recovery_ts = self._ws_recent_recovery_ts.get(token_id, 0.0)
+                has_recent_recovery = recent_recovery_ts > 0 and (now - recent_recovery_ts) <= RECOVERY_GRACE_WINDOW
+                cleanup_threshold = THRESHOLD_CLEANUP_EXTENDED if has_recent_recovery else THRESHOLD_CLEANUP_DEFAULT
+
                 if is_closed:
                     closed_market_tokens.append((token_id, age))
                     cleanup_tokens.append((token_id, age, "市场已关闭"))
-                elif age > THRESHOLD_CLEANUP:
-                    cleanup_tokens.append((token_id, age, f"{age/60:.0f}分钟无更新"))
+                elif age > cleanup_threshold:
+                    if has_recent_recovery:
+                        cleanup_tokens.append((token_id, age, f"{age/60:.0f}分钟无更新（恢复白名单已续命至60分钟）"))
+                    else:
+                        cleanup_tokens.append((token_id, age, f"{age/60:.0f}分钟无更新"))
                 elif age > THRESHOLD_WARNING:
                     warning_tokens.append((token_id, age))
 
@@ -1339,6 +1357,8 @@ class AutoRunManager:
             if cleanup_tokens:
                 for token_id, age, reason in cleanup_tokens:
                     del self._ws_cache[token_id]
+                    self._ws_prev_stale_state.pop(token_id, None)
+                    self._ws_recent_recovery_ts.pop(token_id, None)
                     # 记录到日志
                     _log_error("TOKEN_CLEANUP", {
                         "token_id": token_id,
@@ -1356,7 +1376,7 @@ class AutoRunManager:
                 self._last_warning_log = 0
 
             if warning_tokens and (now - self._last_warning_log >= 60):
-                print(f"[HEALTH] {len(warning_tokens)} 个token数据超过30分钟未更新（将在60分钟后清理）")
+                print(f"[HEALTH] {len(warning_tokens)} 个token数据超过30分钟未更新（默认30分钟清理，最近恢复信号可续命至60分钟）")
                 # 只显示前2个
                 for token_id, age in warning_tokens[:2]:
                     print(f"  - {token_id[:20]}...: {age/60:.0f}分钟前")
