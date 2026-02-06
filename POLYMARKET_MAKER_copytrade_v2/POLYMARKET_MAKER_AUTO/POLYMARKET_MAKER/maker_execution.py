@@ -1355,9 +1355,12 @@ def maker_sell_follow_ask_with_floor_wait(
                     if live_target > goal_cap:
                         goal_cap = live_target
                     reserved = _active_reserved_size()
-                    adjusted_target = (
-                        live_target + reserved if reserved > _MIN_FILL_EPS else live_target
-                    )
+                    # 仅在仓位上行/持平时把当前挂单的未成交量纳入目标，
+                    # 避免仓位下行（例如仓位被外部卖出后变为0）时被reserved“锁住”无法收缩。
+                    if reserved > _MIN_FILL_EPS and live_target + _MIN_FILL_EPS >= goal_size:
+                        adjusted_target = live_target + reserved
+                    else:
+                        adjusted_target = live_target
                     min_goal = max(filled_total, 0.0)
                     new_goal = _apply_goal_cap(max(adjusted_target, min_goal))
                     # 如果已锁定缩减目标，则只允许进一步缩减，不允许扩回
