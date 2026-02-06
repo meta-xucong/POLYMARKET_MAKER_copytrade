@@ -197,10 +197,10 @@ CLOB_API_HOST = "https://clob.polymarket.com"
 GAMMA_ROOT = os.getenv("POLY_GAMMA_ROOT", "https://gamma-api.polymarket.com")
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 API_MIN_ORDER_SIZE = 5.0
-# P0修复：将过期阈值从5秒放宽到30秒
+# P0修复：将过期阈值从5秒放宽到60秒
 # 原因：5秒太严格，导致从主循环到买入流程之间的正常延迟就会让快照过期
-# 30秒足够容忍正常的处理延迟，同时仍能及时检测到真正的数据陈旧
-ORDERBOOK_STALE_AFTER_SEC = 30.0
+# 60秒容忍短时抖动与API延迟，降低噪声，同时保持陈旧数据检测能力
+ORDERBOOK_STALE_AFTER_SEC = 60.0
 POSITION_SYNC_INTERVAL = 60.0
 POST_BUY_POSITION_CHECK_DELAY = 60.0
 POST_BUY_POSITION_CHECK_ATTEMPTS = 5
@@ -2188,7 +2188,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         no_event_exit_minutes = 10.0
     signal_timeout_minutes = _coerce_float(run_cfg.get("signal_timeout_minutes"))
     if signal_timeout_minutes is None:
-        signal_timeout_minutes = 60.0
+        signal_timeout_minutes = 30.0
     if stagnation_window_minutes <= 0:
         print("[INIT] 价格停滞监控已禁用。")
     else:

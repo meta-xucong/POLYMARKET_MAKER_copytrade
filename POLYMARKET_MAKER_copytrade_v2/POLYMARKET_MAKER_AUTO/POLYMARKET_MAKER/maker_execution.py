@@ -62,6 +62,9 @@ _BACKOFF_MAX_LEVEL = 5  # 2^5 = 32s, 之后固定60s
 _api_backoff_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
 _orderbook_404_state: Dict[str, Dict[str, Any]] = {}
 _ORDERBOOK_404_MAX_CONSECUTIVE = 5
+# WebSocket 返回 None 连续计数（token_id, side）
+_ws_none_streak: Dict[Tuple[str, str], int] = {}
+_WS_NONE_DEGRADE_THRESHOLD = 3
 
 
 class OrderbookNotFoundError(RuntimeError):
@@ -382,6 +385,7 @@ def _best_price_info(
     side: str,
 ) -> Optional[PriceSample]:
     if best_fn is not None:
+        streak_key = (token_id, side)
         try:
             val = best_fn()
         except Exception as e:
@@ -389,11 +393,24 @@ def _best_price_info(
             print(f"[DIAG][WS] WebSocket {side} 回调异常: {e}")
             val = None
         if val is not None and val > 0:
+            _ws_none_streak[streak_key] = 0
             return PriceSample(float(val), _infer_price_decimals(val))
         # P0诊断：记录为什么WebSocket数据不可用
         if val is None:
-            print(f"[DIAG][WS] WebSocket {side} 返回 None（可能原因：快照过期或数据缺失）")
+            streak = _ws_none_streak.get(streak_key, 0) + 1
+            _ws_none_streak[streak_key] = streak
+            if streak < _WS_NONE_DEGRADE_THRESHOLD:
+                print(
+                    f"[DIAG][WS] WebSocket {side} 返回 None（连续 {streak}/{_WS_NONE_DEGRADE_THRESHOLD}），"
+                    "暂不降级，继续等待WS恢复"
+                )
+                return None
+            print(
+                f"[DIAG][WS] WebSocket {side} 返回 None（连续 {streak} 次）"
+                "，触发降级：回退 REST API"
+            )
         elif val <= 0:
+            _ws_none_streak[streak_key] = 0
             print(f"[DIAG][WS] WebSocket {side} 值无效: {val}")
     return _fetch_best_price(client, token_id, side)
 
