@@ -1463,9 +1463,22 @@ class AutoRunManager:
         self._update_log_excerpt(task)
 
         # 如果是因 sell signal 退出（包括运行中收到信号和 exit-only cleanup），
-        # 记录到已完成集合，防止重复触发清仓
+        # 仅在子进程退出码为 0 时标记“清仓完成”；
+        # 非 0 视作异常，自动补排一次 exit-only cleanup，避免漏清仓。
         if task.end_reason in ("sell signal", "sell signal cleanup"):
-            self._completed_exit_cleanup_tokens.add(task.topic_id)
+            if rc == 0:
+                self._completed_exit_cleanup_tokens.add(task.topic_id)
+            else:
+                self._completed_exit_cleanup_tokens.discard(task.topic_id)
+                if (
+                    task.topic_id not in self.pending_exit_topics
+                    and task.topic_id not in self.pending_topics
+                ):
+                    self.pending_exit_topics.append(task.topic_id)
+                print(
+                    "[COPYTRADE][WARN] sell 清仓进程异常退出，已补排 exit-only cleanup: "
+                    f"token_id={task.topic_id} rc={rc}"
+                )
             # 从 handled_topics 移除，允许后续 copytrade 再次发出买入信号时重新交易
             self._remove_from_handled_topics(task.topic_id)
 
@@ -2043,8 +2056,9 @@ class AutoRunManager:
         self._update_handled_topics([topic_id])
         # 启动成功后，从回填标记中移除（允许后续再次回填）
         self._refilled_tokens.discard(topic_id)
-        # 从已完成清仓集合中移除，确保新一轮交易的 sell 信号能被正常处理
+        # 从 sell 清仓状态中移除，确保新一轮交易的 sell 信号能被正常处理
         self._completed_exit_cleanup_tokens.discard(topic_id)
+        self._handled_sell_signals.discard(topic_id)
         # 检查是否是回填启动。
         # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
         detail = self.topic_details.get(topic_id) or {}
@@ -2853,10 +2867,12 @@ class AutoRunManager:
     def _apply_sell_signals(self, sell_signals: set[str]) -> None:
         if not sell_signals:
             return
+        # 仅保留当前仍在 sell 文件中的处理记录，
+        # 当上游移除并再次写入同一 token 时，允许新一轮 sell 信号重新触发。
+        self._handled_sell_signals.intersection_update(sell_signals)
         new_signals = sell_signals - self._handled_sell_signals
         if not new_signals:
             return
-        self._handled_sell_signals.update(new_signals)
         for token_id in new_signals:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
@@ -2866,10 +2882,12 @@ class AutoRunManager:
             # 方式1: task 对象仍存在且标记为 sell signal cleanup
             # 方式2: token 已记录在 _completed_exit_cleanup_tokens 集合中（task 被 purge 后仍有效）
             if token_id in self._completed_exit_cleanup_tokens:
+                self._handled_sell_signals.add(token_id)
                 continue
             if task and not has_running_task and task.end_reason == "sell signal cleanup":
                 # 已经完成过清仓，不再重复添加到 pending_exit_topics
                 self._completed_exit_cleanup_tokens.add(token_id)  # 同步到集合
+                self._handled_sell_signals.add(token_id)
                 continue
 
             if not has_running_task and not has_history:
@@ -2878,6 +2896,7 @@ class AutoRunManager:
                         "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
                         f"token_id={token_id}"
                     )
+                    # 保持信号未处理状态，后续轮询继续检查，避免因短时接口失败/缓存抖动漏掉清仓。
                     continue
                 print(
                     "[COPYTRADE] SELL 信号触发持仓清仓: "
@@ -2896,6 +2915,7 @@ class AutoRunManager:
                     and token_id not in self.pending_topics
                 ):
                     self.pending_exit_topics.append(token_id)
+            self._handled_sell_signals.add(token_id)
 
     def _cleanup_old_logs(self) -> None:
         """清理7天前的日志文件，每天只执行一次"""
@@ -3097,6 +3117,18 @@ class AutoRunManager:
                 continue
             self.pending_exit_topics.append(topic_id)
 
+        handled_sell_signals = payload.get("handled_sell_signals") or []
+        self._handled_sell_signals = {
+            str(token_id) for token_id in handled_sell_signals if str(token_id).strip()
+        }
+
+        completed_exit_cleanup_tokens = payload.get("completed_exit_cleanup_tokens") or []
+        self._completed_exit_cleanup_tokens = {
+            str(token_id)
+            for token_id in completed_exit_cleanup_tokens
+            if str(token_id).strip()
+        }
+
     def _dump_runtime_status(self) -> None:
         payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -3104,6 +3136,10 @@ class AutoRunManager:
             "handled_topics": sorted(self.handled_topics),
             "pending_topics": list(self.pending_topics),
             "pending_exit_topics": list(self.pending_exit_topics),
+            "handled_sell_signals": sorted(self._handled_sell_signals),
+            "completed_exit_cleanup_tokens": sorted(
+                self._completed_exit_cleanup_tokens
+            ),
             "tasks": {},
         }
         for topic_id, task in self.tasks.items():
