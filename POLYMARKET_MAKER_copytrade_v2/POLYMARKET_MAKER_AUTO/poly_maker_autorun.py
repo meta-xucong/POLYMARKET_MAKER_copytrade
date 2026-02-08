@@ -67,10 +67,10 @@ DEFAULT_GLOBAL_CONFIG = {
     "pending_soft_eviction_minutes": 60.0,
     "pending_soft_eviction_check_interval_sec": 300.0,
     # Shared WS 等待配置
-    "shared_ws_wait_timeout_sec": 20.0,
+    "shared_ws_max_pending_wait_sec": 180.0,
     "shared_ws_wait_poll_sec": 0.5,
-    "shared_ws_wait_failures_before_pause": 3,
-    "shared_ws_wait_pause_minutes": 5.0,
+    "shared_ws_wait_failures_before_pause": 5,
+    "shared_ws_wait_pause_minutes": 3.0,
 }
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
@@ -411,8 +411,8 @@ class GlobalConfig:
     )
     ws_debug_raw: bool = bool(DEFAULT_GLOBAL_CONFIG["ws_debug_raw"])
     # Shared WS 等待配置
-    shared_ws_wait_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
-        "shared_ws_wait_timeout_sec"
+    shared_ws_max_pending_wait_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_max_pending_wait_sec"
     ]
     shared_ws_wait_poll_sec: float = DEFAULT_GLOBAL_CONFIG["shared_ws_wait_poll_sec"]
     shared_ws_wait_failures_before_pause: int = DEFAULT_GLOBAL_CONFIG[
@@ -532,10 +532,13 @@ class GlobalConfig:
                 or debug.get("ws_raw")
                 or merged.get("ws_debug_raw", cls.ws_debug_raw)
             ),
-            shared_ws_wait_timeout_sec=float(
+            shared_ws_max_pending_wait_sec=float(
                 merged.get(
-                    "shared_ws_wait_timeout_sec",
-                    cls.shared_ws_wait_timeout_sec,
+                    "shared_ws_max_pending_wait_sec",
+                    merged.get(
+                        "shared_ws_wait_timeout_sec",
+                        cls.shared_ws_max_pending_wait_sec,
+                    ),
                 )
             ),
             shared_ws_wait_poll_sec=float(
@@ -669,6 +672,7 @@ class AutoRunManager:
         self._shared_ws_wait_failures: Dict[str, int] = {}
         self._shared_ws_paused_until: Dict[str, float] = {}
         self._pending_first_seen: Dict[str, float] = {}
+        self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
@@ -1556,14 +1560,54 @@ class AutoRunManager:
             if self._check_market_closed_before_start(topic_id):
                 checks_remaining -= 1
                 continue
+            if topic_id in self.tasks and self.tasks[topic_id].is_running():
+                checks_remaining -= 1
+                continue
+
             paused_until = self._shared_ws_paused_until.get(topic_id)
             if paused_until and now < paused_until:
                 self._enqueue_pending_topic(topic_id)
                 checks_remaining -= 1
                 continue
-            if topic_id in self.tasks and self.tasks[topic_id].is_running():
+
+            with self._ws_cache_lock:
+                cached = self._ws_cache.get(topic_id)
+            if not cached:
+                pending_since = self._shared_ws_pending_since.setdefault(topic_id, now)
+                waited = now - pending_since
+                max_wait = max(1.0, float(self.config.shared_ws_max_pending_wait_sec))
+                if waited >= max_wait:
+                    failures = self._shared_ws_wait_failures.get(topic_id, 0) + 1
+                    self._shared_ws_wait_failures[topic_id] = failures
+                    self._shared_ws_pending_since[topic_id] = now
+                    max_failures = max(
+                        1, int(self.config.shared_ws_wait_failures_before_pause)
+                    )
+                    print(
+                        f"[WS][WAIT] topic={topic_id[:8]}... 等待WS缓存"
+                        f" {max_wait:.0f}s超时 ({failures}/{max_failures})"
+                    )
+                    if failures >= max_failures:
+                        pause_seconds = max(
+                            60.0, float(self.config.shared_ws_wait_pause_minutes) * 60.0
+                        )
+                        self._shared_ws_paused_until[topic_id] = now + pause_seconds
+                        self._shared_ws_wait_failures[topic_id] = 0
+                        print(
+                            f"[WS][PAUSE] topic={topic_id[:8]}... 暂停 {pause_seconds:.0f}s"
+                        )
+                self._enqueue_pending_topic(topic_id)
                 checks_remaining -= 1
                 continue
+            if topic_id in self._shared_ws_pending_since:
+                waited = now - self._shared_ws_pending_since.pop(topic_id)
+                self._shared_ws_wait_failures[topic_id] = 0
+                self._shared_ws_paused_until.pop(topic_id, None)
+                print(
+                    f"[WS][READY] topic={topic_id[:8]}... 缓存就绪"
+                    f" (等待了 {waited:.1f}s)"
+                )
+
             try:
                 started = self._start_topic_process(topic_id)
             except Exception as exc:  # pragma: no cover - 防御性保护
@@ -1580,6 +1624,7 @@ class AutoRunManager:
                 # 启动失败时重新入队，避免话题被遗忘
                 self._enqueue_pending_topic(topic_id)
             elif started:
+                self._shared_ws_pending_since.pop(topic_id, None)
                 self._next_topic_start_at = now + max(
                     0.0, float(self.config.topic_start_cooldown_sec)
                 )
@@ -1617,6 +1662,7 @@ class AutoRunManager:
         self._pending_first_seen.pop(topic_id, None)
         self._shared_ws_wait_failures.pop(topic_id, None)
         self._shared_ws_paused_until.pop(topic_id, None)
+        self._shared_ws_pending_since.pop(topic_id, None)
 
     def _append_exit_token_record(
         self,
@@ -1817,7 +1863,7 @@ class AutoRunManager:
         返回 True 表示共享缓存已就绪，False 表示超时或停止事件触发。
         """
         timeout_sec = (
-            self.config.shared_ws_wait_timeout_sec
+            self.config.shared_ws_max_pending_wait_sec
             if timeout_sec is None
             else timeout_sec
         )
@@ -1877,58 +1923,15 @@ class AutoRunManager:
             self._debug_shared_ws_check = True
             self._first_child_started = True
 
-        # NO_DATA_TIMEOUT 回填的 token 本身就因为市场无数据而退出，
-        # WS 聚合器大概率也没有该 token 的缓存数据。
-        # 跳过 WS 等待（避免 20s 阻塞），直接启动子进程（不使用共享 WS）。
-        refill_exit_reason = self.topic_details.get(topic_id, {}).get(
-            "refill_exit_reason"
-        )
-        skip_ws_wait = refill_exit_reason == "NO_DATA_TIMEOUT"
-
-        if skip_ws_wait:
-            # 清除该 topic 之前的 WS 失败/暂停状态
-            self._shared_ws_wait_failures.pop(topic_id, None)
-            self._shared_ws_paused_until.pop(topic_id, None)
-            should_use_shared = False
+        with self._ws_cache_lock:
+            cached = self._ws_cache.get(topic_id)
+        if not cached:
             print(
-                f"[WS][SKIP] topic={topic_id[:8]}... "
-                f"NO_DATA_TIMEOUT回填，跳过WS等待，独立WS模式启动"
+                f"[WS][WAIT] topic={topic_id[:8]}... 缓存未就绪，启动跳过（等待调度重试）"
             )
-        else:
-            paused_until = self._shared_ws_paused_until.get(topic_id)
-            now = time.time()
-            if paused_until and now < paused_until:
-                remaining = paused_until - now
-                print(
-                    f"[WS][PAUSE] topic={topic_id[:8]}... 等待共享WS冷却 "
-                    f"{remaining:.0f}s 后再尝试"
-                )
-                return False
+            return False
 
-            if not self._wait_for_shared_ws_ready(topic_id):
-                failures = self._shared_ws_wait_failures.get(topic_id, 0) + 1
-                self._shared_ws_wait_failures[topic_id] = failures
-                max_failures = max(1, int(self.config.shared_ws_wait_failures_before_pause))
-                if failures >= max_failures:
-                    pause_seconds = max(
-                        60.0, float(self.config.shared_ws_wait_pause_minutes) * 60.0
-                    )
-                    self._shared_ws_paused_until[topic_id] = time.time() + pause_seconds
-                    self._shared_ws_wait_failures[topic_id] = 0
-                    print(
-                        f"[WS][WAIT] topic={topic_id[:8]}... 共享WS连续未就绪 "
-                        f"{max_failures} 次，暂停 {pause_seconds:.0f}s"
-                    )
-                else:
-                    print(
-                        f"[WS][WAIT] topic={topic_id[:8]}... 缓存未就绪，"
-                        f"等待重试 ({failures}/{max_failures})"
-                    )
-                print(
-                    f"[WS][WAIT] topic={topic_id[:8]}... 缓存未就绪，稍后重试"
-                )
-                return False
-            should_use_shared = self._should_use_shared_ws()
+        should_use_shared = True
 
         # 禁用调试输出（避免刷屏）
         if hasattr(self, '_debug_shared_ws_check'):
@@ -1938,9 +1941,6 @@ class AutoRunManager:
             # 通过命令行参数传递共享缓存路径
             cmd.append(f"--shared-ws-cache={self._ws_cache_path}")
             print(f"[WS][CHILD] topic={topic_id[:8]}... → 共享 WS 模式 ✓")
-        else:
-            self._shared_ws_wait_failures[topic_id] = 0
-            print(f"[WS][CHILD] topic={topic_id[:8]}... → 独立 WS 模式 ✗")
 
         proc: Optional[subprocess.Popen] = None
         attempts = max(1, int(self.config.process_start_retries))
@@ -2034,12 +2034,9 @@ class AutoRunManager:
             str(cfg_path),
         ]
 
-        # 清仓进程总是尝试使用共享缓存（如果可用）
-        if self._should_use_shared_ws():
-            cmd.append(f"--shared-ws-cache={self._ws_cache_path}")
-            print(f"[WS] 清仓进程将使用共享 WS 模式")
-        else:
-            print(f"[WS] 清仓进程将使用独立 WS 模式")
+        # 清仓进程固定使用共享缓存路径（不启用独立 WS 模式）
+        cmd.append(f"--shared-ws-cache={self._ws_cache_path}")
+        print(f"[WS] 清仓进程将使用共享 WS 模式")
 
         env = os.environ.copy()
         try:
