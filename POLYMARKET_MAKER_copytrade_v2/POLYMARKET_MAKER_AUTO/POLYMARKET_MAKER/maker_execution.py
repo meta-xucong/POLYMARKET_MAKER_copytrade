@@ -65,12 +65,36 @@ _ORDERBOOK_404_MAX_CONSECUTIVE = 5
 # WebSocket 返回 None 连续计数（token_id, side）
 _ws_none_streak: Dict[Tuple[str, str], int] = {}
 _WS_NONE_DEGRADE_THRESHOLD = 3
+# 最终价格（WS + REST）连续 None 的计数与阈值
+_price_none_streak: Dict[Tuple[str, str], int] = {}
+_PRICE_NONE_EXIT_THRESHOLD = 0  # 0 表示禁用
 
 
 class OrderbookNotFoundError(RuntimeError):
     def __init__(self, token_id: str, message: str) -> None:
         super().__init__(message)
         self.token_id = token_id
+
+
+class PriceNoneStreakError(RuntimeError):
+    def __init__(self, token_id: str, side: str, streak: int) -> None:
+        super().__init__(
+            f"token {token_id} {side} 价格连续 {streak} 次为None（WS+REST）"
+        )
+        self.token_id = token_id
+        self.side = side
+        self.streak = streak
+
+
+def set_price_none_exit_threshold(threshold: Optional[int]) -> None:
+    """设置连续价格 None 退出阈值（<=0 关闭）。"""
+    global _PRICE_NONE_EXIT_THRESHOLD
+    try:
+        value = int(threshold) if threshold is not None else 0
+    except (TypeError, ValueError):
+        value = 0
+    _PRICE_NONE_EXIT_THRESHOLD = max(0, value)
+    _price_none_streak.clear()
 
 
 def _is_orderbook_not_found_error(err: Exception) -> bool:
@@ -394,6 +418,7 @@ def _best_price_info(
             val = None
         if val is not None and val > 0:
             _ws_none_streak[streak_key] = 0
+            _price_none_streak[streak_key] = 0
             return PriceSample(float(val), _infer_price_decimals(val))
         # P0诊断：记录为什么WebSocket数据不可用
         if val is None:
@@ -412,7 +437,21 @@ def _best_price_info(
         elif val <= 0:
             _ws_none_streak[streak_key] = 0
             print(f"[DIAG][WS] WebSocket {side} 值无效: {val}")
-    return _fetch_best_price(client, token_id, side)
+    result = _fetch_best_price(client, token_id, side)
+    streak_key = (token_id, side)
+    if result is not None:
+        _price_none_streak[streak_key] = 0
+        return result
+
+    streak = _price_none_streak.get(streak_key, 0) + 1
+    _price_none_streak[streak_key] = streak
+    if streak == 1 or streak % 20 == 0:
+        print(f"[DIAG][PRICE] {side} 最终价格为None（WS+REST）连续 {streak} 次")
+
+    if _PRICE_NONE_EXIT_THRESHOLD > 0 and streak >= _PRICE_NONE_EXIT_THRESHOLD:
+        raise PriceNoneStreakError(token_id, side, streak)
+
+    return None
 
 
 def _best_bid(
