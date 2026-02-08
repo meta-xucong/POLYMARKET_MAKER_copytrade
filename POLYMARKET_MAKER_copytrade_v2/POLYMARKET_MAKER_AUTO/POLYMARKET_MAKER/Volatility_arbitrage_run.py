@@ -2439,6 +2439,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 f"[EXIT][WARN] 达到最大清仓次数 {MAX_ITERATIONS}，"
                 f"剩余持仓={final_pos:.4f}（可能需要人工处理）"
             )
+            if (final_pos or 0.0) > DUST_THRESHOLD:
+                raise RuntimeError(
+                    f"exit-only cleanup 未完成，remaining={float(final_pos):.6f}"
+                )
 
         strategy.stop("sell signal")
         stop_event.set()

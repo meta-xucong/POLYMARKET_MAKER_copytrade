@@ -81,6 +81,8 @@ SHARED_WS_WAIT_ESCALATION_MIN_FAILURES = 2
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 POSITION_CHECK_CACHE_TTL_SEC = 300.0
+POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 10.0
+POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 DATA_API_RATE_LIMIT_SEC = 1.0
 _data_api_last_request_ts = 0.0
 _data_api_request_lock = threading.Lock()
@@ -2833,8 +2835,15 @@ class AutoRunManager:
             return False
         now = time.time()
         cached = self._position_snapshot_cache.get(token_id)
-        if cached and now - cached.get("ts", 0.0) <= POSITION_CHECK_CACHE_TTL_SEC:
-            return bool(cached.get("has_position", False))
+        if cached:
+            cached_has_position = bool(cached.get("has_position", False))
+            ttl = (
+                POSITION_CHECK_CACHE_TTL_SEC
+                if cached_has_position
+                else POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC
+            )
+            if now - cached.get("ts", 0.0) <= ttl:
+                return cached_has_position
 
         if not self._position_address:
             address, origin = _resolve_position_address_from_env()
@@ -2855,12 +2864,14 @@ class AutoRunManager:
             self._position_address,
             token_id,
         )
-        has_position = bool(pos_size and pos_size > 0)
+        normalized_pos_size = float(pos_size or 0.0)
+        has_position = normalized_pos_size > POSITION_CLEANUP_DUST_THRESHOLD
         if info != "ok" and not has_position:
             print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={info}")
         self._position_snapshot_cache[token_id] = {
             "ts": now,
             "has_position": has_position,
+            "pos_size": normalized_pos_size,
         }
         return has_position
 
