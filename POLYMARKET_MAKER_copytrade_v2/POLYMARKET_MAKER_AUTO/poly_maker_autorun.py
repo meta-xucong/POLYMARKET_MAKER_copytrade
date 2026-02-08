@@ -1994,10 +1994,11 @@ class AutoRunManager:
         # 回填启动时保留计数，确保 NO_DATA_TIMEOUT 的重试限制生效
         if not is_refill_start:
             self._refill_retry_counts.pop(topic_id, None)
-        # 清理 topic_details 中的 resume_state（已被使用）
+        # 清理 topic_details 中的回填状态（已被使用）
         if topic_id in self.topic_details:
             self.topic_details[topic_id].pop("resume_state", None)
             self.topic_details[topic_id].pop("refill_retry_count", None)
+            self.topic_details[topic_id].pop("refill_exit_reason", None)
         print(f"[START] topic={topic_id} pid={proc.pid} log={log_path}")
         return True
 
