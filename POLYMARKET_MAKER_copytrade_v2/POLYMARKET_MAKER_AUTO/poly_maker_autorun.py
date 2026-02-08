@@ -64,17 +64,18 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_check_interval_sec": 60.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
     "enable_pending_soft_eviction": True,
-    "pending_soft_eviction_minutes": 60.0,
+    "pending_soft_eviction_minutes": 12.0,
     "pending_soft_eviction_check_interval_sec": 300.0,
     # Shared WS 等待配置
-    "shared_ws_max_pending_wait_sec": 180.0,
+    "shared_ws_max_pending_wait_sec": 45.0,
     "shared_ws_wait_poll_sec": 0.5,
-    "shared_ws_wait_failures_before_pause": 5,
-    "shared_ws_wait_pause_minutes": 3.0,
-    # 防抖保护：仅在短窗口内连续等待超时过多才触发pause
-    "shared_ws_wait_escalation_window_sec": 240.0,
-    "shared_ws_wait_escalation_min_failures": 2,
+    "shared_ws_wait_failures_before_pause": 2,
+    "shared_ws_wait_pause_minutes": 1.0,
 }
+
+# Shared WS 等待防抖参数（写死，避免依赖外部 JSON）
+SHARED_WS_WAIT_ESCALATION_WINDOW_SEC = 240.0
+SHARED_WS_WAIT_ESCALATION_MIN_FAILURES = 2
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 POSITION_CHECK_CACHE_TTL_SEC = 300.0
@@ -1612,11 +1613,11 @@ class AutoRunManager:
 
                     escalation_window = max(
                         max_wait,
-                        float(self.config.shared_ws_wait_escalation_window_sec),
+                        SHARED_WS_WAIT_ESCALATION_WINDOW_SEC,
                     )
                     min_escalation_failures = max(
                         1,
-                        int(self.config.shared_ws_wait_escalation_min_failures),
+                        SHARED_WS_WAIT_ESCALATION_MIN_FAILURES,
                     )
                     timeout_events = self._shared_ws_wait_timeout_events.get(topic_id, [])
                     timeout_events = [

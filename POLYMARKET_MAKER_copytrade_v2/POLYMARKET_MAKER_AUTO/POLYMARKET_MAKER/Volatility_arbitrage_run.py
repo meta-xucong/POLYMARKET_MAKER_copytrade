@@ -203,6 +203,8 @@ API_MIN_ORDER_SIZE = 5.0
 # 原因：5秒太严格，导致从主循环到买入流程之间的正常延迟就会让快照过期
 # 60秒容忍短时抖动与API延迟，降低噪声，同时保持陈旧数据检测能力
 ORDERBOOK_STALE_AFTER_SEC = 60.0
+# WS+REST 最终价格连续 None 的硬编码退出阈值（0=禁用）
+PRICE_NONE_EXIT_COUNT = 100
 POSITION_SYNC_INTERVAL = 60.0
 POST_BUY_POSITION_CHECK_DELAY = 60.0
 POST_BUY_POSITION_CHECK_ATTEMPTS = 5
@@ -2191,10 +2193,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     signal_timeout_minutes = _coerce_float(run_cfg.get("signal_timeout_minutes"))
     if signal_timeout_minutes is None:
         signal_timeout_minutes = 30.0
-    price_none_exit_count = _coerce_float(run_cfg.get("price_none_exit_count"))
-    if price_none_exit_count is None:
-        price_none_exit_count = 100.0
-    price_none_exit_count = max(0, int(price_none_exit_count))
+    price_none_exit_count = max(0, int(PRICE_NONE_EXIT_COUNT))
     set_price_none_exit_threshold(price_none_exit_count)
     if stagnation_window_minutes <= 0:
         print("[INIT] 价格停滞监控已禁用。")
