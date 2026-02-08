@@ -1463,9 +1463,22 @@ class AutoRunManager:
         self._update_log_excerpt(task)
 
         # 如果是因 sell signal 退出（包括运行中收到信号和 exit-only cleanup），
-        # 记录到已完成集合，防止重复触发清仓
+        # 仅在子进程退出码为 0 时标记“清仓完成”；
+        # 非 0 视作异常，自动补排一次 exit-only cleanup，避免漏清仓。
         if task.end_reason in ("sell signal", "sell signal cleanup"):
-            self._completed_exit_cleanup_tokens.add(task.topic_id)
+            if rc == 0:
+                self._completed_exit_cleanup_tokens.add(task.topic_id)
+            else:
+                self._completed_exit_cleanup_tokens.discard(task.topic_id)
+                if (
+                    task.topic_id not in self.pending_exit_topics
+                    and task.topic_id not in self.pending_topics
+                ):
+                    self.pending_exit_topics.append(task.topic_id)
+                print(
+                    "[COPYTRADE][WARN] sell 清仓进程异常退出，已补排 exit-only cleanup: "
+                    f"token_id={task.topic_id} rc={rc}"
+                )
             # 从 handled_topics 移除，允许后续 copytrade 再次发出买入信号时重新交易
             self._remove_from_handled_topics(task.topic_id)
 
@@ -2043,8 +2056,9 @@ class AutoRunManager:
         self._update_handled_topics([topic_id])
         # 启动成功后，从回填标记中移除（允许后续再次回填）
         self._refilled_tokens.discard(topic_id)
-        # 从已完成清仓集合中移除，确保新一轮交易的 sell 信号能被正常处理
+        # 从 sell 清仓状态中移除，确保新一轮交易的 sell 信号能被正常处理
         self._completed_exit_cleanup_tokens.discard(topic_id)
+        self._handled_sell_signals.discard(topic_id)
         # 检查是否是回填启动。
         # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
         detail = self.topic_details.get(topic_id) or {}
@@ -2853,6 +2867,9 @@ class AutoRunManager:
     def _apply_sell_signals(self, sell_signals: set[str]) -> None:
         if not sell_signals:
             return
+        # 仅保留当前仍在 sell 文件中的处理记录，
+        # 当上游移除并再次写入同一 token 时，允许新一轮 sell 信号重新触发。
+        self._handled_sell_signals.intersection_update(sell_signals)
         new_signals = sell_signals - self._handled_sell_signals
         if not new_signals:
             return
