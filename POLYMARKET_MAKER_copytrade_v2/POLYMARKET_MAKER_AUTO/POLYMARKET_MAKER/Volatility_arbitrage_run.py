@@ -56,6 +56,8 @@ from maker_execution import (
     maker_sell_follow_ask_with_floor_wait,
     _fetch_best_price,
     OrderbookNotFoundError,
+    PriceNoneStreakError,
+    set_price_none_exit_threshold,
 )
 
 # ========== 错误日志记录函数 ==========
@@ -201,6 +203,8 @@ API_MIN_ORDER_SIZE = 5.0
 # 原因：5秒太严格，导致从主循环到买入流程之间的正常延迟就会让快照过期
 # 60秒容忍短时抖动与API延迟，降低噪声，同时保持陈旧数据检测能力
 ORDERBOOK_STALE_AFTER_SEC = 60.0
+# WS+REST 最终价格连续 None 的硬编码退出阈值（0=禁用）
+PRICE_NONE_EXIT_COUNT = 100
 POSITION_SYNC_INTERVAL = 60.0
 POST_BUY_POSITION_CHECK_DELAY = 60.0
 POST_BUY_POSITION_CHECK_ATTEMPTS = 5
@@ -2189,6 +2193,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     signal_timeout_minutes = _coerce_float(run_cfg.get("signal_timeout_minutes"))
     if signal_timeout_minutes is None:
         signal_timeout_minutes = 30.0
+    price_none_exit_count = max(0, int(PRICE_NONE_EXIT_COUNT))
+    set_price_none_exit_threshold(price_none_exit_count)
     if stagnation_window_minutes <= 0:
         print("[INIT] 价格停滞监控已禁用。")
     else:
@@ -2209,6 +2215,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print(
             "[INIT] 交易信号超时退出阈值 "
             f"{signal_timeout_minutes:.1f} 分钟（长时间无买入/卖出信号将退出）。"
+        )
+    if price_none_exit_count <= 0:
+        print("[INIT] 最终价格None次数退出已禁用。")
+    else:
+        print(
+            "[INIT] 最终价格None次数退出阈值 "
+            f"{price_none_exit_count} 次（WS+REST）。"
         )
 
     sell_inactive_hours = _coerce_float(run_cfg.get("sell_inactive_hours"))
@@ -4870,6 +4883,26 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             "consecutive_404": 5,
         })
         strategy.stop("orderbook not found")
+        stop_event.set()
+
+    except PriceNoneStreakError as none_exc:
+        print(f"[ERROR] 价格连续None达到阈值，退出token: {none_exc}")
+        _cancel_open_buy_orders_before_exit("PRICE_NONE_STREAK")
+        _record_exit_token(token_id, "PRICE_NONE_STREAK", {
+            "token_id": token_id,
+            "side": getattr(none_exc, "side", "unknown"),
+            "streak": int(getattr(none_exc, "streak", 0) or 0),
+            "threshold": price_none_exit_count,
+            "has_position": None,
+        })
+        _log_error("PRICE_NONE_STREAK", {
+            "token_id": token_id,
+            "message": str(none_exc),
+            "side": getattr(none_exc, "side", "unknown"),
+            "streak": int(getattr(none_exc, "streak", 0) or 0),
+            "threshold": price_none_exit_count,
+        })
+        strategy.stop("price none streak")
         stop_event.set()
 
     except Exception as main_loop_exc:
