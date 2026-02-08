@@ -425,6 +425,12 @@ class GlobalConfig:
     shared_ws_wait_pause_minutes: float = DEFAULT_GLOBAL_CONFIG[
         "shared_ws_wait_pause_minutes"
     ]
+    shared_ws_wait_escalation_window_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_wait_escalation_window_sec"
+    ]
+    shared_ws_wait_escalation_min_failures: int = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_wait_escalation_min_failures"
+    ]
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
@@ -561,6 +567,18 @@ class GlobalConfig:
                 merged.get(
                     "shared_ws_wait_pause_minutes",
                     cls.shared_ws_wait_pause_minutes,
+                )
+            ),
+            shared_ws_wait_escalation_window_sec=float(
+                merged.get(
+                    "shared_ws_wait_escalation_window_sec",
+                    cls.shared_ws_wait_escalation_window_sec,
+                )
+            ),
+            shared_ws_wait_escalation_min_failures=int(
+                merged.get(
+                    "shared_ws_wait_escalation_min_failures",
+                    cls.shared_ws_wait_escalation_min_failures,
                 )
             ),
             # Slot refill (回填) 配置
