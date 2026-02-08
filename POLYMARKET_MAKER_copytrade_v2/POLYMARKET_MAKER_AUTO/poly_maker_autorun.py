@@ -71,6 +71,8 @@ DEFAULT_GLOBAL_CONFIG = {
     "shared_ws_wait_poll_sec": 0.5,
     "shared_ws_wait_failures_before_pause": 2,
     "shared_ws_wait_pause_minutes": 1.0,
+    "shared_ws_wait_escalation_window_sec": 240.0,
+    "shared_ws_wait_escalation_min_failures": 2,
 }
 
 # Shared WS 等待防抖参数（写死，避免依赖外部 JSON）
