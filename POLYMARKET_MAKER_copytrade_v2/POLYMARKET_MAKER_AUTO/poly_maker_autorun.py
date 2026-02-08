@@ -57,6 +57,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "log_excerpt_interval_sec": 15.0,
     "runtime_status_path": str(PROJECT_ROOT / "data" / "autorun_status.json"),
     "ws_debug_raw": False,
+    "refill_debug": False,
     # Slot refill (回填) 配置
     "enable_slot_refill": True,
     "refill_cooldown_minutes": 30.0,
@@ -410,6 +411,7 @@ class GlobalConfig:
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["runtime_status_path"])
     )
     ws_debug_raw: bool = bool(DEFAULT_GLOBAL_CONFIG["ws_debug_raw"])
+    refill_debug: bool = bool(DEFAULT_GLOBAL_CONFIG["refill_debug"])
     # Shared WS 等待配置
     shared_ws_wait_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
         "shared_ws_wait_timeout_sec"
@@ -531,6 +533,11 @@ class GlobalConfig:
                 debug.get("ws_debug_raw")
                 or debug.get("ws_raw")
                 or merged.get("ws_debug_raw", cls.ws_debug_raw)
+            ),
+            refill_debug=bool(
+                debug.get("refill_debug")
+                or debug.get("slot_refill_debug")
+                or merged.get("refill_debug", cls.refill_debug)
             ),
             shared_ws_wait_timeout_sec=float(
                 merged.get(
@@ -657,7 +664,7 @@ class AutoRunManager:
         self._ws_token_ids: List[str] = []
         self._ws_aggregator_thread: Optional[threading.Thread] = None
         self._ws_debug_raw = _env_flag("POLY_WS_DEBUG_RAW") or self.config.ws_debug_raw
-        self._refill_debug = _env_flag("POLY_REFILL_DEBUG")
+        self._refill_debug = _env_flag("POLY_REFILL_DEBUG") or self.config.refill_debug
         # 增量订阅客户端（替代完全重启WS的方式）
         self._ws_client: Optional[Any] = None  # WSAggregatorClient 实例
         # Slot refill (回填) 相关

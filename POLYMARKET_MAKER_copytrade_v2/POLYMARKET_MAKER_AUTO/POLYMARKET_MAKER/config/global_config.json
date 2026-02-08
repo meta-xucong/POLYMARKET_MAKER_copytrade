@@ -13,6 +13,7 @@
     "position_sync_interval": 60.0
   },
   "debug": {
-    "ws_debug_raw": false
+    "ws_debug_raw": false,
+    "refill_debug": false
   }
 }
