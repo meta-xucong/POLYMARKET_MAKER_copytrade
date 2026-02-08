@@ -83,6 +83,7 @@ DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com
 POSITION_CHECK_CACHE_TTL_SEC = 300.0
 POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 10.0
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
+EXIT_CLEANUP_MAX_RETRIES = 3
 DATA_API_RATE_LIMIT_SEC = 1.0
 _data_api_last_request_ts = 0.0
 _data_api_request_lock = threading.Lock()
@@ -705,6 +706,7 @@ class AutoRunManager:
         self._completed_exit_cleanup_tokens: set[str] = set()
         self._handled_sell_signals: set[str] = set()
         self._position_snapshot_cache: Dict[str, Dict[str, Any]] = {}
+        self._exit_cleanup_retry_counts: Dict[str, int] = {}
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
         self._position_address_warned: bool = False
@@ -1470,17 +1472,28 @@ class AutoRunManager:
         if task.end_reason in ("sell signal", "sell signal cleanup"):
             if rc == 0:
                 self._completed_exit_cleanup_tokens.add(task.topic_id)
+                self._exit_cleanup_retry_counts.pop(task.topic_id, None)
             else:
                 self._completed_exit_cleanup_tokens.discard(task.topic_id)
-                if (
-                    task.topic_id not in self.pending_exit_topics
-                    and task.topic_id not in self.pending_topics
-                ):
-                    self.pending_exit_topics.append(task.topic_id)
-                print(
-                    "[COPYTRADE][WARN] sell 清仓进程异常退出，已补排 exit-only cleanup: "
-                    f"token_id={task.topic_id} rc={rc}"
-                )
+                retry_count = self._exit_cleanup_retry_counts.get(task.topic_id, 0) + 1
+                self._exit_cleanup_retry_counts[task.topic_id] = retry_count
+                if retry_count <= EXIT_CLEANUP_MAX_RETRIES:
+                    if (
+                        task.topic_id not in self.pending_exit_topics
+                        and task.topic_id not in self.pending_topics
+                    ):
+                        self.pending_exit_topics.append(task.topic_id)
+                    print(
+                        "[COPYTRADE][WARN] sell 清仓进程异常退出，已补排 exit-only cleanup: "
+                        f"token_id={task.topic_id} rc={rc} "
+                        f"retry={retry_count}/{EXIT_CLEANUP_MAX_RETRIES}"
+                    )
+                else:
+                    print(
+                        "[COPYTRADE][ERROR] sell 清仓连续失败，已停止自动重试避免循环卡死: "
+                        f"token_id={task.topic_id} rc={rc} "
+                        f"retry={retry_count}/{EXIT_CLEANUP_MAX_RETRIES}"
+                    )
             # 从 handled_topics 移除，允许后续 copytrade 再次发出买入信号时重新交易
             self._remove_from_handled_topics(task.topic_id)
 
@@ -2061,6 +2074,7 @@ class AutoRunManager:
         # 从 sell 清仓状态中移除，确保新一轮交易的 sell 信号能被正常处理
         self._completed_exit_cleanup_tokens.discard(topic_id)
         self._handled_sell_signals.discard(topic_id)
+        self._exit_cleanup_retry_counts.pop(topic_id, None)
         # 检查是否是回填启动。
         # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
         detail = self.topic_details.get(topic_id) or {}
