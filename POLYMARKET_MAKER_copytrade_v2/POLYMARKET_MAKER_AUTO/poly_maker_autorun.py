@@ -71,6 +71,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "shared_ws_wait_poll_sec": 0.5,
     "shared_ws_wait_failures_before_pause": 5,
     "shared_ws_wait_pause_minutes": 3.0,
+    # 防抖保护：仅在短窗口内连续等待超时过多才触发pause
+    "shared_ws_wait_escalation_window_sec": 240.0,
+    "shared_ws_wait_escalation_min_failures": 2,
 }
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
@@ -421,6 +424,12 @@ class GlobalConfig:
     shared_ws_wait_pause_minutes: float = DEFAULT_GLOBAL_CONFIG[
         "shared_ws_wait_pause_minutes"
     ]
+    shared_ws_wait_escalation_window_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_wait_escalation_window_sec"
+    ]
+    shared_ws_wait_escalation_min_failures: int = DEFAULT_GLOBAL_CONFIG[
+        "shared_ws_wait_escalation_min_failures"
+    ]
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
@@ -559,6 +568,18 @@ class GlobalConfig:
                     cls.shared_ws_wait_pause_minutes,
                 )
             ),
+            shared_ws_wait_escalation_window_sec=float(
+                merged.get(
+                    "shared_ws_wait_escalation_window_sec",
+                    cls.shared_ws_wait_escalation_window_sec,
+                )
+            ),
+            shared_ws_wait_escalation_min_failures=int(
+                merged.get(
+                    "shared_ws_wait_escalation_min_failures",
+                    cls.shared_ws_wait_escalation_min_failures,
+                )
+            ),
             # Slot refill (回填) 配置
             enable_slot_refill=bool(
                 scheduler.get("enable_slot_refill", merged.get("enable_slot_refill", True))
@@ -671,6 +692,7 @@ class AutoRunManager:
         # Shared WS 等待保护
         self._shared_ws_wait_failures: Dict[str, int] = {}
         self._shared_ws_paused_until: Dict[str, float] = {}
+        self._shared_ws_wait_timeout_events: Dict[str, List[float]] = {}
         self._pending_first_seen: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
@@ -1587,12 +1609,33 @@ class AutoRunManager:
                         f"[WS][WAIT] topic={topic_id[:8]}... 等待WS缓存"
                         f" {max_wait:.0f}s超时 ({failures}/{max_failures})"
                     )
-                    if failures >= max_failures:
+
+                    escalation_window = max(
+                        max_wait,
+                        float(self.config.shared_ws_wait_escalation_window_sec),
+                    )
+                    min_escalation_failures = max(
+                        1,
+                        int(self.config.shared_ws_wait_escalation_min_failures),
+                    )
+                    timeout_events = self._shared_ws_wait_timeout_events.get(topic_id, [])
+                    timeout_events = [
+                        ts for ts in timeout_events if (now - ts) <= escalation_window
+                    ]
+                    timeout_events.append(now)
+                    self._shared_ws_wait_timeout_events[topic_id] = timeout_events
+
+                    should_pause = (
+                        failures >= max_failures
+                        and len(timeout_events) >= min_escalation_failures
+                    )
+                    if should_pause:
                         pause_seconds = max(
                             60.0, float(self.config.shared_ws_wait_pause_minutes) * 60.0
                         )
                         self._shared_ws_paused_until[topic_id] = now + pause_seconds
                         self._shared_ws_wait_failures[topic_id] = 0
+                        self._shared_ws_wait_timeout_events[topic_id] = []
                         print(
                             f"[WS][PAUSE] topic={topic_id[:8]}... 暂停 {pause_seconds:.0f}s"
                         )
@@ -1603,6 +1646,7 @@ class AutoRunManager:
                 waited = now - self._shared_ws_pending_since.pop(topic_id)
                 self._shared_ws_wait_failures[topic_id] = 0
                 self._shared_ws_paused_until.pop(topic_id, None)
+                self._shared_ws_wait_timeout_events[topic_id] = []
                 print(
                     f"[WS][READY] topic={topic_id[:8]}... 缓存就绪"
                     f" (等待了 {waited:.1f}s)"
@@ -1662,6 +1706,7 @@ class AutoRunManager:
         self._pending_first_seen.pop(topic_id, None)
         self._shared_ws_wait_failures.pop(topic_id, None)
         self._shared_ws_paused_until.pop(topic_id, None)
+        self._shared_ws_wait_timeout_events.pop(topic_id, None)
         self._shared_ws_pending_since.pop(topic_id, None)
 
     def _append_exit_token_record(

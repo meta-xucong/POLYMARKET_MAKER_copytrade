@@ -6,8 +6,16 @@
     "enable_slot_refill": true,
     "refill_cooldown_minutes": 30,
     "max_refill_retries": 3,
-    "refill_check_interval_sec": 60.0
+    "refill_check_interval_sec": 60.0,
+    "enable_pending_soft_eviction": true,
+    "pending_soft_eviction_minutes": 12.0,
+    "pending_soft_eviction_check_interval_sec": 300.0
   },
+  "shared_ws_max_pending_wait_sec": 45.0,
+  "shared_ws_wait_failures_before_pause": 2,
+  "shared_ws_wait_pause_minutes": 1.0,
+  "shared_ws_wait_escalation_window_sec": 240.0,
+  "shared_ws_wait_escalation_min_failures": 2,
   "maker": {
     "poll_sec": 10.0,
     "position_sync_interval": 60.0
