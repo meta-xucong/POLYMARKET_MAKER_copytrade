@@ -71,6 +71,8 @@ DEFAULT_GLOBAL_CONFIG = {
     "shared_ws_wait_poll_sec": 0.5,
     "shared_ws_wait_failures_before_pause": 2,
     "shared_ws_wait_pause_minutes": 1.0,
+    "shared_ws_wait_escalation_window_sec": 240.0,
+    "shared_ws_wait_escalation_min_failures": 2,
 }
 
 # Shared WS 等待防抖参数（写死，避免依赖外部 JSON）
@@ -1613,11 +1615,23 @@ class AutoRunManager:
 
                     escalation_window = max(
                         max_wait,
-                        SHARED_WS_WAIT_ESCALATION_WINDOW_SEC,
+                        float(
+                            getattr(
+                                self.config,
+                                "shared_ws_wait_escalation_window_sec",
+                                SHARED_WS_WAIT_ESCALATION_WINDOW_SEC,
+                            )
+                        ),
                     )
                     min_escalation_failures = max(
                         1,
-                        SHARED_WS_WAIT_ESCALATION_MIN_FAILURES,
+                        int(
+                            getattr(
+                                self.config,
+                                "shared_ws_wait_escalation_min_failures",
+                                SHARED_WS_WAIT_ESCALATION_MIN_FAILURES,
+                            )
+                        ),
                     )
                     timeout_events = self._shared_ws_wait_timeout_events.get(topic_id, [])
                     timeout_events = [
