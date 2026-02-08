@@ -2031,13 +2031,16 @@ class AutoRunManager:
         self._refilled_tokens.discard(topic_id)
         # 从已完成清仓集合中移除，确保新一轮交易的 sell 信号能被正常处理
         self._completed_exit_cleanup_tokens.discard(topic_id)
-        # 检查是否是回填启动（有 resume_state 表示是回填/恢复场景）
+        # 检查是否是回填启动。
+        # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
+        detail = self.topic_details.get(topic_id) or {}
         is_refill_start = bool(
-            topic_id in self.topic_details
-            and self.topic_details[topic_id].get("resume_state")
+            detail.get("refill_exit_reason")
+            or detail.get("refill_retry_count", 0)
+            or detail.get("resume_state") is not None
         )
-        # 只有非回填启动（新交易周期）时才重置回填重试计数
-        # 回填启动时保留计数，确保 NO_DATA_TIMEOUT 的重试限制生效
+        # 只有非回填启动（新交易周期）时才重置回填重试计数；
+        # 回填启动时保留计数，确保 PRICE_NONE_STREAK/NO_DATA_TIMEOUT 的重试限制生效。
         if not is_refill_start:
             self._refill_retry_counts.pop(topic_id, None)
         # 清理 topic_details 中的 resume_state（已被使用）
@@ -2483,6 +2486,11 @@ class AutoRunManager:
             "DEADLINE_REACHED",
         }
 
+        # 达到重试上限后永久不再回填的退出原因（防止噪声循环）
+        PERMANENT_AFTER_MAX_RETRIES_REASONS = {
+            "PRICE_NONE_STREAK",
+        }
+
         now = time.time()
         cooldown_seconds = self.config.refill_cooldown_minutes * 60.0
         max_retries = self.config.max_refill_retries
@@ -2537,6 +2545,8 @@ class AutoRunManager:
                 effective_max_retries = min(max_retries, 1)  # NO_DATA_TIMEOUT 最多回填1次
             if retry_count >= effective_max_retries:
                 skip_stats["max_retries"] = skip_stats.get("max_retries", 0) + 1
+                if exit_reason in PERMANENT_AFTER_MAX_RETRIES_REASONS:
+                    skip_stats["permanent_block"] = skip_stats.get("permanent_block", 0) + 1
                 continue
 
             # 检查是否已在运行或pending
