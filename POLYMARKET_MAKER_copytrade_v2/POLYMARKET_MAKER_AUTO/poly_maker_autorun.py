@@ -1615,11 +1615,23 @@ class AutoRunManager:
 
                     escalation_window = max(
                         max_wait,
-                        SHARED_WS_WAIT_ESCALATION_WINDOW_SEC,
+                        float(
+                            getattr(
+                                self.config,
+                                "shared_ws_wait_escalation_window_sec",
+                                SHARED_WS_WAIT_ESCALATION_WINDOW_SEC,
+                            )
+                        ),
                     )
                     min_escalation_failures = max(
                         1,
-                        SHARED_WS_WAIT_ESCALATION_MIN_FAILURES,
+                        int(
+                            getattr(
+                                self.config,
+                                "shared_ws_wait_escalation_min_failures",
+                                SHARED_WS_WAIT_ESCALATION_MIN_FAILURES,
+                            )
+                        ),
                     )
                     timeout_events = self._shared_ws_wait_timeout_events.get(topic_id, [])
                     timeout_events = [
