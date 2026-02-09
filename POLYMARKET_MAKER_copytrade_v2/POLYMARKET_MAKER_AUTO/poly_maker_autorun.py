@@ -820,6 +820,9 @@ class AutoRunManager:
         self._position_address_warned: bool = False
         self._sell_bootstrap_done: bool = False
         self._next_sell_full_recheck_at: float = 0.0
+        self._sell_position_snapshot: Dict[str, float] = {}
+        self._sell_position_snapshot_info: str = ""
+        self._next_sell_position_poll_at: float = 0.0
         # WS 健康分层清理状态
         self._ws_recent_recovery_ts: Dict[str, float] = {}
         self._ws_prev_stale_state: Dict[str, bool] = {}
@@ -2031,90 +2034,6 @@ class AutoRunManager:
 
         return merged
 
-    def _should_use_shared_ws(self) -> bool:
-        """
-        判断是否应该使用共享 WS 模式（基于缓存文件新鲜度，而非线程状态）
-
-        优势：
-        - 避免启动时的竞态条件（线程可能正在初始化）
-        - 避免运行时的竞态条件（线程重启过程中）
-        - 更可靠：只要缓存数据新鲜就能用，不管线程是否临时崩溃
-
-        Returns:
-            bool: True 表示应该使用共享 WS 缓存
-        """
-        # 优先检查缓存文件新鲜度（最可靠的判断方式）
-        try:
-            if not self._ws_cache_path.exists():
-                if hasattr(self, '_debug_shared_ws_check'):
-                    print(f"[WS][CHECK] 缓存文件不存在: {self._ws_cache_path}")
-                return False
-
-            # 检查缓存文件是否在最近10分钟内更新过
-            cache_age = time.time() - self._ws_cache_path.stat().st_mtime
-            if cache_age < 600:  # 10分钟
-                if hasattr(self, '_debug_shared_ws_check'):
-                    print(f"[WS][CHECK] ✓ 缓存文件新鲜 (age={cache_age:.1f}s)")
-                return True
-            else:
-                if hasattr(self, '_debug_shared_ws_check'):
-                    print(f"[WS][CHECK] 缓存文件过期 (age={cache_age:.1f}s)")
-        except OSError as e:
-            if hasattr(self, '_debug_shared_ws_check'):
-                print(f"[WS][CHECK] 文件访问失败: {e}")
-            # 文件访问失败，继续下面的备用检查
-            pass
-
-        # 备用检查：聚合器线程和 WS 线程都存活
-        # （只在缓存文件检查失败时才使用，作为双重保险）
-        aggregator_alive = (
-            self._ws_aggregator_thread
-            and self._ws_aggregator_thread.is_alive()
-        )
-        ws_alive = self._ws_thread and self._ws_thread.is_alive()
-
-        if hasattr(self, '_debug_shared_ws_check'):
-            print(f"[WS][CHECK] 备用检查: aggregator={aggregator_alive}, ws={ws_alive}")
-
-        return aggregator_alive and ws_alive
-
-    def _wait_for_shared_ws_ready(
-        self,
-        topic_id: str,
-        timeout_sec: Optional[float] = None,
-        poll_interval: Optional[float] = None,
-    ) -> bool:
-        """
-        等待共享 WS 缓存就绪（确保缓存新鲜且包含目标 token）。
-
-        返回 True 表示共享缓存已就绪，False 表示超时或停止事件触发。
-        """
-        timeout_sec = (
-            self.config.shared_ws_max_pending_wait_sec
-            if timeout_sec is None
-            else timeout_sec
-        )
-        poll_interval = (
-            self.config.shared_ws_wait_poll_sec
-            if poll_interval is None
-            else poll_interval
-        )
-        deadline = time.time() + max(0.0, float(timeout_sec))
-        while time.time() < deadline and not self.stop_event.is_set():
-            now = time.time()
-            with self._ws_cache_lock:
-                cached = self._ws_cache.get(topic_id)
-            if cached:
-                updated_at = cached.get("updated_at", 0)
-                if updated_at and (now - float(updated_at)) < 600:
-                    self._flush_ws_cache_if_needed()
-                    return True
-                # 放宽策略：缓存存在即可启动（避免低频市场阻塞）
-                self._flush_ws_cache_if_needed()
-                return True
-            time.sleep(max(0.1, float(poll_interval)))
-        return False
-
     def _start_topic_process(self, topic_id: str) -> bool:
         config_data = self._build_run_config(topic_id)
         cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(topic_id)}.json"
@@ -2573,12 +2492,14 @@ class AutoRunManager:
         if token_id in self.topic_details:
             self.topic_details.pop(token_id, None)
 
-        # 5. 从 latest_topics 中移除
-        if token_id in self.latest_topics:
-            try:
-                self.latest_topics.remove(token_id)
-            except ValueError:
-                pass
+        # 5. 从 latest_topics 中移除（latest_topics 是 List[Dict]，需按 token_id 字段过滤）
+        original_len = len(self.latest_topics)
+        self.latest_topics = [
+            entry for entry in self.latest_topics
+            if _topic_id_from_entry(entry) != token_id
+        ]
+        if len(self.latest_topics) < original_len:
+            print(f"[CLEANUP] 已从 latest_topics 内存中移除 token={token_id[:20]}...")
 
     # ========== Slot Refill (回填) 逻辑 ==========
     def _load_exit_tokens(self) -> List[Dict[str, Any]]:
@@ -3123,6 +3044,9 @@ class AutoRunManager:
         if not sell_signals:
             return
         snapshot, info = self._refresh_sell_position_snapshot()
+        # 缓存快照供增量路径使用（新增 sell 信号无需再次拉取）
+        self._sell_position_snapshot = snapshot
+        self._sell_position_snapshot_info = info
         print(
             "[COPYTRADE][INFO] SELL 全量复检: "
             f"signals={len(sell_signals)} positions={len(snapshot)} info={info}"
@@ -3196,43 +3120,6 @@ class AutoRunManager:
         else:
             print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info}")
         return snapshot, info
-
-    def _refresh_sell_position_snapshot_if_needed(self, *, force: bool = False) -> None:
-        now = time.time()
-        if not force and now < self._next_sell_position_poll_at:
-            return
-
-        if not self._position_address:
-            address, origin = _resolve_position_address_from_env()
-            self._position_address = address
-            self._position_address_origin = origin
-            if not address and not self._position_address_warned:
-                self._position_address_warned = True
-                print(f"[COPYTRADE][WARN] {origin}")
-
-        if not self._position_address:
-            self._sell_position_snapshot = {}
-            self._sell_position_snapshot_info = "缺少地址，无法查询持仓。"
-            self._next_sell_position_poll_at = now + max(
-                30.0,
-                float(self.config.sell_position_poll_interval_sec),
-            )
-            return
-
-        snapshot, info = _fetch_position_snapshot_map_from_data_api(self._position_address)
-        self._sell_position_snapshot = snapshot
-        self._sell_position_snapshot_info = info
-        self._next_sell_position_poll_at = now + max(
-            30.0,
-            float(self.config.sell_position_poll_interval_sec),
-        )
-        if info == "ok":
-            print(
-                "[COPYTRADE][INFO] SELL 持仓快照已刷新: "
-                f"positions={len(snapshot)} next_in={int(self.config.sell_position_poll_interval_sec)}s"
-            )
-        else:
-            print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info}")
 
     def _cleanup_old_logs(self) -> None:
         """清理7天前的日志文件，每天只执行一次"""
@@ -3446,7 +3333,26 @@ class AutoRunManager:
             if str(token_id).strip()
         }
 
+        exit_cleanup_retry_counts = payload.get("exit_cleanup_retry_counts") or {}
+        for token_id, count in exit_cleanup_retry_counts.items():
+            token_id = str(token_id)
+            try:
+                self._exit_cleanup_retry_counts[token_id] = int(count)
+            except (TypeError, ValueError):
+                pass
+
     def _dump_runtime_status(self) -> None:
+        # GC: 清理 _completed_exit_cleanup_tokens 中不再活跃的条目
+        # 仅保留仍在 sell 信号文件、pending 队列或 tasks 中的 token
+        active_tokens = (
+            set(self.pending_topics)
+            | set(self.pending_exit_topics)
+            | set(self.tasks.keys())
+            | self._handled_sell_signals
+        )
+        stale = self._completed_exit_cleanup_tokens - active_tokens
+        if stale:
+            self._completed_exit_cleanup_tokens -= stale
         payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "handled_topics_total": len(self.handled_topics),
@@ -3457,6 +3363,7 @@ class AutoRunManager:
             "completed_exit_cleanup_tokens": sorted(
                 self._completed_exit_cleanup_tokens
             ),
+            "exit_cleanup_retry_counts": dict(self._exit_cleanup_retry_counts),
             "tasks": {},
         }
         for topic_id, task in self.tasks.items():
