@@ -38,7 +38,7 @@ if str(MAKER_ROOT) not in sys.path:
 
 DEFAULT_GLOBAL_CONFIG = {
     "copytrade_poll_sec": 30.0,
-    "sell_position_poll_interval_sec": 600.0,
+    "sell_position_poll_interval_sec": 7200.0,
     "command_poll_sec": 5.0,
     "max_concurrent_tasks": 10,
     "max_exit_cleanup_tasks": 3,  # 清仓任务独立槽位，不受 max_concurrent_tasks 限制
@@ -818,9 +818,8 @@ class AutoRunManager:
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
         self._position_address_warned: bool = False
-        self._sell_position_snapshot: Dict[str, float] = {}
-        self._sell_position_snapshot_info: str = "snapshot-not-ready"
-        self._next_sell_position_poll_at: float = 0.0
+        self._sell_bootstrap_done: bool = False
+        self._next_sell_full_recheck_at: float = 0.0
         # WS 健康分层清理状态
         self._ws_recent_recovery_ts: Dict[str, float] = {}
         self._ws_prev_stale_state: Dict[str, bool] = {}
@@ -3066,25 +3065,35 @@ class AutoRunManager:
         # 仅保留当前仍在 sell 文件中的处理记录，
         # 当上游移除并再次写入同一 token 时，允许新一轮 sell 信号重新触发。
         self._handled_sell_signals.intersection_update(sell_signals)
+
+        now = time.time()
+        full_recheck_due = (not self._sell_bootstrap_done) or (
+            now >= self._next_sell_full_recheck_at
+        )
+
+        if full_recheck_due:
+            self._run_full_sell_signal_recheck(sell_signals)
+            self._sell_bootstrap_done = True
+            self._next_sell_full_recheck_at = now + max(
+                300.0,
+                float(self.config.sell_position_poll_interval_sec),
+            )
+            return
+
         new_signals = sell_signals - self._handled_sell_signals
         if not new_signals:
             return
-        # 启动后先查一次，随后按固定周期复查，避免每轮都查询持仓。
-        self._refresh_sell_position_snapshot_if_needed()
+
         for token_id in new_signals:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
             has_history = token_id in self.handled_topics
 
-            # 检查是否已完成 exit-only cleanup，避免重复触发
-            # 方式1: task 对象仍存在且标记为 sell signal cleanup
-            # 方式2: token 已记录在 _completed_exit_cleanup_tokens 集合中（task 被 purge 后仍有效）
             if token_id in self._completed_exit_cleanup_tokens:
                 self._handled_sell_signals.add(token_id)
                 continue
             if task and not has_running_task and task.end_reason == "sell signal cleanup":
-                # 已经完成过清仓，不再重复添加到 pending_exit_topics
-                self._completed_exit_cleanup_tokens.add(token_id)  # 同步到集合
+                self._completed_exit_cleanup_tokens.add(token_id)
                 self._handled_sell_signals.add(token_id)
                 continue
 
@@ -3100,26 +3109,93 @@ class AutoRunManager:
                         "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
                         f"token_id={token_id}"
                     )
-                    # 保持信号未处理状态，后续轮询继续检查，避免因短时接口失败/缓存抖动漏掉清仓。
+                    # 新增 SELL 信号仅做一次校验，避免同一 token 高频重复查询。
+                    self._handled_sell_signals.add(token_id)
                     continue
                 print(
                     "[COPYTRADE] SELL 信号触发持仓清仓: "
                     f"token_id={token_id}"
                 )
-            if token_id in self.pending_topics:
-                self._remove_pending_topic(token_id)
-            if task and task.is_running():
-                task.no_restart = True
-                task.end_reason = "sell signal"
-                task.heartbeat("sell signal received")
-            self._issue_exit_signal(token_id)
-            if not (task and task.is_running()):
-                if (
-                    token_id not in self.pending_exit_topics
-                    and token_id not in self.pending_topics
-                ):
-                    self.pending_exit_topics.append(token_id)
-            self._handled_sell_signals.add(token_id)
+            self._trigger_sell_exit(token_id, task)
+
+    def _run_full_sell_signal_recheck(self, sell_signals: set[str]) -> None:
+        """启动首轮 + 周期性兜底：全量检查全部 sell token。"""
+        if not sell_signals:
+            return
+        snapshot, info = self._refresh_sell_position_snapshot()
+        print(
+            "[COPYTRADE][INFO] SELL 全量复检: "
+            f"signals={len(sell_signals)} positions={len(snapshot)} info={info}"
+        )
+        for token_id in sell_signals:
+            task = self.tasks.get(token_id)
+            has_running_task = bool(task and task.is_running())
+            has_history = token_id in self.handled_topics
+
+            if token_id in self._completed_exit_cleanup_tokens:
+                self._handled_sell_signals.add(token_id)
+                continue
+            if task and not has_running_task and task.end_reason == "sell signal cleanup":
+                self._completed_exit_cleanup_tokens.add(token_id)
+                self._handled_sell_signals.add(token_id)
+                continue
+
+            if not has_running_task and not has_history:
+                pos_size = float(snapshot.get(token_id, 0.0) or 0.0)
+                has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+                if not has_position:
+                    reason = "未找到持仓记录" if info == "ok" else info
+                    print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={reason}")
+                    print(
+                        "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
+                        f"token_id={token_id}"
+                    )
+                    # 全量复检也打 handled 标记，避免在下次普通轮询时再次重复检查。
+                    self._handled_sell_signals.add(token_id)
+                    continue
+                print(
+                    "[COPYTRADE] SELL 信号触发持仓清仓: "
+                    f"token_id={token_id}"
+                )
+            self._trigger_sell_exit(token_id, task)
+
+    def _trigger_sell_exit(self, token_id: str, task: Optional[TopicTask]) -> None:
+        if token_id in self.pending_topics:
+            self._remove_pending_topic(token_id)
+        if task and task.is_running():
+            task.no_restart = True
+            task.end_reason = "sell signal"
+            task.heartbeat("sell signal received")
+        self._issue_exit_signal(token_id)
+        if not (task and task.is_running()):
+            if (
+                token_id not in self.pending_exit_topics
+                and token_id not in self.pending_topics
+            ):
+                self.pending_exit_topics.append(token_id)
+        self._handled_sell_signals.add(token_id)
+
+    def _refresh_sell_position_snapshot(self) -> tuple[Dict[str, float], str]:
+        if not self._position_address:
+            address, origin = _resolve_position_address_from_env()
+            self._position_address = address
+            self._position_address_origin = origin
+            if not address and not self._position_address_warned:
+                self._position_address_warned = True
+                print(f"[COPYTRADE][WARN] {origin}")
+
+        if not self._position_address:
+            return {}, "缺少地址，无法查询持仓。"
+
+        snapshot, info = _fetch_position_snapshot_map_from_data_api(self._position_address)
+        if info == "ok":
+            print(
+                "[COPYTRADE][INFO] SELL 持仓快照已刷新: "
+                f"positions={len(snapshot)}"
+            )
+        else:
+            print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info}")
+        return snapshot, info
 
     def _refresh_sell_position_snapshot_if_needed(self, *, force: bool = False) -> None:
         now = time.time()
