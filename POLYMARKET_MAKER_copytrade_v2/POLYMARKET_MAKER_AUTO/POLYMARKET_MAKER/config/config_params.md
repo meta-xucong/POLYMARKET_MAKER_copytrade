@@ -96,11 +96,11 @@ python3 copytrade/analyze_throughput_stagnation.py --stale-hours 24
 | `scheduler.total_liquidation.trigger.idle_slot_ratio_threshold` | 空闲槽位比例阈值。 | `0.5` |
 | `scheduler.total_liquidation.trigger.idle_slot_duration_minutes` | 空闲槽位持续时长阈值（分钟）。 | `120` |
 | `scheduler.total_liquidation.trigger.no_trade_duration_minutes` | 长时间无成交/无活跃更新阈值（分钟）。 | `180` |
-| `scheduler.total_liquidation.trigger.min_free_balance` | 可用余额阈值（USDC）。 | `20.0` |
+| `scheduler.total_liquidation.trigger.min_free_balance` | 可用余额阈值（USDC）；优先读取交易客户端余额接口，失败时可用环境变量 `POLY_FREE_BALANCE_OVERRIDE` 覆盖。 | `20.0` |
 | `scheduler.total_liquidation.trigger.require_conditions` | 触发所需命中条件数（3选N）。 | `2` |
 | `scheduler.total_liquidation.liquidation.position_value_threshold` | 仅清仓价值不低于该阈值的仓位。 | `3.0` |
 | `scheduler.total_liquidation.liquidation.spread_threshold` | 点差阈值：高于阈值走 maker，否则走 taker。 | `0.01` |
-| `scheduler.total_liquidation.liquidation.maker_timeout_minutes` | maker 清仓单 token 超时时间（分钟）。 | `20` |
+| `scheduler.total_liquidation.liquidation.maker_timeout_minutes` | maker 清仓单 token 超时时间（分钟）；超时后自动降级为 taker 继续清仓。 | `20` |
 | `scheduler.total_liquidation.reset.hard_reset_enabled` | 是否执行“一刀切”重置。 | `true` |
 | `scheduler.total_liquidation.reset.remove_logs` | 是否删除日志文件。 | `true` |
 | `scheduler.total_liquidation.reset.remove_json_state` | 是否删除运行态 JSON（含 copytrade 与 autorun）。 | `true` |

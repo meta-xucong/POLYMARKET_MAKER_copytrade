@@ -139,7 +139,9 @@ class TotalLiquidationManager:
         if idle_since is not None:
             idle_minutes = (now - float(idle_since)) / 60.0
             if idle_minutes >= self.cfg.idle_slot_duration_minutes:
-                reasons.append(f"idle_slots>={self.cfg.idle_slot_ratio_threshold:.2f} for {idle_minutes:.1f}m")
+                reasons.append(
+                    f"idle_slots>={self.cfg.idle_slot_ratio_threshold:.2f} for {idle_minutes:.1f}m"
+                )
 
         no_trade_minutes = (now - float(metrics.get("last_trade_activity_ts") or now)) / 60.0
         if no_trade_minutes >= self.cfg.no_trade_duration_minutes:
@@ -176,12 +178,7 @@ class TotalLiquidationManager:
             liquidation_stats = self._liquidate_positions(autorun)
             result.update(liquidation_stats)
 
-            # 3) 一刀切硬重置
-            if self.cfg.hard_reset_enabled:
-                self._hard_reset_files(autorun)
-                result["hard_reset"] = True
-
-            # 4) 记录状态
+            # 3) 记录状态（先记录再重置，保证频率上限可持续生效）
             now = time.time()
             state = {
                 "last_trigger_ts": now,
@@ -191,7 +188,11 @@ class TotalLiquidationManager:
             }
             self._save_state(state)
 
-            # 5) 重启（由外层守护拉起）
+            # 4) 一刀切重置（保留 copytrade_config 与 total_liquidation_state）
+            if self.cfg.hard_reset_enabled:
+                self._hard_reset_files(autorun)
+                result["hard_reset"] = True
+
             print("[GLB_LIQ] 总清仓完成，准备重启 autorun")
             autorun.stop_event.set()
         except Exception as exc:
@@ -202,15 +203,90 @@ class TotalLiquidationManager:
 
         return result
 
+    @staticmethod
+    def _extract_first_float(payload: Any) -> Optional[float]:
+        if isinstance(payload, (int, float)) and not isinstance(payload, bool):
+            return float(payload)
+        if isinstance(payload, str):
+            try:
+                return float(payload)
+            except ValueError:
+                return None
+        if isinstance(payload, dict):
+            keys = (
+                "available",
+                "available_balance",
+                "availableBalance",
+                "free",
+                "balance",
+                "amount",
+                "value",
+                "usdc",
+                "USDC",
+            )
+            for k in keys:
+                if k in payload:
+                    parsed = TotalLiquidationManager._extract_first_float(payload[k])
+                    if parsed is not None:
+                        return parsed
+            for v in payload.values():
+                parsed = TotalLiquidationManager._extract_first_float(v)
+                if parsed is not None:
+                    return parsed
+            return None
+        if isinstance(payload, (list, tuple)):
+            for item in payload:
+                parsed = TotalLiquidationManager._extract_first_float(item)
+                if parsed is not None:
+                    return parsed
+            return None
+        return None
+
+    def _call_balance_method(self, obj: Any, method_name: str) -> Optional[float]:
+        method = getattr(obj, method_name, None)
+        if not callable(method):
+            return None
+        for args in ((), ("USDC",), ("usdc",), ({"asset": "USDC"},), ({"token": "USDC"},)):
+            try:
+                resp = method(*args)
+                parsed = self._extract_first_float(resp)
+                if parsed is not None:
+                    return parsed
+            except Exception:
+                continue
+        return None
+
     def _query_free_balance_usdc(self, autorun: Any) -> Optional[float]:
-        """优先读取环境变量覆盖，避免强依赖交易所余额接口。"""
         override = os.getenv("POLY_FREE_BALANCE_OVERRIDE")
         if override is not None:
             try:
                 return float(override)
             except ValueError:
                 return None
-        # 暂不强依赖外部余额接口，返回 None 表示跳过该触发条件
+
+        # 尝试直接从 client / private 上提取余额（不影响主流程，失败则返回 None）
+        try:
+            client = self._load_client()
+        except Exception:
+            return None
+
+        candidates: List[Any] = [client]
+        private = getattr(client, "private", None)
+        if private is not None:
+            candidates.append(private)
+
+        for obj in candidates:
+            for name in (
+                "get_balance_allowance",
+                "get_balance",
+                "get_balances",
+                "get_available_balance",
+                "balance_allowance",
+                "balance",
+            ):
+                value = self._call_balance_method(obj, name)
+                if value is not None:
+                    return value
         return None
 
     def _resolve_wallet(self) -> Optional[str]:
@@ -234,9 +310,7 @@ class TotalLiquidationManager:
                 with urllib.request.urlopen(f"{url}?{query}", timeout=20) as resp:
                     payload = json.loads(resp.read().decode("utf-8"))
                 items = payload if isinstance(payload, list) else payload.get("data")
-                if not isinstance(items, list):
-                    break
-                if not items:
+                if not isinstance(items, list) or not items:
                     break
                 out.extend([x for x in items if isinstance(x, dict)])
                 if len(items) < int(params["limit"]):
@@ -266,7 +340,7 @@ class TotalLiquidationManager:
 
     @staticmethod
     def _extract_price(entry: Dict[str, Any]) -> float:
-        for key in ("current_price", "price", "avgPrice", "average_price", "entry_price"):
+        for key in ("current_price", "price", "avgPrice", "average_price", "entry_price", "mark_price"):
             val = entry.get(key)
             try:
                 px = float(val)
@@ -286,12 +360,47 @@ class TotalLiquidationManager:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import SELL
 
-        if price <= 0:
-            price = 0.01
-        order = OrderArgs(token_id=str(token_id), side=SELL, price=float(price), size=float(size))
+        eff_price = max(float(price), 0.01)
+        eff_size = max(float(size), 0.0)
+        order = OrderArgs(token_id=str(token_id), side=SELL, price=eff_price, size=eff_size)
         signed = client.create_order(order)
         order_type = getattr(OrderType, "FAK", None) or getattr(OrderType, "IOC", OrderType.FOK)
         return client.post_order(signed, order_type)
+
+    def _estimate_value(self, size: float, pos_price: float, bid: float, ask: float) -> float:
+        if pos_price > 0:
+            return size * pos_price
+        if bid > 0 and ask > 0 and ask >= bid:
+            return size * ((bid + ask) / 2.0)
+        if bid > 0:
+            return size * bid
+        if ask > 0:
+            return size * ask
+        return 0.0
+
+    def _resolve_bid_ask(self, autorun: Any, token_id: str) -> Tuple[float, float]:
+        with autorun._ws_cache_lock:
+            cached = dict(autorun._ws_cache.get(token_id) or {})
+        try:
+            bid = float(cached.get("best_bid") or 0.0)
+        except (TypeError, ValueError):
+            bid = 0.0
+        try:
+            ask = float(cached.get("best_ask") or 0.0)
+        except (TypeError, ValueError):
+            ask = 0.0
+        return bid, ask
+
+    def _compute_taker_price(self, bid: float, ask: float) -> float:
+        base = bid if bid > 0 else ask if ask > 0 else 0.01
+        bps = max(0.0, float(self.cfg.taker_slippage_bps))
+        return max(0.01, base * (1.0 - bps / 10000.0))
+
+    def _fetch_single_position_size(self, token_id: str) -> float:
+        for entry in self._fetch_positions():
+            if self._extract_token(entry) == str(token_id):
+                return max(self._extract_size(entry), 0.0)
+        return 0.0
 
     def _liquidate_positions(self, autorun: Any) -> Dict[str, Any]:
         from maker_execution import maker_sell_follow_ask_with_floor_wait
@@ -308,35 +417,29 @@ class TotalLiquidationManager:
             token_id = self._extract_token(entry)
             if not token_id:
                 continue
+
             size = self._extract_size(entry)
             if size <= 0:
                 continue
-            value = size * max(self._extract_price(entry), 0.0)
+
+            bid, ask = self._resolve_bid_ask(autorun, token_id)
+            pos_price = self._extract_price(entry)
+            value = self._estimate_value(size=size, pos_price=pos_price, bid=bid, ask=ask)
             if value < self.cfg.position_value_threshold:
                 continue
 
-            with autorun._ws_cache_lock:
-                cached = dict(autorun._ws_cache.get(token_id) or {})
-            bid = float(cached.get("best_bid") or 0.0)
-            ask = float(cached.get("best_ask") or 0.0)
-            spread = (ask - bid) if (ask > 0 and bid > 0 and ask >= bid) else 0.0
-
             try:
+                spread = (ask - bid) if (ask > 0 and bid > 0 and ask >= bid) else 0.0
+
                 if spread > self.cfg.spread_threshold:
                     maker_count += 1
 
                     def _best_ask_fn() -> Optional[float]:
-                        with autorun._ws_cache_lock:
-                            d = dict(autorun._ws_cache.get(token_id) or {})
-                        v = d.get("best_ask")
-                        try:
-                            f = float(v)
-                            return f if f > 0 else None
-                        except (TypeError, ValueError):
-                            return None
+                        _bid, _ask = self._resolve_bid_ask(autorun, token_id)
+                        return _ask if _ask > 0 else None
 
-                    floor_x = max(0.01, bid * 0.98 if bid > 0 else 0.01)
-                    maker_sell_follow_ask_with_floor_wait(
+                    floor_x = self._compute_taker_price(bid=bid, ask=ask)
+                    maker_resp = maker_sell_follow_ask_with_floor_wait(
                         client=client,
                         token_id=token_id,
                         position_size=size,
@@ -346,10 +449,23 @@ class TotalLiquidationManager:
                         inactive_timeout_sec=max(60.0, self.cfg.maker_timeout_minutes * 60.0),
                         sell_mode="aggressive",
                     )
+
+                    maker_status = str((maker_resp or {}).get("status") or "").upper()
+                    if maker_status in {"ABANDONED", "FAILED", "PRICE_TIMEOUT", "STOPPED", "PENDING"}:
+                        remain = self._fetch_single_position_size(token_id)
+                        if remain > 0:
+                            taker_count += 1
+                            bid2, ask2 = self._resolve_bid_ask(autorun, token_id)
+                            self._place_sell_ioc(
+                                client,
+                                token_id,
+                                self._compute_taker_price(bid=bid2, ask=ask2),
+                                remain,
+                            )
                 else:
                     taker_count += 1
-                    exit_price = max(0.01, bid if bid > 0 else ask if ask > 0 else 0.01)
-                    self._place_sell_ioc(client, token_id, exit_price, size)
+                    self._place_sell_ioc(client, token_id, self._compute_taker_price(bid=bid, ask=ask), size)
+
                 liquidated += 1
             except Exception as exc:
                 errors.append(f"token={token_id}: {exc}")
@@ -361,36 +477,54 @@ class TotalLiquidationManager:
             "errors": errors,
         }
 
+    @staticmethod
+    def _safe_write_json(path: Path, payload: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def _reset_copytrade_state_files(self) -> None:
+        copytrade_dir = self.project_root.parent / "copytrade"
+        copytrade_dir.mkdir(parents=True, exist_ok=True)
+
+        # 明确保留 copytrade_config.json
+        targets = {
+            "tokens_from_copytrade.json": {"updated_at": "", "tokens": []},
+            "copytrade_sell_signals.json": {"updated_at": "", "sell_tokens": []},
+            "copytrade_state.json": {"targets": {}},
+            "sell_tokens_from_copytrade.json": {"updated_at": "", "sell_tokens": []},
+        }
+        for filename, payload in targets.items():
+            self._safe_write_json(copytrade_dir / filename, payload)
+
     def _hard_reset_files(self, autorun: Any) -> None:
         print("[GLB_LIQ] 执行一刀切重置: logs/json")
 
-        copytrade_dir = self.project_root.parent / "copytrade"
-        targets: List[Path] = [autorun.config.data_dir, autorun.config.log_dir, copytrade_dir]
-
-        for root in targets:
-            if not root.exists():
-                continue
-            for path in sorted(root.rglob("*"), reverse=True):
+        # 1) 日志目录可直接清空
+        if self.cfg.remove_logs and autorun.config.log_dir.exists():
+            for path in sorted(autorun.config.log_dir.rglob("*"), reverse=True):
                 try:
-                    if path.is_file():
-                        if self.cfg.remove_logs and path.suffix.lower() in {".log", ".tmp"}:
-                            path.unlink(missing_ok=True)
-                            continue
-                        if self.cfg.remove_json_state and path.suffix.lower() == ".json":
-                            path.unlink(missing_ok=True)
-                            continue
-                    elif path.is_dir():
-                        if path == root:
-                            continue
-                        try:
-                            if not any(path.iterdir()):
-                                path.rmdir()
-                        except OSError:
-                            pass
+                    if path.is_file() and path.suffix.lower() in {".log", ".tmp"}:
+                        path.unlink(missing_ok=True)
+                    elif path.is_dir() and path != autorun.config.log_dir and not any(path.iterdir()):
+                        path.rmdir()
                 except OSError:
                     continue
 
-        # 重建必要目录
+        # 2) autorun data 目录：清空运行态 JSON，保留 total_liquidation_state.json（频率上限依赖）
+        if self.cfg.remove_json_state and autorun.config.data_dir.exists():
+            keep_names = {"total_liquidation_state.json"}
+            for path in autorun.config.data_dir.glob("*.json"):
+                if path.name in keep_names:
+                    continue
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    continue
+
+        # 3) copytrade 目录：不删配置，只重置状态/信号文件
+        if self.cfg.remove_json_state:
+            self._reset_copytrade_state_files()
+
         autorun.config.log_dir.mkdir(parents=True, exist_ok=True)
         autorun.config.data_dir.mkdir(parents=True, exist_ok=True)
-        copytrade_dir.mkdir(parents=True, exist_ok=True)

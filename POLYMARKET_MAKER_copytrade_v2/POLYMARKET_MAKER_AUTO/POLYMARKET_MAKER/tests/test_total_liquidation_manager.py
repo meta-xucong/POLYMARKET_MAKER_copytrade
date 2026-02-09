@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -31,16 +32,18 @@ class _Lock:
 
 
 class _Autorun:
-    def __init__(self, cfg, running_tasks: int, max_tasks: int = 10):
+    def __init__(self, cfg, running_tasks: int):
         self.config = cfg
         self.tasks = {str(i): _Task(True) for i in range(running_tasks)}
         self._ws_cache_lock = _Lock()
         self._ws_cache = {}
+        self.pending_topics = []
+        self.pending_exit_topics = []
 
 
 def _build_cfg(tmp: Path, enable: bool = True):
     return SimpleNamespace(
-        data_dir=tmp,
+        data_dir=tmp / "data",
         log_dir=tmp / "logs",
         max_concurrent_tasks=10,
         total_liquidation={
@@ -53,8 +56,14 @@ def _build_cfg(tmp: Path, enable: bool = True):
                 "min_free_balance": 20,
                 "require_conditions": 2,
             },
-            "liquidation": {},
-            "reset": {},
+            "liquidation": {
+                "taker_slippage_bps": 30,
+            },
+            "reset": {
+                "hard_reset_enabled": True,
+                "remove_logs": True,
+                "remove_json_state": True,
+            },
         },
     )
 
@@ -62,7 +71,9 @@ def _build_cfg(tmp: Path, enable: bool = True):
 def test_disabled_never_triggers():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=False)
-        mgr = TotalLiquidationManager(cfg, Path(td))
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
         autorun = _Autorun(cfg, running_tasks=0)
         metrics = mgr.update_metrics(autorun)
         ok, reasons = mgr.should_trigger(metrics)
@@ -73,7 +84,9 @@ def test_disabled_never_triggers():
 def test_trigger_with_two_conditions_and_interval_guard():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=True)
-        mgr = TotalLiquidationManager(cfg, Path(td))
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
         autorun = _Autorun(cfg, running_tasks=0)
 
         mgr._idle_since = time.time() - 120
@@ -86,3 +99,50 @@ def test_trigger_with_two_conditions_and_interval_guard():
         mgr._save_state({"last_trigger_ts": time.time()})
         ok2, _ = mgr.should_trigger(metrics)
         assert ok2 is False
+
+
+def test_hard_reset_preserves_copytrade_config_and_clears_state_files():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        project_root = base / "POLYMARKET_MAKER_AUTO"
+        copytrade_dir = base / "copytrade"
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        copytrade_dir.mkdir(parents=True, exist_ok=True)
+
+        # data/log 文件
+        (cfg.log_dir / "a.log").write_text("x", encoding="utf-8")
+        (cfg.data_dir / "autorun_status.json").write_text("{}", encoding="utf-8")
+
+        # copytrade：配置文件应保留，状态文件应清空重建
+        (copytrade_dir / "copytrade_config.json").write_text('{"targets":[1]}', encoding="utf-8")
+        (copytrade_dir / "tokens_from_copytrade.json").write_text('{"tokens":[{"token_id":"1"}]}', encoding="utf-8")
+        (copytrade_dir / "copytrade_sell_signals.json").write_text('{"sell_tokens":[{"token_id":"1"}]}', encoding="utf-8")
+        (copytrade_dir / "copytrade_state.json").write_text('{"targets":{"a":1}}', encoding="utf-8")
+
+        mgr = TotalLiquidationManager(cfg, project_root)
+        autorun = _Autorun(cfg, running_tasks=0)
+        mgr._hard_reset_files(autorun)
+
+        assert (copytrade_dir / "copytrade_config.json").exists()
+        assert not (cfg.log_dir / "a.log").exists()
+        assert not (cfg.data_dir / "autorun_status.json").exists()
+
+        tokens_payload = json.loads((copytrade_dir / "tokens_from_copytrade.json").read_text(encoding="utf-8"))
+        assert tokens_payload.get("tokens") == []
+        signals_payload = json.loads((copytrade_dir / "copytrade_sell_signals.json").read_text(encoding="utf-8"))
+        assert signals_payload.get("sell_tokens") == []
+        state_payload = json.loads((copytrade_dir / "copytrade_state.json").read_text(encoding="utf-8"))
+        assert state_payload.get("targets") == {}
+
+
+def test_taker_price_applies_slippage_bps():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        px = mgr._compute_taker_price(bid=0.5, ask=0.51)
+        assert abs(px - 0.5 * (1 - 0.003)) < 1e-9

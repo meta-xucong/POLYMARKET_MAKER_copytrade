@@ -135,8 +135,8 @@ def main() -> None:
     parser.add_argument(
         "--sell-signals",
         type=Path,
-        default=Path(__file__).with_name("sell_tokens_from_copytrade.json"),
-        help="sell_tokens_from_copytrade.json 路径",
+        default=Path(__file__).with_name("copytrade_sell_signals.json"),
+        help="copytrade_sell_signals.json 路径",
     )
     parser.add_argument(
         "--stale-hours",
