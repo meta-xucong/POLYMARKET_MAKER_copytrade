@@ -822,7 +822,6 @@ class AutoRunManager:
         self._next_sell_full_recheck_at: float = 0.0
         self._sell_position_snapshot: Dict[str, float] = {}
         self._sell_position_snapshot_info: str = ""
-        self._next_sell_position_poll_at: float = 0.0
         # WS 健康分层清理状态
         self._ws_recent_recovery_ts: Dict[str, float] = {}
         self._ws_prev_stale_state: Dict[str, bool] = {}
@@ -3353,6 +3352,8 @@ class AutoRunManager:
         stale = self._completed_exit_cleanup_tokens - active_tokens
         if stale:
             self._completed_exit_cleanup_tokens -= stale
+            for tk in stale:
+                self._exit_cleanup_retry_counts.pop(tk, None)
         payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "handled_topics_total": len(self.handled_topics),
