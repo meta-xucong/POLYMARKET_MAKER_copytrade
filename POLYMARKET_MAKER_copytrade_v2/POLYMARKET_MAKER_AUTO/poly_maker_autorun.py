@@ -38,6 +38,7 @@ if str(MAKER_ROOT) not in sys.path:
 
 DEFAULT_GLOBAL_CONFIG = {
     "copytrade_poll_sec": 30.0,
+    "sell_position_poll_interval_sec": 600.0,
     "command_poll_sec": 5.0,
     "max_concurrent_tasks": 10,
     "max_exit_cleanup_tasks": 3,  # 清仓任务独立槽位，不受 max_concurrent_tasks 限制
@@ -201,6 +202,18 @@ def _position_matches_token(entry: Dict[str, Any], token_id: str) -> bool:
     return False
 
 
+def _extract_position_token_id(entry: Dict[str, Any]) -> Optional[str]:
+    token_keys = ("token_id", "tokenId", "token", "asset", "asset_id")
+    for key in token_keys:
+        val = entry.get(key)
+        if val is None:
+            continue
+        token_id = str(val).strip()
+        if token_id:
+            return token_id
+    return None
+
+
 def _extract_position_size(entry: Dict[str, Any]) -> Optional[float]:
     size_keys = (
         "size",
@@ -285,6 +298,72 @@ def _fetch_position_size_from_data_api(
 
         offset += len(positions)
     return None, "未找到持仓记录"
+
+
+def _fetch_position_snapshot_map_from_data_api(
+    address: str,
+) -> tuple[Dict[str, float], str]:
+    if not address:
+        return {}, "缺少地址，无法查询持仓。"
+    url = f"{DATA_API_ROOT}/positions"
+    limit = 500
+    offset = 0
+    snapshot: Dict[str, float] = {}
+    while True:
+        params = {
+            "user": address,
+            "limit": limit,
+            "offset": offset,
+            "sizeThreshold": 0,
+        }
+        try:
+            with _data_api_request_lock:
+                global _data_api_last_request_ts
+                now = time.time()
+                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
+                if wait_sec > 0:
+                    time.sleep(wait_sec)
+                _data_api_last_request_ts = time.time()
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 404:
+                return {}, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
+            resp.raise_for_status()
+            payload = resp.json()
+        except requests.RequestException as exc:
+            return {}, f"数据接口请求失败：{exc}"
+        except ValueError:
+            return {}, "数据接口响应解析失败"
+
+        if isinstance(payload, list):
+            positions = payload
+        elif isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                positions = data
+            elif isinstance(data, dict) and isinstance(data.get("positions"), list):
+                positions = data.get("positions")
+            else:
+                positions = payload.get("positions")
+        else:
+            positions = None
+        if positions is None:
+            return {}, "数据接口返回格式异常，positions 未找到。"
+        if not isinstance(positions, list):
+            return {}, "数据接口返回格式异常，positions 非列表。"
+
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            token_id = _extract_position_token_id(pos)
+            if not token_id:
+                continue
+            pos_size = float(_extract_position_size(pos) or 0.0)
+            snapshot[token_id] = pos_size
+
+        if not positions:
+            break
+        offset += len(positions)
+    return snapshot, "ok"
 
 
 def _topic_id_from_entry(entry: Any) -> str:
@@ -412,6 +491,9 @@ def compute_new_topics(latest: List[Any], handled: set[str]) -> List[str]:
 @dataclass
 class GlobalConfig:
     copytrade_poll_sec: float = DEFAULT_GLOBAL_CONFIG["copytrade_poll_sec"]
+    sell_position_poll_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "sell_position_poll_interval_sec"
+    ]
     command_poll_sec: float = DEFAULT_GLOBAL_CONFIG["command_poll_sec"]
     max_concurrent_tasks: int = DEFAULT_GLOBAL_CONFIG["max_concurrent_tasks"]
     max_exit_cleanup_tasks: int = DEFAULT_GLOBAL_CONFIG["max_exit_cleanup_tasks"]
@@ -518,6 +600,13 @@ class GlobalConfig:
                 scheduler.get("copytrade_poll_seconds")
                 or merged.get(
                     "copytrade_poll_sec", DEFAULT_GLOBAL_CONFIG["copytrade_poll_sec"]
+                )
+            ),
+            sell_position_poll_interval_sec=float(
+                scheduler.get("sell_position_poll_interval_sec")
+                or merged.get(
+                    "sell_position_poll_interval_sec",
+                    DEFAULT_GLOBAL_CONFIG["sell_position_poll_interval_sec"],
                 )
             ),
             command_poll_sec=float(
@@ -729,6 +818,9 @@ class AutoRunManager:
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
         self._position_address_warned: bool = False
+        self._sell_position_snapshot: Dict[str, float] = {}
+        self._sell_position_snapshot_info: str = "snapshot-not-ready"
+        self._next_sell_position_poll_at: float = 0.0
         # WS 健康分层清理状态
         self._ws_recent_recovery_ts: Dict[str, float] = {}
         self._ws_prev_stale_state: Dict[str, bool] = {}
@@ -2977,6 +3069,8 @@ class AutoRunManager:
         new_signals = sell_signals - self._handled_sell_signals
         if not new_signals:
             return
+        # 启动后先查一次，随后按固定周期复查，避免每轮都查询持仓。
+        self._refresh_sell_position_snapshot_if_needed()
         for token_id in new_signals:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
@@ -2995,7 +3089,13 @@ class AutoRunManager:
                 continue
 
             if not has_running_task and not has_history:
-                if not self._has_account_position(token_id):
+                pos_size = float(self._sell_position_snapshot.get(token_id, 0.0) or 0.0)
+                has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+                if not has_position:
+                    info = self._sell_position_snapshot_info
+                    if info == "ok":
+                        info = "未找到持仓记录"
+                    print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={info}")
                     print(
                         "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
                         f"token_id={token_id}"
@@ -3020,6 +3120,43 @@ class AutoRunManager:
                 ):
                     self.pending_exit_topics.append(token_id)
             self._handled_sell_signals.add(token_id)
+
+    def _refresh_sell_position_snapshot_if_needed(self, *, force: bool = False) -> None:
+        now = time.time()
+        if not force and now < self._next_sell_position_poll_at:
+            return
+
+        if not self._position_address:
+            address, origin = _resolve_position_address_from_env()
+            self._position_address = address
+            self._position_address_origin = origin
+            if not address and not self._position_address_warned:
+                self._position_address_warned = True
+                print(f"[COPYTRADE][WARN] {origin}")
+
+        if not self._position_address:
+            self._sell_position_snapshot = {}
+            self._sell_position_snapshot_info = "缺少地址，无法查询持仓。"
+            self._next_sell_position_poll_at = now + max(
+                30.0,
+                float(self.config.sell_position_poll_interval_sec),
+            )
+            return
+
+        snapshot, info = _fetch_position_snapshot_map_from_data_api(self._position_address)
+        self._sell_position_snapshot = snapshot
+        self._sell_position_snapshot_info = info
+        self._next_sell_position_poll_at = now + max(
+            30.0,
+            float(self.config.sell_position_poll_interval_sec),
+        )
+        if info == "ok":
+            print(
+                "[COPYTRADE][INFO] SELL 持仓快照已刷新: "
+                f"positions={len(snapshot)} next_in={int(self.config.sell_position_poll_interval_sec)}s"
+            )
+        else:
+            print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info}")
 
     def _cleanup_old_logs(self) -> None:
         """清理7天前的日志文件，每天只执行一次"""
