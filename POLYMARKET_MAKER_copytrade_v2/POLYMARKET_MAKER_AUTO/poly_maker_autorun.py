@@ -3098,7 +3098,13 @@ class AutoRunManager:
                 continue
 
             if not has_running_task and not has_history:
-                if not self._has_account_position(token_id):
+                pos_size = float(self._sell_position_snapshot.get(token_id, 0.0) or 0.0)
+                has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+                if not has_position:
+                    info = self._sell_position_snapshot_info
+                    if info == "ok":
+                        info = "未找到持仓记录"
+                    print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={info}")
                     print(
                         "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
                         f"token_id={token_id}"
@@ -3190,6 +3196,43 @@ class AutoRunManager:
         else:
             print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info}")
         return snapshot, info
+
+    def _refresh_sell_position_snapshot_if_needed(self, *, force: bool = False) -> None:
+        now = time.time()
+        if not force and now < self._next_sell_position_poll_at:
+            return
+
+        if not self._position_address:
+            address, origin = _resolve_position_address_from_env()
+            self._position_address = address
+            self._position_address_origin = origin
+            if not address and not self._position_address_warned:
+                self._position_address_warned = True
+                print(f"[COPYTRADE][WARN] {origin}")
+
+        if not self._position_address:
+            self._sell_position_snapshot = {}
+            self._sell_position_snapshot_info = "缺少地址，无法查询持仓。"
+            self._next_sell_position_poll_at = now + max(
+                30.0,
+                float(self.config.sell_position_poll_interval_sec),
+            )
+            return
+
+        snapshot, info = _fetch_position_snapshot_map_from_data_api(self._position_address)
+        self._sell_position_snapshot = snapshot
+        self._sell_position_snapshot_info = info
+        self._next_sell_position_poll_at = now + max(
+            30.0,
+            float(self.config.sell_position_poll_interval_sec),
+        )
+        if info == "ok":
+            print(
+                "[COPYTRADE][INFO] SELL 持仓快照已刷新: "
+                f"positions={len(snapshot)} next_in={int(self.config.sell_position_poll_interval_sec)}s"
+            )
+        else:
+            print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info}")
 
     def _cleanup_old_logs(self) -> None:
         """清理7天前的日志文件，每天只执行一次"""
