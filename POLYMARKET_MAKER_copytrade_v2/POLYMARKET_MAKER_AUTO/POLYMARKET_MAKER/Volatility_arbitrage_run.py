@@ -3096,50 +3096,25 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             status_code = info.get("status_code")
             print(f"[WS] 连接关闭（code={status_code}），等待重连…")
 
-    # 健康检查：即使设置了共享 WS，也要验证文件是否存在
+    # 健康检查：共享 WS 仅告警，不在启动瞬间直接 fatal。
+    # 由后续等待循环统一判断是否超时/长期无数据，避免短暂聚合器抖动导致整批 token 被清空。
     if use_shared_ws:
         print(f"[WS][SHARED] ✓ 将使用共享 WS 缓存模式")
         print(f"[WS][SHARED] 缓存路径: {shared_ws_cache_path}")
         if not os.path.exists(shared_ws_cache_path):
-            print(f"[WS][SHARED] ✗ 缓存文件不存在")
-            print(f"[WS][FATAL] 共享WS不可用，禁止切换独立WS，退出")
-            _cancel_open_buy_orders_before_exit("SHARED_WS_UNAVAILABLE")
-            _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
-                "cache_path": shared_ws_cache_path,
-                "reason": "missing",
-            })
-            strategy.stop("shared ws unavailable")
-            stop_event.set()
-            return
+            print("[WS][SHARED][WARN] 缓存文件不存在，进入等待循环后继续观察")
         else:
-            # 检查文件是否过期（超过5分钟未更新）
             try:
                 file_age = time.time() - os.path.getmtime(shared_ws_cache_path)
                 if file_age > 300:
-                    print(f"[WS][SHARED] ✗ 缓存文件过期（{file_age:.0f}秒未更新）")
-                    print(f"[WS][FATAL] 共享WS缓存过期，禁止切换独立WS，退出")
-                    _cancel_open_buy_orders_before_exit("SHARED_WS_UNAVAILABLE")
-                    _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
-                        "cache_path": shared_ws_cache_path,
-                        "reason": "stale",
-                        "file_age_seconds": file_age,
-                    })
-                    strategy.stop("shared ws unavailable")
-                    stop_event.set()
-                    return
+                    print(
+                        f"[WS][SHARED][WARN] 缓存文件较旧（{file_age:.0f}秒未更新），"
+                        "先进入等待循环，不立即退出"
+                    )
                 else:
                     print(f"[WS][SHARED] ✓ 缓存文件新鲜（{file_age:.0f}秒前更新）")
             except OSError:
-                print("[WARN] 无法读取共享 WS 缓存文件状态")
-                print("[WS][FATAL] 共享WS状态不可读，禁止切换独立WS，退出")
-                _cancel_open_buy_orders_before_exit("SHARED_WS_UNAVAILABLE")
-                _record_exit_token(token_id, "SHARED_WS_UNAVAILABLE", {
-                    "cache_path": shared_ws_cache_path,
-                    "reason": "stat_failed",
-                })
-                strategy.stop("shared ws unavailable")
-                stop_event.set()
-                return
+                print("[WS][SHARED][WARN] 无法读取共享 WS 缓存文件状态，进入等待循环后继续观察")
 
     if not use_shared_ws:
         print("[WS][FATAL] 独立WS已被禁用，但use_shared_ws=False，退出")
