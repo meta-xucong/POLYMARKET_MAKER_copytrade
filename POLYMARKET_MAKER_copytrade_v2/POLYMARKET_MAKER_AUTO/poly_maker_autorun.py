@@ -84,6 +84,7 @@ DEFAULT_GLOBAL_CONFIG = {
         "trigger": {
             "idle_slot_ratio_threshold": 0.5,
             "idle_slot_duration_minutes": 120.0,
+            "startup_grace_hours": 6.0,
             "no_trade_duration_minutes": 180.0,
             "min_free_balance": 20.0,
             "balance_poll_interval_sec": 120.0,

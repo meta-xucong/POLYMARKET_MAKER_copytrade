@@ -95,6 +95,7 @@ python3 copytrade/analyze_throughput_stagnation.py --stale-hours 24
 | `scheduler.total_liquidation.min_interval_hours` | 两次总清仓之间的最小间隔小时数（频率上限）。 | `72` |
 | `scheduler.total_liquidation.trigger.idle_slot_ratio_threshold` | 空闲槽位比例阈值。 | `0.5` |
 | `scheduler.total_liquidation.trigger.idle_slot_duration_minutes` | 空闲槽位持续时长阈值（分钟）。 | `120` |
+| `scheduler.total_liquidation.trigger.startup_grace_hours` | 启动保护期（小时）：保护期内不计算“空闲槽位”触发条件，避免冷启动误触发。 | `6` |
 | `scheduler.total_liquidation.trigger.no_trade_duration_minutes` | 长时间无成交/无活跃更新阈值（分钟）。 | `180` |
 | `scheduler.total_liquidation.trigger.min_free_balance` | 可用余额阈值（USDC）；按官方 `get_balance_allowance(BalanceAllowanceParams)` 获取 COLLATERAL 余额，失败时可用环境变量 `POLY_FREE_BALANCE_OVERRIDE` 覆盖。 | `20.0` |
 | `scheduler.total_liquidation.trigger.balance_poll_interval_sec` | 可用余额采样间隔（秒），用于避免每轮主循环都访问余额接口。 | `120` |

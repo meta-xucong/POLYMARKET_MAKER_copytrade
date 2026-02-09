@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import types
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -52,6 +53,7 @@ def _build_cfg(tmp: Path, enable: bool = True):
             "trigger": {
                 "idle_slot_ratio_threshold": 0.5,
                 "idle_slot_duration_minutes": 1,
+                "startup_grace_hours": 6,
                 "no_trade_duration_minutes": 1,
                 "min_free_balance": 20,
                 "require_conditions": 2,
@@ -87,6 +89,7 @@ def test_trigger_with_two_conditions_and_interval_guard():
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         cfg.log_dir.mkdir(parents=True, exist_ok=True)
         mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        mgr.cfg.startup_grace_hours = 0
         autorun = _Autorun(cfg, running_tasks=0)
 
         mgr._idle_since = time.time() - 120
@@ -173,3 +176,62 @@ def test_balance_probe_is_rate_limited():
         assert v1 == 100.0
         assert v2 == 100.0
         assert fake.calls == 1
+
+
+def test_startup_grace_blocks_idle_trigger():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        cfg.total_liquidation["trigger"]["startup_grace_hours"] = 6
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        autorun = _Autorun(cfg, running_tasks=0)
+
+        mgr._idle_since = time.time() - 3600
+        mgr._last_trade_activity_ts = time.time()
+        metrics = mgr.update_metrics(autorun)
+        ok, reasons = mgr.should_trigger(metrics)
+        assert ok is False
+        assert all("idle_slots" not in r for r in reasons)
+
+
+def test_liquidation_scope_only_copytrade_tokens():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        project_root = base / "POLYMARKET_MAKER_AUTO"
+        copytrade_dir = base / "copytrade"
+        copytrade_dir.mkdir(parents=True, exist_ok=True)
+        (copytrade_dir / "tokens_from_copytrade.json").write_text(
+            '{"tokens":[{"token_id":"A"}]}' , encoding="utf-8"
+        )
+        (copytrade_dir / "copytrade_sell_signals.json").write_text(
+            '{"sell_tokens":[]}', encoding="utf-8"
+        )
+
+        mgr = TotalLiquidationManager(cfg, project_root)
+
+        fake_mod = types.ModuleType("maker_execution")
+        fake_mod.maker_sell_follow_ask_with_floor_wait = lambda **kwargs: {"status": "FILLED"}
+        sys.modules["maker_execution"] = fake_mod
+
+        mgr._fetch_positions = lambda: [
+            {"token_id": "A", "size": 10, "price": 0.5},
+            {"token_id": "B", "size": 10, "price": 0.5},
+        ]
+
+        called = []
+        mgr._place_sell_ioc = lambda client, token_id, price, size: called.append(token_id) or {}
+
+        class _Client:
+            pass
+
+        mgr._cached_client = _Client()
+
+        autorun = _Autorun(cfg, running_tasks=0)
+        result = mgr._liquidate_positions(autorun)
+        assert result["liquidated"] == 1
+        assert called == ["A"]

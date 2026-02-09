@@ -17,6 +17,7 @@ class LiquidationConfig:
     min_interval_hours: float = 72.0
     idle_slot_ratio_threshold: float = 0.5
     idle_slot_duration_minutes: float = 120.0
+    startup_grace_hours: float = 6.0
     no_trade_duration_minutes: float = 180.0
     min_free_balance: float = 20.0
     balance_poll_interval_sec: float = 120.0
@@ -40,6 +41,7 @@ class LiquidationConfig:
             min_interval_hours=float(raw.get("min_interval_hours", 72.0)),
             idle_slot_ratio_threshold=float(trigger.get("idle_slot_ratio_threshold", 0.5)),
             idle_slot_duration_minutes=float(trigger.get("idle_slot_duration_minutes", 120.0)),
+            startup_grace_hours=max(0.0, float(trigger.get("startup_grace_hours", 6.0))),
             no_trade_duration_minutes=float(trigger.get("no_trade_duration_minutes", 180.0)),
             min_free_balance=float(trigger.get("min_free_balance", 20.0)),
             balance_poll_interval_sec=max(5.0, float(trigger.get("balance_poll_interval_sec", 120.0))),
@@ -67,6 +69,7 @@ class TotalLiquidationManager:
         self._last_trade_activity_ts: float = time.time()
 
         self._state = self._load_state()
+        self._started_at_ts: float = time.time()
 
         self._cached_client: Optional[Any] = None
         self._next_client_retry_at: float = 0.0
@@ -121,6 +124,8 @@ class TotalLiquidationManager:
             self._last_trade_activity_ts = max(self._last_trade_activity_ts, latest_ws_update)
 
         free_balance = self._query_free_balance_usdc(autorun)
+        startup_grace_sec = max(0.0, self.cfg.startup_grace_hours * 3600.0)
+        in_startup_grace = (now - self._started_at_ts) < startup_grace_sec
 
         return {
             "running": running,
@@ -129,6 +134,7 @@ class TotalLiquidationManager:
             "idle_since": self._idle_since,
             "last_trade_activity_ts": self._last_trade_activity_ts,
             "free_balance": free_balance,
+            "in_startup_grace": in_startup_grace,
         }
 
     def should_trigger(self, metrics: Dict[str, Any]) -> Tuple[bool, List[str]]:
@@ -142,8 +148,10 @@ class TotalLiquidationManager:
 
         reasons: List[str] = []
 
+        in_startup_grace = bool(metrics.get("in_startup_grace", False))
+
         idle_since = metrics.get("idle_since")
-        if idle_since is not None:
+        if idle_since is not None and not in_startup_grace:
             idle_minutes = (now - float(idle_since)) / 60.0
             if idle_minutes >= self.cfg.idle_slot_duration_minutes:
                 reasons.append(
@@ -407,6 +415,30 @@ class TotalLiquidationManager:
                 return max(self._extract_size(entry), 0.0)
         return 0.0
 
+    def _load_copytrade_token_scope(self) -> set[str]:
+        copytrade_dir = self.project_root.parent / "copytrade"
+        tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+        signals_path = copytrade_dir / "copytrade_sell_signals.json"
+        token_ids: set[str] = set()
+
+        for path, key in ((tokens_path, "tokens"), (signals_path, "sell_tokens")):
+            if not path.exists():
+                continue
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                rows = payload.get(key) if isinstance(payload, dict) else None
+                if isinstance(rows, list):
+                    for item in rows:
+                        if not isinstance(item, dict):
+                            continue
+                        tid = item.get("token_id") or item.get("tokenId")
+                        if tid is not None and str(tid).strip():
+                            token_ids.add(str(tid).strip())
+            except Exception:
+                continue
+        return token_ids
+
     def _liquidate_positions(self, autorun: Any) -> Dict[str, Any]:
         from maker_execution import maker_sell_follow_ask_with_floor_wait
 
@@ -415,6 +447,7 @@ class TotalLiquidationManager:
             return {"liquidated": 0, "maker_count": 0, "taker_count": 0, "errors": ["client init failed"]}
 
         positions = self._fetch_positions()
+        allowed_token_ids = self._load_copytrade_token_scope()
 
         maker_count = 0
         taker_count = 0
@@ -424,6 +457,8 @@ class TotalLiquidationManager:
         for entry in positions:
             token_id = self._extract_token(entry)
             if not token_id:
+                continue
+            if allowed_token_ids and token_id not in allowed_token_ids:
                 continue
 
             size = self._extract_size(entry)
