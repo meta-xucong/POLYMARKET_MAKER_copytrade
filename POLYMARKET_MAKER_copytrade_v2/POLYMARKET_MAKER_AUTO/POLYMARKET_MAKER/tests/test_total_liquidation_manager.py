@@ -146,3 +146,30 @@ def test_taker_price_applies_slippage_bps():
 
         px = mgr._compute_taker_price(bid=0.5, ask=0.51)
         assert abs(px - 0.5 * (1 - 0.003)) < 1e-9
+
+
+def test_balance_probe_is_rate_limited():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        cfg.total_liquidation["trigger"]["balance_poll_interval_sec"] = 9999
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        class _FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def get_balance_allowance(self, params):
+                self.calls += 1
+                return {"balance": "100"}
+
+        fake = _FakeClient()
+        mgr._cached_client = fake
+        autorun = _Autorun(cfg, running_tasks=0)
+
+        v1 = mgr._query_free_balance_usdc(autorun)
+        v2 = mgr._query_free_balance_usdc(autorun)
+        assert v1 == 100.0
+        assert v2 == 100.0
+        assert fake.calls == 1

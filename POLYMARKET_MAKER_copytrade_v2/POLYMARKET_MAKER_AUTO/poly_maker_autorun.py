@@ -86,6 +86,7 @@ DEFAULT_GLOBAL_CONFIG = {
             "idle_slot_duration_minutes": 120.0,
             "no_trade_duration_minutes": 180.0,
             "min_free_balance": 20.0,
+            "balance_poll_interval_sec": 120.0,
             "require_conditions": 2,
         },
         "liquidation": {

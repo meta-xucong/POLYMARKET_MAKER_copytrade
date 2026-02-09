@@ -19,6 +19,7 @@ class LiquidationConfig:
     idle_slot_duration_minutes: float = 120.0
     no_trade_duration_minutes: float = 180.0
     min_free_balance: float = 20.0
+    balance_poll_interval_sec: float = 120.0
     require_conditions: int = 2
     position_value_threshold: float = 3.0
     spread_threshold: float = 0.01
@@ -41,6 +42,7 @@ class LiquidationConfig:
             idle_slot_duration_minutes=float(trigger.get("idle_slot_duration_minutes", 120.0)),
             no_trade_duration_minutes=float(trigger.get("no_trade_duration_minutes", 180.0)),
             min_free_balance=float(trigger.get("min_free_balance", 20.0)),
+            balance_poll_interval_sec=max(5.0, float(trigger.get("balance_poll_interval_sec", 120.0))),
             require_conditions=max(1, int(trigger.get("require_conditions", 2))),
             position_value_threshold=float(liquidation.get("position_value_threshold", 3.0)),
             spread_threshold=float(liquidation.get("spread_threshold", 0.01)),
@@ -65,6 +67,11 @@ class TotalLiquidationManager:
         self._last_trade_activity_ts: float = time.time()
 
         self._state = self._load_state()
+
+        self._cached_client: Optional[Any] = None
+        self._next_client_retry_at: float = 0.0
+        self._cached_free_balance: Optional[float] = None
+        self._next_balance_probe_at: float = 0.0
 
     def _load_state(self) -> Dict[str, Any]:
         if not self.state_path.exists():
@@ -168,17 +175,14 @@ class TotalLiquidationManager:
         }
 
         try:
-            # 1) 停止当前运行任务/订阅
             autorun._stop_ws_aggregator()
             autorun._cleanup_all_tasks()
             autorun.pending_topics.clear()
             autorun.pending_exit_topics.clear()
 
-            # 2) 执行清仓
             liquidation_stats = self._liquidate_positions(autorun)
             result.update(liquidation_stats)
 
-            # 3) 记录状态（先记录再重置，保证频率上限可持续生效）
             now = time.time()
             state = {
                 "last_trigger_ts": now,
@@ -188,7 +192,6 @@ class TotalLiquidationManager:
             }
             self._save_state(state)
 
-            # 4) 一刀切重置（保留 copytrade_config 与 total_liquidation_state）
             if self.cfg.hard_reset_enabled:
                 self._hard_reset_files(autorun)
                 result["hard_reset"] = True
@@ -213,50 +216,38 @@ class TotalLiquidationManager:
             except ValueError:
                 return None
         if isinstance(payload, dict):
-            keys = (
-                "available",
-                "available_balance",
-                "availableBalance",
-                "free",
-                "balance",
-                "amount",
-                "value",
-                "usdc",
-                "USDC",
-            )
-            for k in keys:
-                if k in payload:
-                    parsed = TotalLiquidationManager._extract_first_float(payload[k])
+            for key in ("available", "availableBalance", "available_balance", "balance", "amount", "value"):
+                if key in payload:
+                    parsed = TotalLiquidationManager._extract_first_float(payload[key])
                     if parsed is not None:
                         return parsed
             for v in payload.values():
                 parsed = TotalLiquidationManager._extract_first_float(v)
                 if parsed is not None:
                     return parsed
-            return None
         if isinstance(payload, (list, tuple)):
             for item in payload:
                 parsed = TotalLiquidationManager._extract_first_float(item)
                 if parsed is not None:
                     return parsed
-            return None
         return None
 
-    def _call_balance_method(self, obj: Any, method_name: str) -> Optional[float]:
-        method = getattr(obj, method_name, None)
-        if not callable(method):
+    def _get_cached_client(self) -> Optional[Any]:
+        now = time.time()
+        if self._cached_client is not None:
+            return self._cached_client
+        if now < self._next_client_retry_at:
             return None
-        for args in ((), ("USDC",), ("usdc",), ({"asset": "USDC"},), ({"token": "USDC"},)):
-            try:
-                resp = method(*args)
-                parsed = self._extract_first_float(resp)
-                if parsed is not None:
-                    return parsed
-            except Exception:
-                continue
-        return None
+        try:
+            self._cached_client = self._load_client()
+            return self._cached_client
+        except Exception:
+            self._next_client_retry_at = now + 60.0
+            return None
 
     def _query_free_balance_usdc(self, autorun: Any) -> Optional[float]:
+        if not self.cfg.enabled:
+            return None
         override = os.getenv("POLY_FREE_BALANCE_OVERRIDE")
         if override is not None:
             try:
@@ -264,30 +255,44 @@ class TotalLiquidationManager:
             except ValueError:
                 return None
 
-        # 尝试直接从 client / private 上提取余额（不影响主流程，失败则返回 None）
+        now = time.time()
+        if now < self._next_balance_probe_at:
+            return self._cached_free_balance
+
+        self._next_balance_probe_at = now + self.cfg.balance_poll_interval_sec
+
+        client = self._get_cached_client()
+        if client is None:
+            return self._cached_free_balance
+
+        # 严格使用官方 py-clob-client 方法：get_balance_allowance(BalanceAllowanceParams)
+        get_balance_allowance = getattr(client, "get_balance_allowance", None)
+        if not callable(get_balance_allowance):
+            return self._cached_free_balance
+
         try:
-            client = self._load_client()
+            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.COLLATERAL,
+                token_id=None,
+                signature_type=-1,
+            )
+            resp = get_balance_allowance(params)
+            parsed = self._extract_first_float(resp)
+            if parsed is not None:
+                self._cached_free_balance = parsed
         except Exception:
-            return None
+            # 在本地缺少 py_clob_client 类型定义时，仍尝试调用官方同名方法。
+            try:
+                resp = get_balance_allowance(None)
+                parsed = self._extract_first_float(resp)
+                if parsed is not None:
+                    self._cached_free_balance = parsed
+            except Exception:
+                pass
 
-        candidates: List[Any] = [client]
-        private = getattr(client, "private", None)
-        if private is not None:
-            candidates.append(private)
-
-        for obj in candidates:
-            for name in (
-                "get_balance_allowance",
-                "get_balance",
-                "get_balances",
-                "get_available_balance",
-                "balance_allowance",
-                "balance",
-            ):
-                value = self._call_balance_method(obj, name)
-                if value is not None:
-                    return value
-        return None
+        return self._cached_free_balance
 
     def _resolve_wallet(self) -> Optional[str]:
         for key in ("POLY_DATA_ADDRESS", "POLY_FUNDER", "POLY_WALLET", "POLY_ADDRESS"):
@@ -405,7 +410,10 @@ class TotalLiquidationManager:
     def _liquidate_positions(self, autorun: Any) -> Dict[str, Any]:
         from maker_execution import maker_sell_follow_ask_with_floor_wait
 
-        client = self._load_client()
+        client = self._get_cached_client()
+        if client is None:
+            return {"liquidated": 0, "maker_count": 0, "taker_count": 0, "errors": ["client init failed"]}
+
         positions = self._fetch_positions()
 
         maker_count = 0
@@ -487,7 +495,6 @@ class TotalLiquidationManager:
         copytrade_dir = self.project_root.parent / "copytrade"
         copytrade_dir.mkdir(parents=True, exist_ok=True)
 
-        # 明确保留 copytrade_config.json
         targets = {
             "tokens_from_copytrade.json": {"updated_at": "", "tokens": []},
             "copytrade_sell_signals.json": {"updated_at": "", "sell_tokens": []},
@@ -500,7 +507,6 @@ class TotalLiquidationManager:
     def _hard_reset_files(self, autorun: Any) -> None:
         print("[GLB_LIQ] 执行一刀切重置: logs/json")
 
-        # 1) 日志目录可直接清空
         if self.cfg.remove_logs and autorun.config.log_dir.exists():
             for path in sorted(autorun.config.log_dir.rglob("*"), reverse=True):
                 try:
@@ -511,7 +517,6 @@ class TotalLiquidationManager:
                 except OSError:
                     continue
 
-        # 2) autorun data 目录：清空运行态 JSON，保留 total_liquidation_state.json（频率上限依赖）
         if self.cfg.remove_json_state and autorun.config.data_dir.exists():
             keep_names = {"total_liquidation_state.json"}
             for path in autorun.config.data_dir.glob("*.json"):
@@ -522,7 +527,6 @@ class TotalLiquidationManager:
                 except OSError:
                     continue
 
-        # 3) copytrade 目录：不删配置，只重置状态/信号文件
         if self.cfg.remove_json_state:
             self._reset_copytrade_state_files()
 
