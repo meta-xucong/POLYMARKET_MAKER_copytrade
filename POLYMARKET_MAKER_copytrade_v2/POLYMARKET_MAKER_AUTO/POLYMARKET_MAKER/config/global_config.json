@@ -6,7 +6,30 @@
     "enable_slot_refill": true,
     "refill_cooldown_minutes": 30,
     "max_refill_retries": 3,
-    "refill_check_interval_sec": 60.0
+    "refill_check_interval_sec": 60.0,
+    "total_liquidation": {
+      "enable_total_liquidation": false,
+      "min_interval_hours": 72.0,
+      "trigger": {
+        "idle_slot_ratio_threshold": 0.5,
+        "idle_slot_duration_minutes": 120.0,
+        "no_trade_duration_minutes": 180.0,
+        "min_free_balance": 20.0,
+        "require_conditions": 2,
+        "balance_poll_interval_sec": 120.0
+      },
+      "liquidation": {
+        "position_value_threshold": 3.0,
+        "spread_threshold": 0.01,
+        "maker_timeout_minutes": 20.0,
+        "taker_slippage_bps": 30.0
+      },
+      "reset": {
+        "hard_reset_enabled": true,
+        "remove_logs": true,
+        "remove_json_state": true
+      }
+    }
   },
   "maker": {
     "poll_sec": 10.0,
