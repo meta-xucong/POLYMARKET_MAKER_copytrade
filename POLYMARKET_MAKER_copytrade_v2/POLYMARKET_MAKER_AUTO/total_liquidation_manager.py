@@ -168,12 +168,14 @@ class TotalLiquidationManager:
 
         return len(reasons) >= self.cfg.require_conditions, reasons
 
-    def _precheck_liquidation_ready(self) -> Optional[str]:
-        if self._get_cached_client() is None:
-            return "client init failed"
-        if not self._load_copytrade_token_scope():
-            return "copytrade token scope is empty; skip liquidation for safety"
-        return None
+    def _precheck_liquidation_ready(self) -> Tuple[Optional[str], Optional[Any], Optional[set[str]]]:
+        client = self._get_cached_client()
+        if client is None:
+            return "client init failed", None, None
+        allowed_token_ids = self._load_copytrade_token_scope()
+        if not allowed_token_ids:
+            return "copytrade token scope is empty; skip liquidation for safety", None, None
+        return None, client, allowed_token_ids
 
     def execute(self, autorun: Any, reasons: List[str]) -> Dict[str, Any]:
         self._running = True
@@ -190,7 +192,7 @@ class TotalLiquidationManager:
         }
 
         try:
-            precheck_error = self._precheck_liquidation_ready()
+            precheck_error, prechecked_client, prechecked_token_scope = self._precheck_liquidation_ready()
             if precheck_error:
                 result.update({"errors": [precheck_error], "aborted": True})
                 now = time.time()
@@ -210,7 +212,11 @@ class TotalLiquidationManager:
             autorun.pending_topics.clear()
             autorun.pending_exit_topics.clear()
 
-            liquidation_stats = self._liquidate_positions(autorun)
+            liquidation_stats = self._liquidate_positions(
+                autorun,
+                prechecked_client=prechecked_client,
+                prechecked_token_scope=prechecked_token_scope,
+            )
             result.update(liquidation_stats)
 
             now = time.time()
@@ -479,15 +485,21 @@ class TotalLiquidationManager:
                 continue
         return token_ids
 
-    def _liquidate_positions(self, autorun: Any) -> Dict[str, Any]:
+    def _liquidate_positions(
+        self,
+        autorun: Any,
+        *,
+        prechecked_client: Optional[Any] = None,
+        prechecked_token_scope: Optional[set[str]] = None,
+    ) -> Dict[str, Any]:
         from maker_execution import maker_sell_follow_ask_with_floor_wait
 
-        client = self._get_cached_client()
+        client = prechecked_client if prechecked_client is not None else self._get_cached_client()
         if client is None:
             return {"liquidated": 0, "maker_count": 0, "taker_count": 0, "errors": ["client init failed"], "aborted": True}
 
         positions = self._fetch_positions()
-        allowed_token_ids = self._load_copytrade_token_scope()
+        allowed_token_ids = prechecked_token_scope if prechecked_token_scope is not None else self._load_copytrade_token_scope()
         if not allowed_token_ids:
             return {
                 "liquidated": 0,

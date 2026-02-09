@@ -360,7 +360,7 @@ def test_execute_precheck_abort_keeps_runtime_intact():
         cfg.log_dir.mkdir(parents=True, exist_ok=True)
 
         mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
-        mgr._precheck_liquidation_ready = lambda: "client init failed"
+        mgr._precheck_liquidation_ready = lambda: ("client init failed", None, None)
 
         class _Evt:
             def __init__(self):
@@ -402,7 +402,7 @@ def test_execute_exception_requests_restart():
         cfg.log_dir.mkdir(parents=True, exist_ok=True)
 
         mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
-        mgr._precheck_liquidation_ready = lambda: None
+        mgr._precheck_liquidation_ready = lambda: (None, object(), {"A"})
 
         class _Evt:
             def __init__(self):
@@ -423,9 +423,53 @@ def test_execute_exception_requests_restart():
             def _cleanup_all_tasks(self):
                 return None
 
-        mgr._liquidate_positions = lambda _a: (_ for _ in ()).throw(RuntimeError("boom"))
+        mgr._liquidate_positions = lambda _a, **_kw: (_ for _ in ()).throw(RuntimeError("boom"))
 
         autorun = _Run()
         result = mgr.execute(autorun, ["cond_a", "cond_b"])
         assert any("boom" in e for e in result["errors"])
+        assert autorun.stop_event.called is True
+
+
+def test_execute_uses_prechecked_scope_without_reloading():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = []
+                self.pending_exit_topics = []
+                self.stop_event = _Evt()
+
+            def _stop_ws_aggregator(self):
+                return None
+
+            def _cleanup_all_tasks(self):
+                return None
+
+        fake_client = object()
+        mgr._precheck_liquidation_ready = lambda: (None, fake_client, {"A"})
+        mgr._load_copytrade_token_scope = lambda: (_ for _ in ()).throw(RuntimeError("should not reload scope"))
+        mgr._fetch_positions = lambda: [{"token_id": "A", "size": 10, "price": 0.5}]
+        mgr._resolve_bid_ask = lambda _a, _t: (0.5, 0.5)
+        called = []
+        mgr._place_sell_ioc = lambda client, token_id, price, size: called.append((client, token_id)) or {}
+
+        autorun = _Run()
+        result = mgr.execute(autorun, ["cond_a", "cond_b"])
+        assert result.get("aborted") is None
+        assert result["liquidated"] == 1
+        assert called and called[0][0] is fake_client
         assert autorun.stop_event.called is True
