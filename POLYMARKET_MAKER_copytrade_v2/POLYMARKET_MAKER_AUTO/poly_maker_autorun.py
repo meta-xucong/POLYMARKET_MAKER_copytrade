@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from total_liquidation_manager import TotalLiquidationManager
+
 # =====================
 # 配置与常量
 # =====================
@@ -75,6 +77,29 @@ DEFAULT_GLOBAL_CONFIG = {
     "shared_ws_wait_pause_minutes": 1.0,
     "shared_ws_wait_escalation_window_sec": 240.0,
     "shared_ws_wait_escalation_min_failures": 2,
+    # 全局总清仓（默认关闭）
+    "total_liquidation": {
+        "enable_total_liquidation": False,
+        "min_interval_hours": 72.0,
+        "trigger": {
+            "idle_slot_ratio_threshold": 0.5,
+            "idle_slot_duration_minutes": 120.0,
+            "no_trade_duration_minutes": 180.0,
+            "min_free_balance": 20.0,
+            "require_conditions": 2,
+        },
+        "liquidation": {
+            "position_value_threshold": 3.0,
+            "spread_threshold": 0.01,
+            "maker_timeout_minutes": 20.0,
+            "taker_slippage_bps": 30.0,
+        },
+        "reset": {
+            "hard_reset_enabled": True,
+            "remove_logs": True,
+            "remove_json_state": True,
+        },
+    },
 }
 
 # Shared WS 等待防抖参数（写死，避免依赖外部 JSON）
@@ -554,6 +579,7 @@ class GlobalConfig:
     # Maker 子进程配置
     maker_poll_sec: float = 10.0  # 挂单轮询间隔（秒）
     maker_position_sync_interval: float = 60.0  # 仓位同步间隔（秒）
+    total_liquidation: Dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_GLOBAL_CONFIG["total_liquidation"]))
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GlobalConfig":
@@ -732,6 +758,11 @@ class GlobalConfig:
             maker_position_sync_interval=float(
                 maker.get("position_sync_interval", merged.get("maker_position_sync_interval", 60.0))
             ),
+            total_liquidation=dict(
+                scheduler.get("total_liquidation")
+                or merged.get("total_liquidation")
+                or DEFAULT_GLOBAL_CONFIG["total_liquidation"]
+            ),
         )
 
     def ensure_dirs(self) -> None:
@@ -830,6 +861,7 @@ class AutoRunManager:
         self._log_cleanup_interval_sec: float = 3600.0  # 每小时检查一次
         self._log_retention_days: int = 7  # 保留7天
         self._last_cleanup_date: Optional[str] = None  # 记录上次清理日期，避免同一天重复清理
+        self._total_liquidation = TotalLiquidationManager(self.config, PROJECT_ROOT)
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -874,6 +906,13 @@ class AutoRunManager:
                     if now >= self._next_log_cleanup:
                         self._cleanup_old_logs()
                         self._next_log_cleanup = now + self._log_cleanup_interval_sec
+
+                    metrics = self._total_liquidation.update_metrics(self)
+                    should_liq, reasons = self._total_liquidation.should_trigger(metrics)
+                    if should_liq:
+                        self._total_liquidation.execute(self, reasons)
+                        continue
+
                     time.sleep(self.config.command_poll_sec)
                 except Exception as exc:  # pragma: no cover - 防御性保护
                     print(f"[ERROR] 主循环异常已捕获，将继续运行: {exc}")
