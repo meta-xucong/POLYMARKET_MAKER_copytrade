@@ -350,3 +350,45 @@ def test_execute_aborted_does_not_set_trigger_cooldown():
         mgr.execute(_Run(), ["cond_a", "cond_b"])
         assert mgr._get_last_trigger_ts() == 0.0
         assert mgr._state.get("last_abort_ts") is not None
+
+
+def test_execute_precheck_abort_keeps_runtime_intact():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+        mgr._precheck_liquidation_ready = lambda: "client init failed"
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        touched = {"stop_ws": 0, "cleanup": 0}
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = ["x"]
+                self.pending_exit_topics = ["y"]
+                self.stop_event = _Evt()
+
+            def _stop_ws_aggregator(self):
+                touched["stop_ws"] += 1
+
+            def _cleanup_all_tasks(self):
+                touched["cleanup"] += 1
+
+        autorun = _Run()
+        result = mgr.execute(autorun, ["cond_a", "cond_b"])
+
+        assert result.get("aborted") is True
+        assert touched["stop_ws"] == 0
+        assert touched["cleanup"] == 0
+        assert autorun.pending_topics == ["x"]
+        assert autorun.pending_exit_topics == ["y"]
+        assert autorun.stop_event.called is False

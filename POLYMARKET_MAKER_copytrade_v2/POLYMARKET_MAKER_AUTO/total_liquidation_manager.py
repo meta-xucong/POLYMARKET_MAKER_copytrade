@@ -168,6 +168,13 @@ class TotalLiquidationManager:
 
         return len(reasons) >= self.cfg.require_conditions, reasons
 
+    def _precheck_liquidation_ready(self) -> Optional[str]:
+        if self._get_cached_client() is None:
+            return "client init failed"
+        if not self._load_copytrade_token_scope():
+            return "copytrade token scope is empty; skip liquidation for safety"
+        return None
+
     def execute(self, autorun: Any, reasons: List[str]) -> Dict[str, Any]:
         self._running = True
         start = time.time()
@@ -183,6 +190,21 @@ class TotalLiquidationManager:
         }
 
         try:
+            precheck_error = self._precheck_liquidation_ready()
+            if precheck_error:
+                result.update({"errors": [precheck_error], "aborted": True})
+                now = time.time()
+                self._save_state(
+                    {
+                        "last_abort_ts": now,
+                        "last_abort_reason": reasons,
+                        "last_result": result,
+                        "last_duration_sec": now - start,
+                    }
+                )
+                print(f"[GLB_LIQ][WARN] 预检失败，跳过总清仓: {precheck_error}")
+                return result
+
             autorun._stop_ws_aggregator()
             autorun._cleanup_all_tasks()
             autorun.pending_topics.clear()
