@@ -60,3 +60,49 @@
 | `default.refresh_interval_seconds` | 策略刷新/再报价周期。 | 整数（秒） | 5~15。 |
 | `default.max_open_orders` | 同时挂单数量上限。 | 整数 | 10~30。 |
 | `topics.*` | 针对特定话题 ID/slug 的覆盖：可单独调整 `topic_name`、`min_edge`、`max_position_per_market`、`order_size`、`spread_target`、`refresh_interval_seconds`、`max_open_orders`。 | 按字段类型填写 | 仅覆盖需要调整的字段，其余沿用 `default`。 |
+
+## 长周期成交量衰减（库存锁死）优化建议
+在不改变“maker 波段只做盈利卖出”这一核心前提下，可以通过调参与调度层策略来缓解成交机会衰减：
+
+1. **扩充新 token 注入源**：
+   - 增加目标地址数量，避免单目标账户后期 token 新增速率下降导致“无新标的可做”。
+   - 把 copytrade 拉取频率与主调度频率分离：copytrade 可更高频、交易执行仍按稳态节奏运行。
+
+2. **分层资金池，给新机会让路**：
+   - 把资金分成“存量仓位池”和“新增机会池”，后者只用于新 token 首次建仓。
+   - 即便历史仓位较多，也能保证始终有预算承接新增机会，提升持续成交概率。
+
+3. **库存活跃度降权（不强制亏损卖出）**：
+   - 对长期无波动 token 做“降优先级”，减少其重复轮询与调度权重。
+   - 保留仓位等待回本，但在调度层把算力和下单名额优先给近期活跃 token。
+
+4. **运行前/日常诊断**：
+   - 使用 `copytrade/analyze_throughput_stagnation.py` 评估 token 池“陈旧占比”。
+   - 当陈旧占比长期偏高时，优先补充新源和调大新增机会预算，而不是单纯提高轮询频率。
+
+示例命令：
+
+```bash
+python3 copytrade/analyze_throughput_stagnation.py --stale-hours 24
+```
+
+## global_config.json 新增：总清仓逻辑（total_liquidation）
+用于在活跃度显著下降时触发“全局清仓 + 一刀切重置 + 重启”。默认关闭，不会影响现有流程。
+
+| 字段 | 作用 | 默认值 |
+| --- | --- | --- |
+| `scheduler.total_liquidation.enable_total_liquidation` | 是否启用总清仓逻辑。关闭时行为与旧版本一致。 | `false` |
+| `scheduler.total_liquidation.min_interval_hours` | 两次总清仓之间的最小间隔小时数（频率上限）。 | `72` |
+| `scheduler.total_liquidation.trigger.idle_slot_ratio_threshold` | 空闲槽位比例阈值。 | `0.5` |
+| `scheduler.total_liquidation.trigger.idle_slot_duration_minutes` | 空闲槽位持续时长阈值（分钟）。 | `120` |
+| `scheduler.total_liquidation.trigger.startup_grace_hours` | 启动保护期（小时）：保护期内不计算“空闲槽位”触发条件，避免冷启动误触发。 | `6` |
+| `scheduler.total_liquidation.trigger.no_trade_duration_minutes` | 长时间无成交/无活跃更新阈值（分钟）。 | `180` |
+| `scheduler.total_liquidation.trigger.min_free_balance` | 可用余额阈值（USDC）；按官方 `get_balance_allowance(BalanceAllowanceParams)` 获取 COLLATERAL 余额，失败时可用环境变量 `POLY_FREE_BALANCE_OVERRIDE` 覆盖。 | `20.0` |
+| `scheduler.total_liquidation.trigger.balance_poll_interval_sec` | 可用余额采样间隔（秒），用于避免每轮主循环都访问余额接口。 | `120` |
+| `scheduler.total_liquidation.trigger.require_conditions` | 触发所需命中条件数（3选N）。 | `2` |
+| `scheduler.total_liquidation.liquidation.position_value_threshold` | 仅清仓价值不低于该阈值的仓位。 | `3.0` |
+| `scheduler.total_liquidation.liquidation.spread_threshold` | 点差阈值：高于阈值走 maker，否则走 taker。 | `0.01` |
+| `scheduler.total_liquidation.liquidation.maker_timeout_minutes` | maker 清仓单 token 超时时间（分钟）；超时后自动降级为 taker 继续清仓。 | `20` |
+| `scheduler.total_liquidation.reset.hard_reset_enabled` | 是否执行“一刀切”重置。 | `true` |
+| `scheduler.total_liquidation.reset.remove_logs` | 是否删除日志文件。 | `true` |
+| `scheduler.total_liquidation.reset.remove_json_state` | 是否删除运行态 JSON（含 copytrade 与 autorun）。 | `true` |
