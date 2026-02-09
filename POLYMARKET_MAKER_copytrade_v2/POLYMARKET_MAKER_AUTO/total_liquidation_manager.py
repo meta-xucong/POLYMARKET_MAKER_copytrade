@@ -192,6 +192,19 @@ class TotalLiquidationManager:
             result.update(liquidation_stats)
 
             now = time.time()
+            aborted = bool(liquidation_stats.get("aborted", False))
+            if aborted:
+                self._save_state(
+                    {
+                        "last_abort_ts": now,
+                        "last_abort_reason": reasons,
+                        "last_result": result,
+                        "last_duration_sec": now - start,
+                    }
+                )
+                print("[GLB_LIQ][WARN] 本次总清仓已中止，跳过硬重置与重启")
+                return result
+
             state = {
                 "last_trigger_ts": now,
                 "last_trigger_reason": reasons,
@@ -199,11 +212,6 @@ class TotalLiquidationManager:
                 "last_duration_sec": now - start,
             }
             self._save_state(state)
-
-            aborted = bool(liquidation_stats.get("aborted", False))
-            if aborted:
-                print("[GLB_LIQ][WARN] 本次总清仓已中止，跳过硬重置与重启")
-                return result
 
             if self.cfg.hard_reset_enabled:
                 self._hard_reset_files(autorun)

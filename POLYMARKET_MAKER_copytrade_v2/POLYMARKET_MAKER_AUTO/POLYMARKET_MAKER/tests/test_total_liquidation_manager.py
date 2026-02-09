@@ -312,3 +312,41 @@ def test_execute_aborted_does_not_hard_reset_or_stop():
         assert result["hard_reset"] is False
         assert hard_reset_called["v"] is False
         assert autorun.stop_event.called is False
+
+
+def test_execute_aborted_does_not_set_trigger_cooldown():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+
+        class _Evt:
+            def set(self):
+                return None
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = []
+                self.pending_exit_topics = []
+                self.stop_event = _Evt()
+
+            def _stop_ws_aggregator(self):
+                return None
+
+            def _cleanup_all_tasks(self):
+                return None
+
+        mgr._liquidate_positions = lambda _a: {
+            "liquidated": 0,
+            "maker_count": 0,
+            "taker_count": 0,
+            "errors": ["client init failed"],
+            "aborted": True,
+        }
+
+        mgr.execute(_Run(), ["cond_a", "cond_b"])
+        assert mgr._get_last_trigger_ts() == 0.0
+        assert mgr._state.get("last_abort_ts") is not None
