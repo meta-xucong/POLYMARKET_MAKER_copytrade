@@ -200,6 +200,11 @@ class TotalLiquidationManager:
             }
             self._save_state(state)
 
+            aborted = bool(liquidation_stats.get("aborted", False))
+            if aborted:
+                print("[GLB_LIQ][WARN] 本次总清仓已中止，跳过硬重置与重启")
+                return result
+
             if self.cfg.hard_reset_enabled:
                 self._hard_reset_files(autorun)
                 result["hard_reset"] = True
@@ -444,7 +449,7 @@ class TotalLiquidationManager:
 
         client = self._get_cached_client()
         if client is None:
-            return {"liquidated": 0, "maker_count": 0, "taker_count": 0, "errors": ["client init failed"]}
+            return {"liquidated": 0, "maker_count": 0, "taker_count": 0, "errors": ["client init failed"], "aborted": True}
 
         positions = self._fetch_positions()
         allowed_token_ids = self._load_copytrade_token_scope()
@@ -454,6 +459,7 @@ class TotalLiquidationManager:
                 "maker_count": 0,
                 "taker_count": 0,
                 "errors": ["copytrade token scope is empty; skip liquidation for safety"],
+                "aborted": True,
             }
 
         maker_count = 0

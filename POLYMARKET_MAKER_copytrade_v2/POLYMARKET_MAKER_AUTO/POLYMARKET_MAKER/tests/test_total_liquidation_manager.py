@@ -266,3 +266,49 @@ def test_liquidation_scope_empty_skips_for_safety():
         assert result["liquidated"] == 0
         assert called == []
         assert any("scope is empty" in err for err in result["errors"])
+
+
+def test_execute_aborted_does_not_hard_reset_or_stop():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = ["x"]
+                self.pending_exit_topics = ["y"]
+                self.stop_event = _Evt()
+
+            def _stop_ws_aggregator(self):
+                return None
+
+            def _cleanup_all_tasks(self):
+                return None
+
+        autorun = _Run()
+
+        hard_reset_called = {"v": False}
+        mgr._hard_reset_files = lambda _a: hard_reset_called.__setitem__("v", True)
+        mgr._liquidate_positions = lambda _a: {
+            "liquidated": 0,
+            "maker_count": 0,
+            "taker_count": 0,
+            "errors": ["copytrade token scope is empty; skip liquidation for safety"],
+            "aborted": True,
+        }
+
+        result = mgr.execute(autorun, ["cond_a", "cond_b"])
+        assert result["hard_reset"] is False
+        assert hard_reset_called["v"] is False
+        assert autorun.stop_event.called is False
