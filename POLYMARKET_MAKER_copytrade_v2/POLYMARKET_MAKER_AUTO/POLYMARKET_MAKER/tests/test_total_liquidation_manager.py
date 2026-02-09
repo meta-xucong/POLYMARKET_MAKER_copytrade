@@ -392,3 +392,40 @@ def test_execute_precheck_abort_keeps_runtime_intact():
         assert autorun.pending_topics == ["x"]
         assert autorun.pending_exit_topics == ["y"]
         assert autorun.stop_event.called is False
+
+
+def test_execute_exception_requests_restart():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+        mgr._precheck_liquidation_ready = lambda: None
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = []
+                self.pending_exit_topics = []
+                self.stop_event = _Evt()
+
+            def _stop_ws_aggregator(self):
+                return None
+
+            def _cleanup_all_tasks(self):
+                return None
+
+        mgr._liquidate_positions = lambda _a: (_ for _ in ()).throw(RuntimeError("boom"))
+
+        autorun = _Run()
+        result = mgr.execute(autorun, ["cond_a", "cond_b"])
+        assert any("boom" in e for e in result["errors"])
+        assert autorun.stop_event.called is True

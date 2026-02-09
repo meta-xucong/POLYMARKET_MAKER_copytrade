@@ -244,6 +244,11 @@ class TotalLiquidationManager:
         except Exception as exc:
             result["errors"].append(str(exc))
             print(f"[GLB_LIQ][ERROR] 总清仓流程失败: {exc}")
+            try:
+                # 若在停止运行态后抛异常，主动触发主循环重启以避免卡在半停机状态。
+                autorun.stop_event.set()
+            except Exception:
+                pass
         finally:
             self._running = False
 
