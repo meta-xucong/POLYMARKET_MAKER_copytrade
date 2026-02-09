@@ -2054,10 +2054,30 @@ class AutoRunManager:
                     return False
                 time.sleep(self.config.process_retry_delay_sec)
 
-        if not proc or proc.poll() is not None:
-            rc_text = proc.poll() if proc else "?"
+        if not proc:
+            print(f"[ERROR] topic={topic_id} 启动失败：proc is None")
+            return False
+
+        # 启动后给子进程一个极短的引导窗口，避免“刚启动即退出”被误判为运行中。
+        bootstrap_wait = min(1.0, max(0.0, float(self.config.command_poll_sec)))
+        if bootstrap_wait > 0:
+            time.sleep(bootstrap_wait)
+
+        early_rc = proc.poll()
+        if early_rc is not None:
+            early_tail = ""
+            try:
+                if log_path.exists():
+                    with log_path.open("rb") as lf:
+                        lf.seek(0, os.SEEK_END)
+                        size = lf.tell()
+                        lf.seek(max(0, size - 1500), os.SEEK_SET)
+                        early_tail = lf.read().decode("utf-8", errors="ignore").strip()
+            except Exception:
+                early_tail = ""
+            tail_text = (early_tail.splitlines() or ["-"])[-1].strip() if early_tail else "-"
             print(
-                f"[ERROR] topic={topic_id} 启动后立即退出 rc={rc_text}，将重试"
+                f"[ERROR] topic={topic_id} 启动后立即退出 rc={early_rc} tail={tail_text}，将重试"
             )
             return False
 
