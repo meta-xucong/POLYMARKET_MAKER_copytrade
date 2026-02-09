@@ -473,3 +473,23 @@ def test_execute_uses_prechecked_scope_without_reloading():
         assert result["liquidated"] == 1
         assert called and called[0][0] is fake_client
         assert autorun.stop_event.called is True
+
+
+def test_should_trigger_fallback_startup_grace_when_metric_missing():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        cfg.total_liquidation["trigger"]["startup_grace_hours"] = 6
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        mgr._idle_since = time.time() - 3600
+        mgr._last_trade_activity_ts = time.time()
+        metrics = {
+            "idle_since": mgr._idle_since,
+            "last_trade_activity_ts": mgr._last_trade_activity_ts,
+            "free_balance": 100.0,
+        }
+        ok, reasons = mgr.should_trigger(metrics)
+        assert ok is False
+        assert all("idle_slots" not in r for r in reasons)

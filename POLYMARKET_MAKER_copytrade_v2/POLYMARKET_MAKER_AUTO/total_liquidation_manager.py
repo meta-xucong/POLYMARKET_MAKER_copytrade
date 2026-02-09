@@ -148,7 +148,12 @@ class TotalLiquidationManager:
 
         reasons: List[str] = []
 
-        in_startup_grace = bool(metrics.get("in_startup_grace", False))
+        in_startup_grace_flag = metrics.get("in_startup_grace")
+        if in_startup_grace_flag is None:
+            startup_grace_sec = max(0.0, self.cfg.startup_grace_hours * 3600.0)
+            in_startup_grace = (now - self._started_at_ts) < startup_grace_sec
+        else:
+            in_startup_grace = bool(in_startup_grace_flag)
 
         idle_since = metrics.get("idle_since")
         if idle_since is not None and not in_startup_grace:
