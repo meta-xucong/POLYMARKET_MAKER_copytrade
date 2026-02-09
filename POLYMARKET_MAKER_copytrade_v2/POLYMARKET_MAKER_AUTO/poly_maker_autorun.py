@@ -20,6 +20,7 @@ import select
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -157,6 +158,24 @@ def _log_error(error_type: str, error_data: Dict[str, Any]) -> None:
     except Exception as e:
         # 错误日志记录失败时，仅打印到控制台，不中断程序
         print(f"[ERROR_LOG] 写入错误日志失败: {e}")
+
+
+def _atomic_json_write(path: Path, data: Any) -> None:
+    """原子写入 JSON 文件：先写临时文件，再 rename，避免与外部进程竞态导致数据丢失。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), suffix=".tmp", prefix=".copytrade_"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.rename(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _resolve_position_address_from_env() -> tuple[Optional[str], str]:
@@ -811,32 +830,52 @@ class AutoRunManager:
     def _ws_aggregator_loop(self) -> None:
         last_health_check = 0.0
         last_event_count = 0  # 跟踪上次检查时的事件数
+        _consecutive_errors = 0
 
         while not self.stop_event.is_set():
-            desired = self._desired_ws_token_ids()
-            if desired != self._ws_token_ids:
-                self._restart_ws_subscription(desired)
-            self._flush_ws_cache_if_needed()
+            try:
+                desired = self._desired_ws_token_ids()
+                if desired != self._ws_token_ids:
+                    self._restart_ws_subscription(desired)
+                self._flush_ws_cache_if_needed()
 
-            # 定期健康检查（每10秒，加快故障检测和恢复）
-            now = time.time()
-            if now - last_health_check >= 10.0:
-                current_count = getattr(self, '_ws_event_count', 0)
+                # 定期健康检查（每10秒，加快故障检测和恢复）
+                now = time.time()
+                if now - last_health_check >= 10.0:
+                    current_count = getattr(self, '_ws_event_count', 0)
 
-                # 检查数据流是否停滞
-                if current_count == last_event_count and self._ws_token_ids:
-                    print(f"[WARN] WS 聚合器10秒内未收到任何新事件（订阅了 {len(self._ws_token_ids)} 个token）")
-                elif current_count > last_event_count:
-                    # 数据流正常，每小时打印一次统计（避免刷屏）
-                    if not hasattr(self, '_last_flow_log'):
-                        self._last_flow_log = 0.0
-                    if now - self._last_flow_log >= 3600.0:
-                        print(f"[WS][FLOW] 数据流正常，10秒内收到 {current_count - last_event_count} 个事件")
-                        self._last_flow_log = now
+                    # 检查数据流是否停滞
+                    if current_count == last_event_count and self._ws_token_ids:
+                        print(f"[WARN] WS 聚合器10秒内未收到任何新事件（订阅了 {len(self._ws_token_ids)} 个token）")
+                    elif current_count > last_event_count:
+                        # 数据流正常，每小时打印一次统计（避免刷屏）
+                        if not hasattr(self, '_last_flow_log'):
+                            self._last_flow_log = 0.0
+                        if now - self._last_flow_log >= 3600.0:
+                            print(f"[WS][FLOW] 数据流正常，10秒内收到 {current_count - last_event_count} 个事件")
+                            self._last_flow_log = now
 
-                last_event_count = current_count
-                self._health_check()
-                last_health_check = now
+                    last_event_count = current_count
+                    self._health_check()
+                    last_health_check = now
+
+                _consecutive_errors = 0  # 本轮正常，重置连续错误计数
+            except Exception as exc:
+                _consecutive_errors += 1
+                backoff = min(30.0, 1.0 * (2 ** min(_consecutive_errors, 5)))
+                print(
+                    f"[ERROR] WS 聚合器线程异常（连续第{_consecutive_errors}次），"
+                    f"{backoff:.0f}秒后重试: {exc}"
+                )
+                traceback.print_exc()
+                _log_error("WS_AGGREGATOR_LOOP_ERROR", {
+                    "message": "WS聚合器线程异常",
+                    "error": str(exc),
+                    "consecutive_errors": _consecutive_errors,
+                    "traceback": traceback.format_exc(),
+                })
+                time.sleep(backoff)
+                continue
 
             time.sleep(0.1)  # 从1.0秒改为0.1秒，提高缓存写入频率
 
@@ -1489,6 +1528,9 @@ class AutoRunManager:
                         f"retry={retry_count}/{EXIT_CLEANUP_MAX_RETRIES}"
                     )
                 else:
+                    # 达到最大重试次数，标记为"已完成"阻止 _apply_sell_signals 再次触发，
+                    # 避免通过 handled_topics 移除 → 重新检测 → 再重试的无限循环。
+                    self._completed_exit_cleanup_tokens.add(task.topic_id)
                     print(
                         "[COPYTRADE][ERROR] sell 清仓连续失败，已停止自动重试避免循环卡死: "
                         f"token_id={task.topic_id} rc={rc} "
@@ -1726,12 +1768,18 @@ class AutoRunManager:
             if t.is_running() and t.end_reason == "sell signal cleanup"
         )
         max_exit_slots = max(1, int(self.config.max_exit_cleanup_tasks))
+        deferred: List[str] = []
         while self.pending_exit_topics and exit_running < max_exit_slots:
             token_id = self.pending_exit_topics.pop(0)
             if token_id in self.tasks and self.tasks[token_id].is_running():
+                # maker 进程仍在运行，暂时跳过但保留在队列中等下次调度
+                deferred.append(token_id)
                 continue
             self._start_exit_cleanup(token_id)
             exit_running += 1
+        # 将被跳过的 token 放回队列尾部，避免丢失
+        if deferred:
+            self.pending_exit_topics.extend(deferred)
 
     def _enqueue_pending_topic(self, topic_id: str) -> None:
         if not topic_id:
@@ -2332,13 +2380,20 @@ class AutoRunManager:
         task.heartbeat(reason)
 
     def _purge_inactive_tasks(self) -> None:
-        """移除已停止/结束且不再需要展示的任务。"""
+        """移除已停止/结束且不再需要展示的任务。
+
+        注意：如果 topic 仍在 pending_topics 或 pending_exit_topics 中等待重新调度，
+        则保留 task 对象（避免丢失待重启的 token）。
+        """
 
         removable: List[str] = []
         for topic_id, task in list(self.tasks.items()):
             if task.is_running():
                 continue
             if task.status in {"stopped", "ended", "exited", "error"} or task.no_restart:
+                # 如果 token 仍在等待队列中，不要 purge（否则会丢失重试机会）
+                if topic_id in self.pending_topics or topic_id in self.pending_exit_topics:
+                    continue
                 removable.append(topic_id)
 
         if not removable:
@@ -2346,8 +2401,6 @@ class AutoRunManager:
 
         for topic_id in removable:
             self.tasks.pop(topic_id, None)
-            if topic_id in self.pending_topics:
-                self._remove_pending_topic(topic_id)
 
     # ========== 市场关闭时自动清理 token ==========
     def _remove_token_from_copytrade_files(self, token_id: str) -> None:
@@ -2380,8 +2433,7 @@ class AutoRunManager:
                         data["updated_at"] = time.strftime(
                             "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                         )
-                        with tokens_path.open("w", encoding="utf-8") as f:
-                            json.dump(data, f, ensure_ascii=False, indent=2)
+                        _atomic_json_write(tokens_path, data)
                         print(
                             f"[CLEANUP] 已从 tokens_from_copytrade.json 移除 token={token_id[:20]}..."
                         )
@@ -2407,8 +2459,7 @@ class AutoRunManager:
                         data["updated_at"] = time.strftime(
                             "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                         )
-                        with signals_path.open("w", encoding="utf-8") as f:
-                            json.dump(data, f, ensure_ascii=False, indent=2)
+                        _atomic_json_write(signals_path, data)
                         print(
                             f"[CLEANUP] 已从 copytrade_sell_signals.json 移除 token={token_id[:20]}..."
                         )
