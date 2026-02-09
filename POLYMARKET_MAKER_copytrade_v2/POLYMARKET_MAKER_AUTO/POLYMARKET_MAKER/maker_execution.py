@@ -585,6 +585,26 @@ def _open_buy_order_ids_for_token(client: Any, token_id: str) -> List[str]:
     return order_ids
 
 
+def _cancel_open_orders_for_token(client: Any, token_id: str) -> int:
+    """Cancel all open orders (BUY/SELL) for the target token.
+
+    Returns cancelled-attempt count (best effort). Some venues may return
+    already-closed errors during race windows; those are ignored here.
+    """
+
+    open_orders = _fetch_open_orders_norm(client)
+    cancelled = 0
+    for order in open_orders:
+        if str(order.get("token_id")) != str(token_id):
+            continue
+        order_id = order.get("order_id")
+        if not order_id:
+            continue
+        if _cancel_order(client, str(order_id)):
+            cancelled += 1
+    return cancelled
+
+
 def _order_tick(dp: int) -> float:
     return 10 ** (-dp)
 
