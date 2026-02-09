@@ -60,3 +60,28 @@
 | `default.refresh_interval_seconds` | 策略刷新/再报价周期。 | 整数（秒） | 5~15。 |
 | `default.max_open_orders` | 同时挂单数量上限。 | 整数 | 10~30。 |
 | `topics.*` | 针对特定话题 ID/slug 的覆盖：可单独调整 `topic_name`、`min_edge`、`max_position_per_market`、`order_size`、`spread_target`、`refresh_interval_seconds`、`max_open_orders`。 | 按字段类型填写 | 仅覆盖需要调整的字段，其余沿用 `default`。 |
+
+## 长周期成交量衰减（库存锁死）优化建议
+在不改变“maker 波段只做盈利卖出”这一核心前提下，可以通过调参与调度层策略来缓解成交机会衰减：
+
+1. **扩充新 token 注入源**：
+   - 增加目标地址数量，避免单目标账户后期 token 新增速率下降导致“无新标的可做”。
+   - 把 copytrade 拉取频率与主调度频率分离：copytrade 可更高频、交易执行仍按稳态节奏运行。
+
+2. **分层资金池，给新机会让路**：
+   - 把资金分成“存量仓位池”和“新增机会池”，后者只用于新 token 首次建仓。
+   - 即便历史仓位较多，也能保证始终有预算承接新增机会，提升持续成交概率。
+
+3. **库存活跃度降权（不强制亏损卖出）**：
+   - 对长期无波动 token 做“降优先级”，减少其重复轮询与调度权重。
+   - 保留仓位等待回本，但在调度层把算力和下单名额优先给近期活跃 token。
+
+4. **运行前/日常诊断**：
+   - 使用 `copytrade/analyze_throughput_stagnation.py` 评估 token 池“陈旧占比”。
+   - 当陈旧占比长期偏高时，优先补充新源和调大新增机会预算，而不是单纯提高轮询频率。
+
+示例命令：
+
+```bash
+python3 copytrade/analyze_throughput_stagnation.py --stale-hours 24
+```
