@@ -2601,12 +2601,15 @@ class AutoRunManager:
                 skip_stats["cooldown"] = skip_stats.get("cooldown", 0) + 1
                 continue
 
-            # 检查重试次数
-            # NO_DATA_TIMEOUT 有更严格的限制（最多1次），避免反复回填无数据的token
+            # 检查重试次数（按退出原因分级）
+            # - NO_DATA_TIMEOUT: 最多1次，避免低活跃 token 反复回填
+            # - SHARED_WS_UNAVAILABLE: 视为基础设施瞬态故障，不设置硬上限
             retry_count = self._refill_retry_counts.get(token_id, 0)
             effective_max_retries = max_retries
             if exit_reason == "NO_DATA_TIMEOUT":
-                effective_max_retries = min(max_retries, 1)  # NO_DATA_TIMEOUT 最多回填1次
+                effective_max_retries = 1
+            elif exit_reason == "SHARED_WS_UNAVAILABLE":
+                effective_max_retries = 10**9
             if retry_count >= effective_max_retries:
                 skip_stats["max_retries"] = skip_stats.get("max_retries", 0) + 1
                 if exit_reason in PERMANENT_AFTER_MAX_RETRIES_REASONS:
