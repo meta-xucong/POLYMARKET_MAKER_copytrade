@@ -448,6 +448,13 @@ class TotalLiquidationManager:
 
         positions = self._fetch_positions()
         allowed_token_ids = self._load_copytrade_token_scope()
+        if not allowed_token_ids:
+            return {
+                "liquidated": 0,
+                "maker_count": 0,
+                "taker_count": 0,
+                "errors": ["copytrade token scope is empty; skip liquidation for safety"],
+            }
 
         maker_count = 0
         taker_count = 0

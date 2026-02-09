@@ -235,3 +235,34 @@ def test_liquidation_scope_only_copytrade_tokens():
         result = mgr._liquidate_positions(autorun)
         assert result["liquidated"] == 1
         assert called == ["A"]
+
+
+def test_liquidation_scope_empty_skips_for_safety():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        project_root = base / "POLYMARKET_MAKER_AUTO"
+        mgr = TotalLiquidationManager(cfg, project_root)
+
+        fake_mod = types.ModuleType("maker_execution")
+        fake_mod.maker_sell_follow_ask_with_floor_wait = lambda **kwargs: {"status": "FILLED"}
+        sys.modules["maker_execution"] = fake_mod
+
+        mgr._fetch_positions = lambda: [{"token_id": "A", "size": 10, "price": 0.5}]
+
+        called = []
+        mgr._place_sell_ioc = lambda client, token_id, price, size: called.append(token_id) or {}
+
+        class _Client:
+            pass
+
+        mgr._cached_client = _Client()
+
+        autorun = _Autorun(cfg, running_tasks=0)
+        result = mgr._liquidate_positions(autorun)
+        assert result["liquidated"] == 0
+        assert called == []
+        assert any("scope is empty" in err for err in result["errors"])
