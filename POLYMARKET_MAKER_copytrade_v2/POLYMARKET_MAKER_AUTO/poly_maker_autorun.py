@@ -2472,6 +2472,11 @@ class AutoRunManager:
             return
 
         cleaned_tokens: List[str] = []
+        latest_topic_ids = {
+            _topic_id_from_entry(item)
+            for item in self.latest_topics
+            if _topic_id_from_entry(item)
+        }
         for record in exit_records:
             token_id = record.get("token_id")
             exit_reason = record.get("exit_reason", "")
@@ -2483,8 +2488,8 @@ class AutoRunManager:
             if exit_reason != "MARKET_CLOSED":
                 continue
 
-            # 检查是否已在 copytrade 文件中（避免重复清理）
-            if token_id not in self.latest_topics:
+            # 检查是否仍在 copytrade 文件中（避免重复清理）
+            if token_id not in latest_topic_ids:
                 continue
 
             # 从 copytrade 文件中移除
