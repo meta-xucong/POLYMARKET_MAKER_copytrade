@@ -491,6 +491,9 @@ def ws_watch_by_ids(
     on_state: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     verbose: bool = False,
     stop_event: Optional[threading.Event] = None,
+    ping_interval_sec: float = 25.0,
+    ping_timeout_sec: float = 20.0,
+    enable_text_ping: bool = False,
 ):
     """
     只负责：连接 → 订阅 → 将 WS 事件回调给 on_event（逐条 dict）。
@@ -515,6 +518,8 @@ def ws_watch_by_ids(
     reconnect_delay = 1
     max_reconnect_delay = 60
     silence_timeout = 600  # 秒，超过则主动重连以避免卡死
+    ping_interval = max(1.0, float(ping_interval_sec))
+    ping_timeout = max(1.0, float(ping_timeout_sec))
 
     headers = [
         "Origin: https://polymarket.com",
@@ -546,16 +551,17 @@ def ws_watch_by_ids(
             last_event_ts = time.monotonic()
             _notify("open", {"label": label, "asset_ids": ids})
 
-            # 文本心跳 PING（与底层 ping 帧并行存在）
-            def _ping():
-                while not ping_stop["v"] and not stop_event.is_set():
-                    try:
-                        ws.send("PING")
-                        time.sleep(10)
-                    except Exception:
-                        break
+            # 可选文本心跳（默认关闭）：避免与 websocket 底层 ping/pong 重复造成抖动
+            if enable_text_ping:
+                def _ping():
+                    while not ping_stop["v"] and not stop_event.is_set():
+                        try:
+                            ws.send("PING")
+                            time.sleep(max(1.0, ping_interval / 2.0))
+                        except Exception:
+                            break
 
-            threading.Thread(target=_ping, daemon=True).start()
+                threading.Thread(target=_ping, daemon=True).start()
 
             def _silence_guard():
                 while not silence_guard_stop["v"] and not stop_event.is_set():
@@ -637,8 +643,8 @@ def ws_watch_by_ids(
         try:
             wsa.run_forever(
                 sslopt={"cert_reqs": ssl.CERT_REQUIRED},
-                ping_interval=25,
-                ping_timeout=10,
+                ping_interval=ping_interval,
+                ping_timeout=ping_timeout,
             )
         except Exception as exc:
             ping_stop["v"] = True
