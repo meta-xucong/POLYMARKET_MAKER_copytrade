@@ -1182,15 +1182,11 @@ def _claim_via_http(client, market_id: str, token_id: Optional[str]) -> bool:
 
 
 def _extract_positions_from_data_api_response(payload: Any) -> Optional[List[dict]]:
+    """官方 /positions 端点返回顶层数组。"""
     if payload is None:
         return []
     if isinstance(payload, list):
         return payload
-    if isinstance(payload, dict):
-        data = payload.get("data")
-        if isinstance(data, list):
-            return data
-        return None
     return None
 
 
@@ -1231,37 +1227,9 @@ def _normalize_wallet_address(value: Any) -> Optional[str]:
 
 
 def _resolve_wallet_address(client) -> Tuple[Optional[str], str]:
+    """按官方 Data API 规范解析 user（Proxy/Deposit 地址）。"""
     if client is not None:
-        direct_attrs = (
-            "funder",
-            "owner",
-            "address",
-            "wallet",
-            "wallet_address",
-            "walletAddress",
-            "default_address",
-            "defaultAddress",
-            "deposit_address",
-            "depositAddress",
-        )
-        for attr in direct_attrs:
-            try:
-                cand = getattr(client, attr, None)
-            except Exception:
-                continue
-            address = _normalize_wallet_address(cand)
-            if address:
-                return address, f"client.{attr}"
-
-        try:
-            attrs = list(dir(client))
-        except Exception:
-            attrs = []
-        for attr in attrs:
-            if "address" not in attr.lower():
-                continue
-            if attr in direct_attrs:
-                continue
+        for attr in ("funder",):
             try:
                 cand = getattr(client, attr, None)
             except Exception:
@@ -1273,8 +1241,6 @@ def _resolve_wallet_address(client) -> Tuple[Optional[str], str]:
     env_candidates = (
         "POLY_DATA_ADDRESS",
         "POLY_FUNDER",
-        "POLY_WALLET",
-        "POLY_ADDRESS",
     )
     for env_name in env_candidates:
         cand = os.getenv(env_name)
@@ -1282,7 +1248,7 @@ def _resolve_wallet_address(client) -> Tuple[Optional[str], str]:
         if address:
             return address, f"env:{env_name}"
 
-    return None, "缺少地址，无法从数据接口拉取持仓。"
+    return None, "缺少地址，无法从 data-api /positions 拉取持仓。"
 
 
 def _fetch_positions_from_data_api(client) -> Tuple[List[dict], bool, str]:
@@ -1296,7 +1262,6 @@ def _fetch_positions_from_data_api(client) -> Tuple[List[dict], bool, str]:
     limit = 500
     offset = 0
     collected: List[dict] = []
-    total_records: Optional[int] = None
 
     while True:
         params = {
@@ -1326,24 +1291,15 @@ def _fetch_positions_from_data_api(client) -> Tuple[List[dict], bool, str]:
 
         positions = _extract_positions_from_data_api_response(payload)
         if positions is None:
-            return [], False, "数据接口返回格式异常，缺少 data 字段。"
+            return [], False, "数据接口返回格式异常：/positions 应返回列表。"
 
         collected.extend(positions)
-        meta = payload.get("meta") if isinstance(payload, dict) else {}
-        if isinstance(meta, dict):
-            raw_total = meta.get("total") or meta.get("count")
-            try:
-                if raw_total is not None:
-                    total_records = int(raw_total)
-            except (TypeError, ValueError):
-                total_records = None
-
-        if not positions or (total_records is not None and len(collected) >= total_records):
+        if not positions:
             break
 
         offset += len(positions)
 
-    total = total_records if total_records is not None else len(collected)
+    total = len(collected)
     origin_detail = f" via {origin_hint}" if origin_hint else ""
     origin = f"data-api positions(limit={limit}, total={total}, param=user){origin_detail}"
     return collected, True, origin
@@ -1365,63 +1321,19 @@ def _coerce_float(value: Any) -> Optional[float]:
         return None
 
 
-def _position_dict_candidates(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
-    candidates: List[Dict[str, Any]] = []
-    if isinstance(entry, dict):
-        candidates.append(entry)
-        for key in ("position", "token", "asset", "outcome"):
-            nested = entry.get(key)
-            if isinstance(nested, dict):
-                candidates.append(nested)
-    return candidates
-
-
 def _position_matches_token(entry: Dict[str, Any], token_id: str) -> bool:
     token_str = str(token_id)
     if not token_str:
         return False
-    id_keys = (
-        "tokenId",
-        "token_id",
-        "clobTokenId",
-        "clob_token_id",
-        "assetId",
-        "asset_id",
-        "outcomeTokenId",
-        "outcome_token_id",
-        "token",
-        "asset",
-        "id",
-    )
-    for cand in _position_dict_candidates(entry):
-        for key in id_keys:
-            val = cand.get(key)
-            if val is None:
-                continue
-            if str(val) == token_str:
-                return True
-    return False
+    asset = entry.get("asset")
+    return asset is not None and str(asset) == token_str
 
 
 def _extract_position_size_from_entry(entry: Dict[str, Any]) -> Optional[float]:
-    size_keys = (
-        "size",
-        "positionSize",
-        "position_size",
-        "position",
-        "quantity",
-        "qty",
-        "balance",
-        "amount",
-    )
-    for cand in _position_dict_candidates(entry):
-        for key in size_keys:
-            val = _coerce_float(cand.get(key))
-            if val is None:
-                continue
-            if val >= 0:
-                return val
-    return None
+    val = _coerce_float(entry.get("size"))
+    if val is None:
+        return None
+    return val if val >= 0 else None
 
 
 def _plan_manual_buy_size(
@@ -1461,54 +1373,10 @@ def _plan_manual_buy_size(
 
 
 def _extract_avg_price_from_entry(entry: Dict[str, Any]) -> Optional[float]:
-    avg_keys = (
-        "avg_price",
-        "avgPrice",
-        "average_price",
-        "averagePrice",
-        "avgExecutionPrice",
-        "avg_execution_price",
-        "averageExecutionPrice",
-        "average_execution_price",
-        "entry_price",
-        "entryPrice",
-        "entryAveragePrice",
-        "entry_average_price",
-        "execution_price",
-        "executionPrice",
-    )
-    for cand in _position_dict_candidates(entry):
-        for key in avg_keys:
-            val = _coerce_float(cand.get(key))
-            if val is not None and val > 0:
-                return val
-
-    notional_keys = (
-        "total_cost",
-        "totalCost",
-        "net_cost",
-        "netCost",
-        "cost",
-        "position_cost",
-        "positionCost",
-        "purchase_value",
-        "purchaseValue",
-        "buy_value",
-        "buyValue",
-    )
-    size = _extract_position_size_from_entry(entry)
-    if size is None or size <= 0:
-        return None
-    for cand in _position_dict_candidates(entry):
-        for key in notional_keys:
-            notional = _coerce_float(cand.get(key))
-            if notional is None:
-                continue
-            if abs(size) < 1e-12:
-                continue
-            price = notional / size
-            if price > 0:
-                return price
+    """官方 /positions 返回字段使用 avgPrice。"""
+    val = _coerce_float(entry.get("avgPrice"))
+    if val is not None and val > 0:
+        return val
     return None
 
 

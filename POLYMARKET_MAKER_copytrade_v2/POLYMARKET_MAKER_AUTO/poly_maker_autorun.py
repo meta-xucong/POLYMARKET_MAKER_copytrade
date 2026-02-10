@@ -208,58 +208,42 @@ def _atomic_json_write(path: Path, data: Any) -> None:
 
 
 def _resolve_position_address_from_env() -> tuple[Optional[str], str]:
+    """按官方 Data API 用法解析 user 地址（Proxy/Deposit 地址）。"""
     env_candidates = (
         "POLY_DATA_ADDRESS",
         "POLY_FUNDER",
-        "POLY_WALLET",
-        "POLY_ADDRESS",
     )
     for env_name in env_candidates:
         cand = os.getenv(env_name)
         if cand and str(cand).strip():
             return str(cand).strip(), f"env:{env_name}"
-    return None, "缺少地址，无法从数据接口拉取持仓。"
+    return None, "缺少地址，无法从 data-api /positions 查询持仓。"
 
 
 def _position_matches_token(entry: Dict[str, Any], token_id: str) -> bool:
-    token_keys = ("token_id", "tokenId", "token", "asset", "asset_id")
-    for key in token_keys:
-        val = entry.get(key)
-        if val and str(val) == token_id:
-            return True
-    return False
+    """官方 /positions 返回字段使用 asset 表示 token id。"""
+    asset = entry.get("asset")
+    return asset is not None and str(asset) == token_id
 
 
 def _extract_position_token_id(entry: Dict[str, Any]) -> Optional[str]:
-    token_keys = ("token_id", "tokenId", "token", "asset", "asset_id")
-    for key in token_keys:
-        val = entry.get(key)
-        if val is None:
-            continue
-        token_id = str(val).strip()
-        if token_id:
-            return token_id
-    return None
+    """官方 /positions 返回字段使用 asset 表示 token id。"""
+    val = entry.get("asset")
+    if val is None:
+        return None
+    token_id = str(val).strip()
+    return token_id or None
 
 
 def _extract_position_size(entry: Dict[str, Any]) -> Optional[float]:
-    size_keys = (
-        "size",
-        "position_size",
-        "quantity",
-        "balance",
-        "shares",
-        "amount",
-    )
-    for key in size_keys:
-        val = entry.get(key)
-        if val is None or isinstance(val, bool):
-            continue
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            continue
-    return None
+    """官方 /positions 返回字段使用 size。"""
+    val = entry.get("size")
+    if val is None or isinstance(val, bool):
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
 
 
 def _fetch_position_size_from_data_api(
@@ -296,22 +280,9 @@ def _fetch_position_size_from_data_api(
         except ValueError:
             return None, "数据接口响应解析失败"
 
-        if isinstance(payload, list):
-            positions = payload
-        elif isinstance(payload, dict):
-            data = payload.get("data")
-            if isinstance(data, list):
-                positions = data
-            elif isinstance(data, dict) and isinstance(data.get("positions"), list):
-                positions = data.get("positions")
-            else:
-                positions = payload.get("positions")
-        else:
-            positions = None
-        if positions is None:
-            return None, "数据接口返回格式异常，positions 未找到。"
-        if not isinstance(positions, list):
-            return None, "数据接口返回格式异常，positions 非列表。"
+        if not isinstance(payload, list):
+            return None, "数据接口返回格式异常：/positions 应返回列表。"
+        positions = payload
 
         for pos in positions:
             if not isinstance(pos, dict):
@@ -362,22 +333,9 @@ def _fetch_position_snapshot_map_from_data_api(
         except ValueError:
             return {}, "数据接口响应解析失败"
 
-        if isinstance(payload, list):
-            positions = payload
-        elif isinstance(payload, dict):
-            data = payload.get("data")
-            if isinstance(data, list):
-                positions = data
-            elif isinstance(data, dict) and isinstance(data.get("positions"), list):
-                positions = data.get("positions")
-            else:
-                positions = payload.get("positions")
-        else:
-            positions = None
-        if positions is None:
-            return {}, "数据接口返回格式异常，positions 未找到。"
-        if not isinstance(positions, list):
-            return {}, "数据接口返回格式异常，positions 非列表。"
+        if not isinstance(payload, list):
+            return {}, "数据接口返回格式异常：/positions 应返回列表。"
+        positions = payload
 
         for pos in positions:
             if not isinstance(pos, dict):
@@ -959,13 +917,18 @@ class AutoRunManager:
         """获取需要订阅的token列表（包括运行中的和待启动的）"""
         token_ids = []
 
+        # 主线程会并发增删 self.tasks / self.pending_topics。
+        # 使用 copy()+list() 先做快照，避免直接迭代共享容器导致并发迭代异常。
+        task_items = list(self.tasks.copy().items())
+        pending_snapshot = list(self.pending_topics)
+
         # 1. 运行中的任务
-        for topic_id, task in self.tasks.items():
+        for topic_id, task in task_items:
             if task.is_running():
                 token_ids.append(topic_id)
 
         # 2. 待启动的pending tokens（提前订阅，避免启动后等待）
-        for topic_id in self.pending_topics:
+        for topic_id in pending_snapshot:
             if topic_id not in token_ids:
                 token_ids.append(topic_id)
 
