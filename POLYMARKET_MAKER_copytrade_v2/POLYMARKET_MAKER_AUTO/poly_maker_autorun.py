@@ -68,13 +68,13 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_check_interval_sec": 60.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
     "enable_pending_soft_eviction": True,
-    "pending_soft_eviction_minutes": 20.0,
+    "pending_soft_eviction_minutes": 45.0,
     "pending_soft_eviction_check_interval_sec": 300.0,
     # Shared WS 等待配置
     "shared_ws_max_pending_wait_sec": 45.0,
     "shared_ws_wait_poll_sec": 0.5,
     "shared_ws_wait_failures_before_pause": 2,
-    "shared_ws_wait_pause_minutes": 1.0,
+    "shared_ws_wait_pause_minutes": 3.0,
     "shared_ws_wait_escalation_window_sec": 240.0,
     "shared_ws_wait_escalation_min_failures": 2,
     "ws_no_event_warn_interval_sec": 30.0,
@@ -808,6 +808,7 @@ class AutoRunManager:
         self._shared_ws_wait_failures: Dict[str, int] = {}
         self._shared_ws_paused_until: Dict[str, float] = {}
         self._shared_ws_wait_timeout_events: Dict[str, List[float]] = {}
+        self._ws_starting_topics: set[str] = set()  # 启动窗口内保留订阅，避免刚订阅即取消
         self._pending_first_seen: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
@@ -929,6 +930,11 @@ class AutoRunManager:
 
         # 2. 待启动的pending tokens（提前订阅，避免启动后等待）
         for topic_id in pending_snapshot:
+            if topic_id not in token_ids:
+                token_ids.append(topic_id)
+
+        # 3. 正在启动窗口中的topic（防止 pending->running 过渡期被误取消订阅）
+        for topic_id in list(self._ws_starting_topics):
             if topic_id not in token_ids:
                 token_ids.append(topic_id)
 
@@ -1854,6 +1860,7 @@ class AutoRunManager:
                     f" (等待了 {waited:.1f}s)"
                 )
 
+            self._ws_starting_topics.add(topic_id)
             try:
                 started = self._start_topic_process(topic_id)
             except Exception as exc:  # pragma: no cover - 防御性保护
@@ -1866,6 +1873,9 @@ class AutoRunManager:
                     "traceback": traceback.format_exc()
                 })
                 started = False
+            finally:
+                # 启动结束（成功或失败）后释放启动窗口标记
+                self._ws_starting_topics.discard(topic_id)
             if not started:
                 # 启动失败时重新入队，避免话题被遗忘
                 self._enqueue_pending_topic(topic_id)
