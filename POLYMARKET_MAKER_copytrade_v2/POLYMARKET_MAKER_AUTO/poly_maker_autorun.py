@@ -68,16 +68,18 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_check_interval_sec": 60.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
     "enable_pending_soft_eviction": True,
-    "pending_soft_eviction_minutes": 20.0,
+    "pending_soft_eviction_minutes": 45.0,
     "pending_soft_eviction_check_interval_sec": 300.0,
     # Shared WS 等待配置
     "shared_ws_max_pending_wait_sec": 45.0,
     "shared_ws_wait_poll_sec": 0.5,
     "shared_ws_wait_failures_before_pause": 2,
-    "shared_ws_wait_pause_minutes": 1.0,
+    "shared_ws_wait_pause_minutes": 3.0,
     "shared_ws_wait_escalation_window_sec": 240.0,
     "shared_ws_wait_escalation_min_failures": 2,
     "ws_no_event_warn_interval_sec": 30.0,
+    "ws_cache_flush_min_interval_sec": 0.5,  # 限制脏缓存刷盘频率，避免高负载
+    "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 全局总清仓（默认关闭）
     "total_liquidation": {
         "enable_total_liquidation": False,
@@ -208,58 +210,42 @@ def _atomic_json_write(path: Path, data: Any) -> None:
 
 
 def _resolve_position_address_from_env() -> tuple[Optional[str], str]:
+    """按官方 Data API 用法解析 user 地址（Proxy/Deposit 地址）。"""
     env_candidates = (
         "POLY_DATA_ADDRESS",
         "POLY_FUNDER",
-        "POLY_WALLET",
-        "POLY_ADDRESS",
     )
     for env_name in env_candidates:
         cand = os.getenv(env_name)
         if cand and str(cand).strip():
             return str(cand).strip(), f"env:{env_name}"
-    return None, "缺少地址，无法从数据接口拉取持仓。"
+    return None, "缺少地址，无法从 data-api /positions 查询持仓。"
 
 
 def _position_matches_token(entry: Dict[str, Any], token_id: str) -> bool:
-    token_keys = ("token_id", "tokenId", "token", "asset", "asset_id")
-    for key in token_keys:
-        val = entry.get(key)
-        if val and str(val) == token_id:
-            return True
-    return False
+    """官方 /positions 返回字段使用 asset 表示 token id。"""
+    asset = entry.get("asset")
+    return asset is not None and str(asset) == token_id
 
 
 def _extract_position_token_id(entry: Dict[str, Any]) -> Optional[str]:
-    token_keys = ("token_id", "tokenId", "token", "asset", "asset_id")
-    for key in token_keys:
-        val = entry.get(key)
-        if val is None:
-            continue
-        token_id = str(val).strip()
-        if token_id:
-            return token_id
-    return None
+    """官方 /positions 返回字段使用 asset 表示 token id。"""
+    val = entry.get("asset")
+    if val is None:
+        return None
+    token_id = str(val).strip()
+    return token_id or None
 
 
 def _extract_position_size(entry: Dict[str, Any]) -> Optional[float]:
-    size_keys = (
-        "size",
-        "position_size",
-        "quantity",
-        "balance",
-        "shares",
-        "amount",
-    )
-    for key in size_keys:
-        val = entry.get(key)
-        if val is None or isinstance(val, bool):
-            continue
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            continue
-    return None
+    """官方 /positions 返回字段使用 size。"""
+    val = entry.get("size")
+    if val is None or isinstance(val, bool):
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
 
 
 def _fetch_position_size_from_data_api(
@@ -296,22 +282,9 @@ def _fetch_position_size_from_data_api(
         except ValueError:
             return None, "数据接口响应解析失败"
 
-        if isinstance(payload, list):
-            positions = payload
-        elif isinstance(payload, dict):
-            data = payload.get("data")
-            if isinstance(data, list):
-                positions = data
-            elif isinstance(data, dict) and isinstance(data.get("positions"), list):
-                positions = data.get("positions")
-            else:
-                positions = payload.get("positions")
-        else:
-            positions = None
-        if positions is None:
-            return None, "数据接口返回格式异常，positions 未找到。"
-        if not isinstance(positions, list):
-            return None, "数据接口返回格式异常，positions 非列表。"
+        if not isinstance(payload, list):
+            return None, "数据接口返回格式异常：/positions 应返回列表。"
+        positions = payload
 
         for pos in positions:
             if not isinstance(pos, dict):
@@ -362,22 +335,9 @@ def _fetch_position_snapshot_map_from_data_api(
         except ValueError:
             return {}, "数据接口响应解析失败"
 
-        if isinstance(payload, list):
-            positions = payload
-        elif isinstance(payload, dict):
-            data = payload.get("data")
-            if isinstance(data, list):
-                positions = data
-            elif isinstance(data, dict) and isinstance(data.get("positions"), list):
-                positions = data.get("positions")
-            else:
-                positions = payload.get("positions")
-        else:
-            positions = None
-        if positions is None:
-            return {}, "数据接口返回格式异常，positions 未找到。"
-        if not isinstance(positions, list):
-            return {}, "数据接口返回格式异常，positions 非列表。"
+        if not isinstance(payload, list):
+            return {}, "数据接口返回格式异常：/positions 应返回列表。"
+        positions = payload
 
         for pos in positions:
             if not isinstance(pos, dict):
@@ -568,6 +528,10 @@ class GlobalConfig:
     ws_no_event_warn_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
         "ws_no_event_warn_interval_sec"
     ]
+    ws_cache_flush_min_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "ws_cache_flush_min_interval_sec"
+    ]
+    exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
@@ -732,6 +696,15 @@ class GlobalConfig:
                     cls.ws_no_event_warn_interval_sec,
                 )
             ),
+            ws_cache_flush_min_interval_sec=float(
+                merged.get(
+                    "ws_cache_flush_min_interval_sec",
+                    cls.ws_cache_flush_min_interval_sec,
+                )
+            ),
+            exit_start_stagger_sec=float(
+                merged.get("exit_start_stagger_sec", cls.exit_start_stagger_sec)
+            ),
             # Slot refill (回填) 配置
             enable_slot_refill=bool(
                 scheduler.get("enable_slot_refill", merged.get("enable_slot_refill", True))
@@ -850,6 +823,7 @@ class AutoRunManager:
         self._shared_ws_wait_failures: Dict[str, int] = {}
         self._shared_ws_paused_until: Dict[str, float] = {}
         self._shared_ws_wait_timeout_events: Dict[str, List[float]] = {}
+        self._ws_starting_topics: set[str] = set()  # 启动窗口内保留订阅，避免刚订阅即取消
         self._pending_first_seen: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
@@ -959,13 +933,23 @@ class AutoRunManager:
         """获取需要订阅的token列表（包括运行中的和待启动的）"""
         token_ids = []
 
+        # 主线程会并发增删 self.tasks / self.pending_topics。
+        # 使用 copy()+list() 先做快照，避免直接迭代共享容器导致并发迭代异常。
+        task_items = list(self.tasks.copy().items())
+        pending_snapshot = list(self.pending_topics)
+
         # 1. 运行中的任务
-        for topic_id, task in self.tasks.items():
+        for topic_id, task in task_items:
             if task.is_running():
                 token_ids.append(topic_id)
 
         # 2. 待启动的pending tokens（提前订阅，避免启动后等待）
-        for topic_id in self.pending_topics:
+        for topic_id in pending_snapshot:
+            if topic_id not in token_ids:
+                token_ids.append(topic_id)
+
+        # 3. 正在启动窗口中的topic（防止 pending->running 过渡期被误取消订阅）
+        for topic_id in list(self._ws_starting_topics):
             if topic_id not in token_ids:
                 token_ids.append(topic_id)
 
@@ -1429,10 +1413,15 @@ class AutoRunManager:
     def _flush_ws_cache_if_needed(self) -> None:
         now = time.time()
         heartbeat_interval = 30.0
-        # ✅ 从1.0秒改为0.1秒：提高缓存写入频率，让子进程能更快看到seq更新
+        min_flush_interval = max(0.1, float(self.config.ws_cache_flush_min_interval_sec))
+        # 脏缓存刷盘限频：避免高事件频率下每0.1秒刷盘导致 CPU/IO 峰值
+        if self._ws_cache_dirty and now - self._ws_cache_last_flush < min_flush_interval:
+            return
         if not self._ws_cache_dirty and now - self._ws_cache_last_flush < heartbeat_interval:
             return
         with self._ws_cache_lock:
+            if self._ws_cache_dirty and now - self._ws_cache_last_flush < min_flush_interval:
+                return
             if not self._ws_cache_dirty and now - self._ws_cache_last_flush < heartbeat_interval:
                 return
             if (
@@ -1891,6 +1880,7 @@ class AutoRunManager:
                     f" (等待了 {waited:.1f}s)"
                 )
 
+            self._ws_starting_topics.add(topic_id)
             try:
                 started = self._start_topic_process(topic_id)
             except Exception as exc:  # pragma: no cover - 防御性保护
@@ -1903,6 +1893,9 @@ class AutoRunManager:
                     "traceback": traceback.format_exc()
                 })
                 started = False
+            finally:
+                # 启动结束（成功或失败）后释放启动窗口标记
+                self._ws_starting_topics.discard(topic_id)
             if not started:
                 # 启动失败时重新入队，避免话题被遗忘
                 self._enqueue_pending_topic(topic_id)
@@ -1931,6 +1924,9 @@ class AutoRunManager:
                 continue
             self._start_exit_cleanup(token_id)
             exit_running += 1
+            stagger = max(0.0, float(self.config.exit_start_stagger_sec))
+            if stagger > 0 and self.pending_exit_topics and exit_running < max_exit_slots:
+                time.sleep(stagger)
         # 将被跳过的 token 放回队列尾部，避免丢失
         if deferred:
             self.pending_exit_topics.extend(deferred)
