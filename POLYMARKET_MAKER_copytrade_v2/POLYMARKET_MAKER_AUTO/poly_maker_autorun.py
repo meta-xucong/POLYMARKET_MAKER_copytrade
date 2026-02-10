@@ -959,13 +959,18 @@ class AutoRunManager:
         """获取需要订阅的token列表（包括运行中的和待启动的）"""
         token_ids = []
 
+        # 主线程会并发增删 self.tasks / self.pending_topics。
+        # 使用 copy()+list() 先做快照，避免直接迭代共享容器导致并发迭代异常。
+        task_items = list(self.tasks.copy().items())
+        pending_snapshot = list(self.pending_topics)
+
         # 1. 运行中的任务
-        for topic_id, task in self.tasks.items():
+        for topic_id, task in task_items:
             if task.is_running():
                 token_ids.append(topic_id)
 
         # 2. 待启动的pending tokens（提前订阅，避免启动后等待）
-        for topic_id in self.pending_topics:
+        for topic_id in pending_snapshot:
             if topic_id not in token_ids:
                 token_ids.append(topic_id)
 
