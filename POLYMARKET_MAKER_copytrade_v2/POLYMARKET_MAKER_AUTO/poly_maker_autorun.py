@@ -78,6 +78,8 @@ DEFAULT_GLOBAL_CONFIG = {
     "shared_ws_wait_escalation_window_sec": 240.0,
     "shared_ws_wait_escalation_min_failures": 2,
     "ws_no_event_warn_interval_sec": 30.0,
+    "ws_cache_flush_min_interval_sec": 0.5,  # 限制脏缓存刷盘频率，避免高负载
+    "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 全局总清仓（默认关闭）
     "total_liquidation": {
         "enable_total_liquidation": False,
@@ -526,6 +528,10 @@ class GlobalConfig:
     ws_no_event_warn_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
         "ws_no_event_warn_interval_sec"
     ]
+    ws_cache_flush_min_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "ws_cache_flush_min_interval_sec"
+    ]
+    exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
@@ -689,6 +695,15 @@ class GlobalConfig:
                     "ws_no_event_warn_interval_sec",
                     cls.ws_no_event_warn_interval_sec,
                 )
+            ),
+            ws_cache_flush_min_interval_sec=float(
+                merged.get(
+                    "ws_cache_flush_min_interval_sec",
+                    cls.ws_cache_flush_min_interval_sec,
+                )
+            ),
+            exit_start_stagger_sec=float(
+                merged.get("exit_start_stagger_sec", cls.exit_start_stagger_sec)
             ),
             # Slot refill (回填) 配置
             enable_slot_refill=bool(
@@ -1398,10 +1413,15 @@ class AutoRunManager:
     def _flush_ws_cache_if_needed(self) -> None:
         now = time.time()
         heartbeat_interval = 30.0
-        # ✅ 从1.0秒改为0.1秒：提高缓存写入频率，让子进程能更快看到seq更新
+        min_flush_interval = max(0.1, float(self.config.ws_cache_flush_min_interval_sec))
+        # 脏缓存刷盘限频：避免高事件频率下每0.1秒刷盘导致 CPU/IO 峰值
+        if self._ws_cache_dirty and now - self._ws_cache_last_flush < min_flush_interval:
+            return
         if not self._ws_cache_dirty and now - self._ws_cache_last_flush < heartbeat_interval:
             return
         with self._ws_cache_lock:
+            if self._ws_cache_dirty and now - self._ws_cache_last_flush < min_flush_interval:
+                return
             if not self._ws_cache_dirty and now - self._ws_cache_last_flush < heartbeat_interval:
                 return
             if (
@@ -1904,6 +1924,9 @@ class AutoRunManager:
                 continue
             self._start_exit_cleanup(token_id)
             exit_running += 1
+            stagger = max(0.0, float(self.config.exit_start_stagger_sec))
+            if stagger > 0 and self.pending_exit_topics and exit_running < max_exit_slots:
+                time.sleep(stagger)
         # 将被跳过的 token 放回队列尾部，避免丢失
         if deferred:
             self.pending_exit_topics.extend(deferred)
