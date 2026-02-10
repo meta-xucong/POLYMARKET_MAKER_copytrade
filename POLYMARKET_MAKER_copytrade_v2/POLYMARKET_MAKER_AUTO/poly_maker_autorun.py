@@ -68,7 +68,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_check_interval_sec": 60.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
     "enable_pending_soft_eviction": True,
-    "pending_soft_eviction_minutes": 12.0,
+    "pending_soft_eviction_minutes": 20.0,
     "pending_soft_eviction_check_interval_sec": 300.0,
     # Shared WS 等待配置
     "shared_ws_max_pending_wait_sec": 45.0,
@@ -989,11 +989,14 @@ class AutoRunManager:
                 if now - last_health_check >= health_check_interval:
                     current_count = getattr(self, '_ws_event_count', 0)
 
-                    # 检查数据流是否停滞
+                    # 检查数据流是否停滞（区分“连接异常”与“仅无事件”）
+                    ws_connected = bool(self._ws_client and self._ws_client.is_connected())
                     if current_count == last_event_count and self._ws_token_ids:
+                        level = "INFO" if ws_connected else "WARN"
+                        reason = "连接正常但全局无新增事件" if ws_connected else "连接异常或数据流停滞"
                         print(
-                            f"[WARN] WS 聚合器{int(health_check_interval)}秒内未收到任何新事件"
-                            f"（订阅了 {len(self._ws_token_ids)} 个token）"
+                            f"[{level}] WS 聚合器{int(health_check_interval)}秒内未收到任何新事件"
+                            f"（订阅了 {len(self._ws_token_ids)} 个token，{reason}）"
                         )
                     elif current_count > last_event_count:
                         # 数据流正常，每小时打印一次统计（避免刷屏）
@@ -2727,12 +2730,12 @@ class AutoRunManager:
                 continue
 
             # 检查重试次数（按退出原因分级）
-            # - NO_DATA_TIMEOUT: 最多1次，避免低活跃 token 反复回填
+            # - NO_DATA_TIMEOUT: 最多2次，优先降低低活跃市场的误淘汰抖动
             # - SHARED_WS_UNAVAILABLE: 视为基础设施瞬态故障，不设置硬上限
             retry_count = self._refill_retry_counts.get(token_id, 0)
             effective_max_retries = max_retries
             if exit_reason == "NO_DATA_TIMEOUT":
-                effective_max_retries = 1
+                effective_max_retries = 2
             elif exit_reason == "SHARED_WS_UNAVAILABLE":
                 effective_max_retries = 10**9
             if retry_count >= effective_max_retries:
