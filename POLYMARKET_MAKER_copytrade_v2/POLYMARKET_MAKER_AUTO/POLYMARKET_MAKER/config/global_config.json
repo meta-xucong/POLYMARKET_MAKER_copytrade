@@ -1,6 +1,6 @@
 {
   "scheduler": {
-    "max_concurrent_tasks": 10,
+    "max_concurrent_tasks": 20,
     "command_poll_seconds": 30.0,
     "copytrade_poll_seconds": 60.0,
     "enable_slot_refill": true,
@@ -8,21 +8,21 @@
     "max_refill_retries": 3,
     "refill_check_interval_sec": 60.0,
     "total_liquidation": {
-      "enable_total_liquidation": false,
-      "min_interval_hours": 72.0,
+      "enable_total_liquidation": true,
+      "min_interval_hours": 24.0,
       "trigger": {
-        "idle_slot_ratio_threshold": 0.5,
-        "idle_slot_duration_minutes": 120.0,
-        "no_trade_duration_minutes": 180.0,
+        "idle_slot_ratio_threshold": 0.7,
+        "idle_slot_duration_minutes": 240.0,
+        "no_trade_duration_minutes": 240.0,
         "min_free_balance": 20.0,
         "require_conditions": 2,
-        "balance_poll_interval_sec": 120.0,
+        "balance_poll_interval_sec": 600.0,
         "startup_grace_hours": 6.0
       },
       "liquidation": {
         "position_value_threshold": 3.0,
         "spread_threshold": 0.01,
-        "maker_timeout_minutes": 20.0,
+        "maker_timeout_minutes": 30.0,
         "taker_slippage_bps": 30.0
       },
       "reset": {
