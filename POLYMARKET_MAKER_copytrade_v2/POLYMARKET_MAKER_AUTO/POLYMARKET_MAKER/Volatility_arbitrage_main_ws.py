@@ -75,6 +75,8 @@ class WSAggregatorClient:
         ping_interval_sec: float = 25.0,
         ping_timeout_sec: float = 20.0,
         enable_text_ping: bool = False,
+        silence_timeout_sec: float = 1200.0,
+        custom_feature_enabled: bool = True,
     ):
         self._on_event = on_event
         self._on_state = on_state
@@ -89,6 +91,8 @@ class WSAggregatorClient:
         self._subscribed_ids: Set[str] = set()  # 已确认订阅的token
         self._pending_subscribe: Set[str] = set()  # 待订阅
         self._pending_unsubscribe: Set[str] = set()  # 待取消订阅
+        self._desired_ids: Set[str] = set()  # 期望订阅（业务层）
+        self._confirmed_ids: Set[str] = set()  # 已收到事件确认的token
 
         # WS连接状态
         self._ws: Optional[websocket.WebSocketApp] = None
@@ -104,11 +108,12 @@ class WSAggregatorClient:
         # 配置
         self._reconnect_delay = 1
         self._max_reconnect_delay = 60
-        self._silence_timeout = 600
+        self._silence_timeout = max(60.0, float(silence_timeout_sec))
         self._flush_interval = max(0.1, float(flush_interval_sec))
         self._ping_interval = max(1.0, float(ping_interval_sec))
         self._ping_timeout = max(1.0, float(ping_timeout_sec))
         self._enable_text_ping = bool(enable_text_ping)
+        self._custom_feature_enabled = bool(custom_feature_enabled)
 
         # 统计
         self._last_event_ts = 0.0
@@ -174,6 +179,7 @@ class WSAggregatorClient:
                 # 添加到待订阅列表
                 if tid not in self._pending_subscribe:
                     self._pending_subscribe.add(tid)
+                    self._desired_ids.add(tid)
                     added += 1
 
         if added > 0 and self._verbose:
@@ -203,13 +209,21 @@ class WSAggregatorClient:
                 # 如果只在待订阅列表，直接移除
                 if tid in self._pending_subscribe:
                     self._pending_subscribe.discard(tid)
+                    self._desired_ids.discard(tid)
+                    self._confirmed_ids.discard(tid)
                     removed += 1
                     continue
                 # 如果已订阅，添加到待取消列表
                 if tid in self._subscribed_ids:
                     if tid not in self._pending_unsubscribe:
                         self._pending_unsubscribe.add(tid)
+                        self._desired_ids.discard(tid)
+                        self._confirmed_ids.discard(tid)
                         removed += 1
+                else:
+                    # 即使当前尚未进入 subscribed，也确保业务期望订阅集合被移除
+                    self._desired_ids.discard(tid)
+                    self._confirmed_ids.discard(tid)
 
         if removed > 0 and self._verbose:
             print(f"[{_now()}][WS][AGGREGATOR] 待取消队列 +{removed} (总待取消: {len(self._pending_unsubscribe)})")
@@ -292,25 +306,30 @@ class WSAggregatorClient:
         if self._verbose:
             print(f"[{_now()}][WS][AGGREGATOR][OPEN] 连接已建立 (第{self._connect_count}次)")
 
-        # 发送初始握手消息（空订阅列表）
-        # Polymarket要求先发送type消息建立channel
-        initial_msg = {"type": CHANNEL, "assets_ids": []}
+        # 发送初始握手消息（按官方示例可直接携带首批 assets_ids）
+        with self._lock:
+            initial_assets = list(self._desired_ids)
+            if not initial_assets and self._subscribed_ids:
+                initial_assets = list(self._subscribed_ids)
+
+        initial_msg = {
+            "type": CHANNEL,
+            "assets_ids": initial_assets,
+            "custom_feature_enabled": self._custom_feature_enabled,
+        }
         if self._auth:
             initial_msg["auth"] = self._auth
         try:
             ws.send(json.dumps(initial_msg))
+            if initial_assets:
+                with self._lock:
+                    self._subscribed_ids.update(initial_assets)
+                    # 初始握手已携带这些 token，避免 flush 线程重复发送 subscribe
+                    for tid in initial_assets:
+                        self._pending_subscribe.discard(tid)
         except Exception as e:
             if self._verbose:
                 print(f"[{_now()}][WS][AGGREGATOR][ERROR] 发送握手消息失败: {e}")
-
-        # 将已订阅的token重新加入待订阅队列（重连后需要重新订阅）
-        with self._lock:
-            if self._subscribed_ids:
-                resubscribe_count = len(self._subscribed_ids)
-                self._pending_subscribe.update(self._subscribed_ids)
-                self._subscribed_ids.clear()
-                if self._verbose:
-                    print(f"[{_now()}][WS][AGGREGATOR] 重连后重新订阅 {resubscribe_count} 个token")
 
         # 启动辅助线程
         self._start_helper_threads(ws)
@@ -375,6 +394,7 @@ class WSAggregatorClient:
 
         if unsubscribe_batch:
             msg = {"operation": "unsubscribe", "assets_ids": unsubscribe_batch}
+            msg["custom_feature_enabled"] = self._custom_feature_enabled
             if self._auth:
                 msg["auth"] = self._auth
             try:
@@ -383,6 +403,7 @@ class WSAggregatorClient:
                 with self._lock:
                     for tid in unsubscribe_batch:
                         self._subscribed_ids.discard(tid)
+                        self._confirmed_ids.discard(tid)
                 if self._verbose:
                     print(f"[{_now()}][WS][AGGREGATOR] ✗ 取消订阅 {len(unsubscribe_batch)} 个token")
             except Exception as e:
@@ -401,6 +422,7 @@ class WSAggregatorClient:
 
         if subscribe_batch:
             msg = {"operation": "subscribe", "assets_ids": subscribe_batch}
+            msg["custom_feature_enabled"] = self._custom_feature_enabled
             if self._auth:
                 msg["auth"] = self._auth
             try:
@@ -426,6 +448,23 @@ class WSAggregatorClient:
             return
 
         self._last_event_ts = time.monotonic()
+
+        # 标记token已收到WS事件（用于订阅有效性观测）
+        seen_ids: Set[str] = set()
+        if isinstance(data, dict):
+            evt_asset = data.get("asset_id")
+            if evt_asset:
+                seen_ids.add(str(evt_asset))
+            pcs = data.get("price_changes")
+            if isinstance(pcs, list):
+                for item in pcs:
+                    if isinstance(item, dict) and item.get("asset_id"):
+                        seen_ids.add(str(item.get("asset_id")))
+        if seen_ids:
+            with self._lock:
+                for tid in seen_ids:
+                    if tid in self._desired_ids:
+                        self._confirmed_ids.add(tid)
 
         if self._on_event is None:
             if self._verbose:
@@ -479,6 +518,7 @@ class WSAggregatorClient:
                 "subscribe_count": self._subscribe_count,
                 "unsubscribe_count": self._unsubscribe_count,
                 "subscribed_tokens": len(self._subscribed_ids),
+                "confirmed_tokens": len(self._confirmed_ids),
                 "pending_subscribe": len(self._pending_subscribe),
                 "pending_unsubscribe": len(self._pending_unsubscribe),
             }

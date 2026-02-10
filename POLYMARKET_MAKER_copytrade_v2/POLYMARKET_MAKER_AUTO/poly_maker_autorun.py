@@ -79,6 +79,8 @@ DEFAULT_GLOBAL_CONFIG = {
     "shared_ws_wait_escalation_min_failures": 2,
     "ws_no_event_warn_interval_sec": 30.0,
     "ws_cache_flush_min_interval_sec": 0.5,  # 限制脏缓存刷盘频率，避免高负载
+    "ws_silence_timeout_sec": 1200.0,  # WS静默重连阈值（默认20分钟，降低低活跃误重连）
+    "ws_custom_feature_enabled": True,  # 订阅 custom feature，启用 best_bid_ask/new_market 等事件
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 全局总清仓（默认关闭）
     "total_liquidation": {
@@ -387,6 +389,37 @@ def _coerce_float(value: Any) -> Optional[float]:
     return None
 
 
+def _extract_top_price_from_levels(levels: Any) -> Optional[float]:
+    """从订单簿档位中提取最优价格（兼容 dict/list 结构）。"""
+    if not isinstance(levels, list) or not levels:
+        return None
+    first = levels[0]
+    if isinstance(first, dict):
+        return _coerce_float(first.get("price"))
+    if isinstance(first, (list, tuple)) and first:
+        return _coerce_float(first[0])
+    return None
+
+
+def _extract_best_bid_ask_from_book_event(ev: Dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+    """从 book 事件提取 bid/ask，兼容文档中的 buys/sells 与示例中的 bids/asks。"""
+    bid_levels = ev.get("buys")
+    if not isinstance(bid_levels, list):
+        bid_levels = ev.get("bids")
+    ask_levels = ev.get("sells")
+    if not isinstance(ask_levels, list):
+        ask_levels = ev.get("asks")
+
+    bid = _extract_top_price_from_levels(bid_levels)
+    ask = _extract_top_price_from_levels(ask_levels)
+
+    if bid is None:
+        bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
+    if ask is None:
+        ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
+    return bid, ask
+
+
 def _env_flag(name: str) -> bool:
     raw = os.getenv(name, "").strip().lower()
     return raw in {"1", "true", "yes", "on", "y", "debug"}
@@ -531,6 +564,12 @@ class GlobalConfig:
     ws_cache_flush_min_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
         "ws_cache_flush_min_interval_sec"
     ]
+    ws_silence_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "ws_silence_timeout_sec"
+    ]
+    ws_custom_feature_enabled: bool = bool(
+        DEFAULT_GLOBAL_CONFIG["ws_custom_feature_enabled"]
+    )
     exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
@@ -700,6 +739,18 @@ class GlobalConfig:
                 merged.get(
                     "ws_cache_flush_min_interval_sec",
                     cls.ws_cache_flush_min_interval_sec,
+                )
+            ),
+            ws_silence_timeout_sec=float(
+                merged.get(
+                    "ws_silence_timeout_sec",
+                    cls.ws_silence_timeout_sec,
+                )
+            ),
+            ws_custom_feature_enabled=bool(
+                merged.get(
+                    "ws_custom_feature_enabled",
+                    cls.ws_custom_feature_enabled,
                 )
             ),
             exit_start_stagger_sec=float(
@@ -1126,6 +1177,8 @@ class AutoRunManager:
             auth=self._load_ws_auth(),
             verbose=self._ws_debug_raw,
             label="autorun-aggregator",
+            silence_timeout_sec=self.config.ws_silence_timeout_sec,
+            custom_feature_enabled=self.config.ws_custom_feature_enabled,
         )
         self._ws_client.start()
 
@@ -1251,38 +1304,48 @@ class AutoRunManager:
             pcs = ev.get("price_changes", [])
         elif "price_changes" in ev:
             pcs = ev.get("price_changes", [])
-        # ✅ 新增：处理 book 和 tick 事件（订单簿更新）
-        elif event_type in ("book", "tick"):
-            # 尝试从事件中提取价格信息并转换为 price_changes 格式
+        # 处理 book 事件（兼容官方 buys/sells 与示例 bids/asks）
+        elif event_type == "book":
             asset_id = ev.get("asset_id") or ev.get("token_id")
+            bid, ask = _extract_best_bid_ask_from_book_event(ev)
+            if asset_id and (bid is not None or ask is not None):
+                mid = (bid + ask) / 2.0 if bid and ask else (bid or ask)
+                pcs = [{
+                    "asset_id": asset_id,
+                    "best_bid": bid,
+                    "best_ask": ask,
+                    "last_trade_price": _coerce_float(ev.get("last_trade_price")) or mid,
+                }]
+            else:
+                pcs = []
+        # best_bid_ask / tick 是高价值行情，直接纳入处理
+        elif event_type in ("best_bid_ask", "tick"):
+            asset_id = ev.get("asset_id") or ev.get("token_id")
+            bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
+            ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
+            if asset_id and (bid is not None or ask is not None):
+                mid = (bid + ask) / 2.0 if bid and ask else (bid or ask)
+                pcs = [{
+                    "asset_id": asset_id,
+                    "best_bid": bid,
+                    "best_ask": ask,
+                    "last_trade_price": _coerce_float(ev.get("last_trade_price")) or mid,
+                }]
+            else:
+                pcs = []
+        # tick_size_change 不一定携带盘口，尽量用已有字段刷新时间戳与状态
+        elif event_type == "tick_size_change":
+            asset_id = ev.get("asset_id") or ev.get("token_id")
+            bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
+            ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
             if asset_id:
-                bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
-                ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
-
-                # 如果有有效的bid/ask，就构造price_change格式
-                if bid or ask:
-                    # ✅ 使用mid=(bid+ask)/2作为最可靠的当前价格
-                    mid = (bid + ask) / 2.0 if bid and ask else (bid or ask)
-                    # ✅ 只使用last_trade_price，不使用price字段（含义不明确）
-                    last = _coerce_float(ev.get("last_trade_price"))
-                    pcs = [{
-                        "asset_id": asset_id,
-                        "best_bid": bid,
-                        "best_ask": ask,
-                        "last_trade_price": last or mid
-                    }]
-                    # ✅ 调试日志：确认book/tick事件被处理
-                    if not hasattr(self, '_book_tick_log_count'):
-                        self._book_tick_log_count = 0
-                        self._book_tick_last_log = 0.0
-                    self._book_tick_log_count += 1
-                    now = time.time()
-                    if now - self._book_tick_last_log >= 60:
-                        print(f"[WS][AGGREGATOR] ✅ 处理book/tick事件: {self._book_tick_log_count} 次/分钟")
-                        self._book_tick_last_log = now
-                        self._book_tick_log_count = 0
-                else:
-                    pcs = []
+                mid = (bid + ask) / 2.0 if bid and ask else (bid or ask)
+                pcs = [{
+                    "asset_id": asset_id,
+                    "best_bid": bid,
+                    "best_ask": ask,
+                    "last_trade_price": _coerce_float(ev.get("last_trade_price")) or mid,
+                }]
             else:
                 pcs = []
         # 处理 last_trade_price 事件（仅更新时间戳，避免假僵尸）
@@ -1507,6 +1570,7 @@ class AutoRunManager:
                     stats = self._ws_client.get_stats()
                     print(f"[WS][CLIENT] 连接状态: {'✓' if ws_healthy else '✗'}, "
                           f"已订阅: {stats.get('subscribed_tokens', 0)}, "
+                          f"已确认: {stats.get('confirmed_tokens', 0)}, "
                           f"待订阅: {stats.get('pending_subscribe', 0)}, "
                           f"连接次数: {stats.get('connect_count', 0)}")
             elif self._ws_thread and self._ws_thread.is_alive():
