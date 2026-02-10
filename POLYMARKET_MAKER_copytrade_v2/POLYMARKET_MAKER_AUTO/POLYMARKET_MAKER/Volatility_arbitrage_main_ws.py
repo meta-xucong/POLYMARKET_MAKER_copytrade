@@ -563,6 +563,17 @@ def ws_watch_by_ids(
 
                 threading.Thread(target=_ping, daemon=True).start()
 
+            def _stop_guard():
+                while not stop_event.is_set() and not ping_stop["v"]:
+                    time.sleep(0.2)
+                if stop_event.is_set() and not ping_stop["v"]:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+
+            threading.Thread(target=_stop_guard, daemon=True).start()
+
             def _silence_guard():
                 while not silence_guard_stop["v"] and not stop_event.is_set():
                     time.sleep(5)
