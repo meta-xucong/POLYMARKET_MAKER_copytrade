@@ -47,6 +47,19 @@
 | `countdown.absolute_time` | 绝对倒计时切换时间。 | 时间戳/ISO/日期文本 | 建议用带时区 ISO。 |
 | `countdown.timezone` | `absolute_time` 无时区时的推断时区。 | IANA 时区字符串 | 与市场一致。 |
 
+| `shock_guard.enabled` | 是否启用急跌门禁模块（前置于原买入逻辑）。 | 布尔 | 默认 `false`，建议先灰度。 |
+| `shock_guard.shock_window_sec` | 急跌检测窗口（秒）。 | 浮点 | 常用 `20~90`。 |
+| `shock_guard.shock_drop_pct` | 急跌跌幅阈值（窗口内）。 | 比例浮点 | 常用 `0.15~0.30`。 |
+| `shock_guard.shock_velocity_pct_per_sec` | 急跌速度阈值（可选，负向速度）。 | 比例浮点/空 | 留空表示禁用速度条件。 |
+| `shock_guard.shock_abs_floor` | 绝对低价风险阈值（可选）。 | `0~1` 浮点/空 | 如 `0.03`。 |
+| `shock_guard.observation_hold_sec` | 触发急跌后的观察冻结时长（秒）。 | 浮点 | 常用 `45~180`。 |
+| `shock_guard.recovery.rebound_pct_min` | 观察期后恢复确认的最小反弹比例。 | 比例浮点 | 如 `0.03~0.08`。 |
+| `shock_guard.recovery.reconfirm_sec` | 最近创新低后的最小确认时长（秒）。 | 浮点 | 如 `20~120`。 |
+| `shock_guard.recovery.spread_cap` | 恢复确认时允许的最大点差（可选）。 | 浮点/空 | 留空表示不校验。 |
+| `shock_guard.recovery.require_conditions` | 恢复确认需满足条件数（反弹/不创新低/点差）。 | 整数 | 建议 `2`。 |
+| `shock_guard.blocked_cooldown_sec` | 恢复失败后封禁买入时长（秒）。 | 浮点 | 常用 `120~600`。 |
+| `shock_guard.max_pending_buy_age_sec` | 延迟买入信号最大保留时长（秒）。 | 浮点 | 常用 `60~300`。 |
+
 ---
 
 ## 2) global_config.json —— 调度与系统行为
