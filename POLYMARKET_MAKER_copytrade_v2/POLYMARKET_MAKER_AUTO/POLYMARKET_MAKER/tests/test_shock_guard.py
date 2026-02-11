@@ -32,34 +32,31 @@ def test_disabled_guard_always_allows():
     assert result.decision == GateDecision.ALLOW
 
 
-def test_shock_triggers_hold_and_defers_buy():
+def test_pre_buy_observation_always_defers_first_buy():
     guard = _build_guard()
     guard.on_market_snapshot(bid=0.60, ask=0.62, ts=1.0)
-    guard.on_market_snapshot(bid=0.45, ask=0.47, ts=5.0)  # drop > 20%
-
-    result = guard.gate_buy(ts=5.0)
+    result = guard.gate_buy(ts=2.0)
     assert result.decision == GateDecision.DEFER
-    assert result.reason in {"observation hold active"} or "shock" in result.reason
+    assert "pre-buy" in result.reason
 
 
 def test_recovery_pass_allows_after_hold():
     guard = _build_guard()
     guard.on_market_snapshot(bid=0.60, ask=0.62, ts=1.0)
-    guard.on_market_snapshot(bid=0.45, ask=0.47, ts=5.0)
-    assert guard.gate_buy(ts=5.0).decision == GateDecision.DEFER
+    assert guard.gate_buy(ts=2.0).decision == GateDecision.DEFER
 
-    # hold结束后，价格反弹且点差正常，满足恢复条件
+    # hold结束后先出现低点，再等待确认窗口并反弹，满足恢复条件
     guard.on_market_snapshot(bid=0.50, ask=0.52, ts=36.0)
-    result = guard.gate_buy(ts=36.0)
+    guard.on_market_snapshot(bid=0.58, ask=0.60, ts=48.0)
+    result = guard.gate_buy(ts=48.0)
     assert result.decision == GateDecision.ALLOW
 
 
-def test_recovery_fail_enters_blocked_and_then_recovers():
+def test_recovery_fail_enters_blocked_and_then_restarts_observation():
     guard = _build_guard()
     guard.cfg.recovery.require_conditions = 3
     guard.on_market_snapshot(bid=0.60, ask=0.62, ts=1.0)
-    guard.on_market_snapshot(bid=0.40, ask=0.50, ts=5.0)  # drop + spread 0.10 > cap
-    assert guard.gate_buy(ts=5.0).decision == GateDecision.DEFER
+    assert guard.gate_buy(ts=2.0).decision == GateDecision.DEFER
 
     # hold结束但没有反弹+点差过大 -> fail
     guard.on_market_snapshot(bid=0.44, ask=0.54, ts=36.0)
@@ -70,7 +67,7 @@ def test_recovery_fail_enters_blocked_and_then_recovers():
     blocked_result = guard.gate_buy(ts=50.0)
     assert blocked_result.decision == GateDecision.REJECT
 
-    # cooldown结束回到normal，可放行
+    # cooldown结束回到normal，但由于每次买前强制观察，应再次 DEFER
     guard.on_market_snapshot(bid=0.48, ask=0.50, ts=80.0)
     final_result = guard.gate_buy(ts=80.0)
-    assert final_result.decision == GateDecision.ALLOW
+    assert final_result.decision == GateDecision.DEFER

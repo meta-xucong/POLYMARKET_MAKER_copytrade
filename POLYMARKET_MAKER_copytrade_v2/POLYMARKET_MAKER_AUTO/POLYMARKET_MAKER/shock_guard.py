@@ -137,15 +137,18 @@ class ShockGuard:
 
         if self._phase == ShockPhase.NORMAL:
             detected = self._detect_shock(ts)
+            observe_reason = "pre-buy observation window"
+            detail: Dict[str, Any] = {"reason": observe_reason}
             if detected is not None:
-                self._enter_holding(ts, detected)
-                return GateResult(
-                    GateDecision.DEFER,
-                    f"shock detected: {detected['reason']}",
-                    retry_at_ts=self._hold_until_ts,
-                    details=detected,
-                )
-            return GateResult(GateDecision.ALLOW, "normal")
+                observe_reason = f"pre-buy hold with shock evidence: {detected.get('reason', 'detected')}"
+                detail.update(detected)
+            self._enter_holding(ts, detail)
+            return GateResult(
+                GateDecision.DEFER,
+                observe_reason,
+                retry_at_ts=self._hold_until_ts,
+                details=detail,
+            )
 
         if self._phase == ShockPhase.HOLDING:
             return GateResult(

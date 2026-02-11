@@ -36,7 +36,7 @@
   "shock_guard": {
     "enabled": true,
     "shock_window_sec": 90,
-    "shock_drop_pct": 0.25,
+    "shock_drop_pct": 0.35,
     "shock_velocity_pct_per_sec": null,
     "shock_abs_floor": 0.05,
     "observation_hold_sec": 180,
