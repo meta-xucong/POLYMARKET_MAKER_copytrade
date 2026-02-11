@@ -50,7 +50,7 @@ _PRICE_FETCH_WARN_INTERVAL = 60.0
 # 价格获取失败警告的上次时间记录 {(token_id, side): last_warn_ts}
 _price_fetch_warn_times: Dict[Tuple[str, str], float] = {}
 # 价格无效超时时间（秒）- 连续无法获取有效价格则退出
-PRICE_INVALID_TIMEOUT_SEC = 600.0  # 10 分钟
+PRICE_INVALID_TIMEOUT_SEC = 600.0  # 默认10分钟，可由运行层统一覆写
 
 # ========== 指数避退机制（Exponential Backoff）==========
 # 当 REST API 调用失败（尤其是 429 Rate Limit）时，使用指数避退减少请求频率
@@ -95,6 +95,16 @@ def set_price_none_exit_threshold(threshold: Optional[int]) -> None:
         value = 0
     _PRICE_NONE_EXIT_THRESHOLD = max(0, value)
     _price_none_streak.clear()
+
+
+def set_price_invalid_timeout_sec(timeout_sec: Optional[float]) -> None:
+    """设置价格持续无效的超时阈值（<=0 表示禁用该超时）。"""
+    global PRICE_INVALID_TIMEOUT_SEC
+    try:
+        value = float(timeout_sec) if timeout_sec is not None else 0.0
+    except (TypeError, ValueError):
+        value = 0.0
+    PRICE_INVALID_TIMEOUT_SEC = max(0.0, value)
 
 
 def _is_orderbook_not_found_error(err: Exception) -> bool:
@@ -947,7 +957,10 @@ def maker_buy_follow_bid(
                 if price_invalid_since is None:
                     price_invalid_since = time.time()
                     print("[MAKER][BUY] 价格无效，开始计时等待恢复...")
-                elif time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC:
+                elif (
+                    PRICE_INVALID_TIMEOUT_SEC > 0
+                    and time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC
+                ):
                     print(f"[MAKER][BUY] 价格持续无效超过 {PRICE_INVALID_TIMEOUT_SEC/60:.0f} 分钟，退出买入流程")
                     final_status = "PRICE_TIMEOUT"
                     break
@@ -1518,7 +1531,10 @@ def maker_sell_follow_ask_with_floor_wait(
                 if price_invalid_since is None:
                     price_invalid_since = time.time()
                     print("[MAKER][SELL] 价格无效，开始计时等待恢复...")
-                elif time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC:
+                elif (
+                    PRICE_INVALID_TIMEOUT_SEC > 0
+                    and time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC
+                ):
                     print(f"[MAKER][SELL] 价格持续无效超过 {PRICE_INVALID_TIMEOUT_SEC/60:.0f} 分钟，退出卖出流程")
                     final_status = "PRICE_TIMEOUT"
                     break
@@ -1565,7 +1581,10 @@ def maker_sell_follow_ask_with_floor_wait(
                 if price_invalid_since is None:
                     price_invalid_since = time.time()
                     print("[MAKER][SELL] 价格无效，开始计时等待恢复...")
-                elif time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC:
+                elif (
+                    PRICE_INVALID_TIMEOUT_SEC > 0
+                    and time.time() - price_invalid_since >= PRICE_INVALID_TIMEOUT_SEC
+                ):
                     print(f"[MAKER][SELL] 价格持续无效超过 {PRICE_INVALID_TIMEOUT_SEC/60:.0f} 分钟，退出卖出流程")
                     final_status = "PRICE_TIMEOUT"
                     break
