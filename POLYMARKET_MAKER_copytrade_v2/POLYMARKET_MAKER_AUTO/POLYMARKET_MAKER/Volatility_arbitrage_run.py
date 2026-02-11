@@ -205,6 +205,8 @@ API_MIN_ORDER_SIZE = 5.0
 ORDERBOOK_STALE_AFTER_SEC = 60.0
 # WS+REST 最终价格连续 None 的硬编码退出阈值（0=禁用）
 PRICE_NONE_EXIT_COUNT = 100
+SIGNAL_TIMEOUT_NO_POSITION_MINUTES = 60.0
+SIGNAL_TIMEOUT_WITH_POSITION_MINUTES = 20.0
 POSITION_SYNC_INTERVAL = 60.0
 POST_BUY_POSITION_CHECK_DELAY = 60.0
 POST_BUY_POSITION_CHECK_ATTEMPTS = 5
@@ -3228,9 +3230,24 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if cache_updated_at:
                         cache_age = time.time() - float(cache_updated_at)
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
-                            print(f"[DIAG][BID] ✗ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
-                            print(f"[DIAG][BID] 缓存数据过期，返回None触发REST API fallback")
-                            return None
+                            fallback_bid = fresh_snap.get("best_bid")
+                            fallback_ask = fresh_snap.get("best_ask")
+                            if fallback_bid or fallback_ask:
+                                latest[token_id] = {
+                                    "price": float(fresh_snap.get("price") or 0.0),
+                                    "best_bid": float(fallback_bid or 0.0),
+                                    "best_ask": float(fallback_ask or 0.0),
+                                    "ts": time.time(),
+                                }
+                                snap = latest[token_id]
+                                print(
+                                    f"[DIAG][BID] ⚠ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s，"
+                                    "使用过期缓存软降级"
+                                )
+                            else:
+                                print(f"[DIAG][BID] ✗ 缓存数据过期: 年龄={cache_age:.1f}s > 阈值={ORDERBOOK_STALE_AFTER_SEC}s")
+                                print(f"[DIAG][BID] 缓存数据过期，返回None触发REST API fallback")
+                                return None
 
                     latest[token_id] = {
                         "price": float(fresh_snap.get("price") or 0.0),
@@ -3490,6 +3507,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     stagnation_window_seconds = max(float(stagnation_window_minutes), 0.0) * 60.0
     no_event_exit_seconds = max(float(no_event_exit_minutes), 0.0) * 60.0
     signal_timeout_seconds = max(float(signal_timeout_minutes), 0.0) * 60.0
+    signal_timeout_no_position_seconds = max(
+        signal_timeout_seconds,
+        SIGNAL_TIMEOUT_NO_POSITION_MINUTES * 60.0,
+    )
+    signal_timeout_with_position_seconds = min(
+        signal_timeout_seconds,
+        SIGNAL_TIMEOUT_WITH_POSITION_MINUTES * 60.0,
+    )
     stagnation_history: Deque[Tuple[float, float]] = deque()
     stagnation_triggered: bool = False
     run_started_at = time.time()
@@ -4136,13 +4161,21 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 # 交易信号超时检查：长时间无买入/卖出信号则退出
                 if signal_timeout_seconds > 0 and not stagnation_triggered:
                     signal_idle_seconds = now - last_signal_ts
-                    if signal_idle_seconds >= signal_timeout_seconds:
+                    status = strategy.status()
+                    has_position = _has_actionable_position(status)
+                    effective_timeout_seconds = (
+                        signal_timeout_with_position_seconds
+                        if has_position
+                        else signal_timeout_no_position_seconds
+                    )
+                    if signal_idle_seconds >= effective_timeout_seconds:
                         print(
-                            f"[SIGNAL_TIMEOUT] {signal_idle_seconds / 60.0:.1f} 分钟内无交易信号，释放队列退出"
+                            "[SIGNAL_TIMEOUT] "
+                            f"{signal_idle_seconds / 60.0:.1f} 分钟内无交易信号，"
+                            f"状态={'有持仓' if has_position else '无持仓'}，"
+                            f"阈值 {effective_timeout_seconds / 60.0:.1f} 分钟，释放队列退出"
                         )
                         print(f"[SIGNAL_TIMEOUT] 最后信号时间: {time.strftime('%H:%M:%S', time.localtime(last_signal_ts))}")
-                        status = strategy.status()
-                        has_position = _has_actionable_position(status)
                         position_size_for_exit = None
                         if has_position:
                             position_size_for_exit = (
@@ -4150,6 +4183,35 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                 or status.get("size")
                                 or position_size
                             )
+                            # 有持仓超时场景：先做强制清理动作，避免遗留挂单与仓位状态漂移
+                            try:
+                                canceled_orders = _cancel_open_orders_for_token(client, token_id)
+                            except Exception as cancel_exc:
+                                canceled_orders = 0
+                                print(f"[SIGNAL_TIMEOUT] 撤销挂单失败: {cancel_exc}")
+                            if canceled_orders:
+                                print(f"[SIGNAL_TIMEOUT] 有持仓超时，已撤销挂单数量={canceled_orders}")
+
+                            try:
+                                refreshed_snapshot, _ = _fetch_position_snapshot_with_cache(
+                                    client=client,
+                                    token_id=token_id,
+                                    cache=None,
+                                    cache_ts=0.0,
+                                    log_errors=True,
+                                    force=True,
+                                )
+                            except Exception as refresh_exc:
+                                refreshed_snapshot = None
+                                print(f"[SIGNAL_TIMEOUT] 仓位刷新失败: {refresh_exc}")
+
+                            if refreshed_snapshot:
+                                refreshed_size = float(refreshed_snapshot[1] or 0.0)
+                                position_size_for_exit = refreshed_size
+                                print(
+                                    "[SIGNAL_TIMEOUT] 有持仓超时，仓位重读完成 -> "
+                                    f"size={refreshed_size:.6f}"
+                                )
                         strategy.stop("signal timeout (force exit)")
                         print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
                         # 获取最后的价格数据用于回填判断
@@ -4157,7 +4219,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         _cancel_open_buy_orders_before_exit("SIGNAL_TIMEOUT")
                         _record_exit_token(token_id, "SIGNAL_TIMEOUT", {
                             "signal_idle_minutes": signal_idle_seconds / 60.0,
-                            "timeout_threshold_minutes": signal_timeout_seconds / 60.0,
+                            "timeout_threshold_minutes": effective_timeout_seconds / 60.0,
                             "last_signal_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_signal_ts)),
                             "has_position": has_position,
                             "position_size": position_size_for_exit,
@@ -4246,9 +4308,16 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if signal_timeout_seconds > 0:
                         signal_idle_seconds = now - last_signal_ts
                         signal_idle_minutes = signal_idle_seconds / 60.0
-                        timeout_minutes = signal_timeout_seconds / 60.0
+                        status_for_timeout = strategy.status()
+                        has_position_for_timeout = _has_actionable_position(status_for_timeout)
+                        timeout_minutes = (
+                            signal_timeout_with_position_seconds / 60.0
+                            if has_position_for_timeout
+                            else signal_timeout_no_position_seconds / 60.0
+                        )
                         extra_lines.append(
                             f"    信号超时: {signal_idle_minutes:.1f}分钟无信号 / 阈值 {timeout_minutes:.0f}分钟"
+                            f" ({'持仓' if has_position_for_timeout else '无仓'})"
                         )
 
                     if st.get("sell_only"):
