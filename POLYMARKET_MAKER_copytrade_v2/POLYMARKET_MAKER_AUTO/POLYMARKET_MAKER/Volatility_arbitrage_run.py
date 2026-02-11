@@ -51,6 +51,12 @@ from Volatility_arbitrage_strategy import (
     ActionType,
     Action,
 )
+from shock_guard import (
+    ShockGuard,
+    ShockGuardConfig,
+    RecoveryConfig,
+    GateDecision,
+)
 from maker_execution import (
     maker_buy_follow_bid,
     maker_sell_follow_ask_with_floor_wait,
@@ -277,6 +283,34 @@ def _normalize_ratio(val: Any, default: float) -> float:
         print(f"[WARN] 百分比 {val} 不能为负，已回退到默认值 {default}。")
         return default
     return parsed
+
+
+def _load_shock_guard_config(run_cfg: Dict[str, Any]) -> ShockGuardConfig:
+    raw = run_cfg.get("shock_guard") if isinstance(run_cfg, dict) else {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    rec_raw = raw.get("recovery") if isinstance(raw.get("recovery"), dict) else {}
+
+    rec_cfg = RecoveryConfig(
+        rebound_pct_min=_normalize_ratio(rec_raw.get("rebound_pct_min"), 0.05),
+        reconfirm_sec=max(_coerce_float(rec_raw.get("reconfirm_sec")) or 30.0, 0.0),
+        spread_cap=_coerce_float(rec_raw.get("spread_cap")),
+        require_conditions=max(int(_coerce_float(rec_raw.get("require_conditions")) or 2), 1),
+    )
+
+    cfg = ShockGuardConfig(
+        enabled=bool(raw.get("enabled", False)),
+        shock_window_sec=max(_coerce_float(raw.get("shock_window_sec")) or 30.0, 1.0),
+        shock_drop_pct=_normalize_ratio(raw.get("shock_drop_pct"), 0.20),
+        shock_velocity_pct_per_sec=_coerce_float(raw.get("shock_velocity_pct_per_sec")),
+        shock_abs_floor=_coerce_float(raw.get("shock_abs_floor")),
+        observation_hold_sec=max(_coerce_float(raw.get("observation_hold_sec")) or 90.0, 0.0),
+        recovery=rec_cfg,
+        blocked_cooldown_sec=max(_coerce_float(raw.get("blocked_cooldown_sec")) or 300.0, 0.0),
+        max_pending_buy_age_sec=max(_coerce_float(raw.get("max_pending_buy_age_sec")) or 180.0, 0.0),
+    )
+    return cfg
 
 
 def _load_run_config(path: Optional[str]) -> Dict[str, Any]:
@@ -2114,6 +2148,18 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             f"{price_none_exit_count} 次（WS+REST）。"
         )
 
+    shock_guard_cfg = _load_shock_guard_config(run_cfg)
+    shock_guard = ShockGuard(token_id=token_id, config=shock_guard_cfg)
+    if shock_guard_cfg.enabled:
+        print(
+            "[INIT][SHOCK] 急跌门禁已启用："
+            f"window={shock_guard_cfg.shock_window_sec:.1f}s "
+            f"drop={shock_guard_cfg.shock_drop_pct * 100:.2f}% "
+            f"hold={shock_guard_cfg.observation_hold_sec:.1f}s"
+        )
+    else:
+        print("[INIT][SHOCK] 急跌门禁未启用（保持原始买入时序）。")
+
     sell_inactive_hours = _coerce_float(run_cfg.get("sell_inactive_hours"))
     if sell_inactive_hours is None:
         sell_inactive_hours = 0.0
@@ -3523,6 +3569,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     last_log: Optional[float] = None
     buy_cooldown_until: float = 0.0
     pending_buy: Optional[Action] = None
+    pending_buy_ts: Optional[float] = None
     short_buy_cooldown = 1.0
     next_position_sync: float = 0.0
     position_sync_block_until: float = 0.0
@@ -4096,6 +4143,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             try:
                 if use_shared_ws:
                     _apply_shared_ws_snapshot()
+
+                snap_for_shock = latest.get(token_id) or {}
+                shock_bid = float(snap_for_shock.get("best_bid") or 0.0)
+                shock_ask = float(snap_for_shock.get("best_ask") or 0.0)
+                if shock_bid > 0 and shock_ask > 0:
+                    shock_guard.on_market_snapshot(
+                        bid=shock_bid,
+                        ask=shock_ask,
+                        ts=_snapshot_ts(snap_for_shock),
+                    )
+
                 if _exit_signal_active():
                     _force_exit("sell signal file detected")
                     break
@@ -4104,6 +4162,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         print("[COUNTDOWN] 仍在仅卖出模式内，丢弃待执行的买入信号。")
                         strategy.on_reject("sell-only window active")
                         pending_buy = None
+                        pending_buy_ts = None
                     else:
                         status = strategy.status()
                         state = status.get("state")
@@ -4129,10 +4188,21 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                             )
                             strategy.on_reject(reason)
                             pending_buy = None
+                            pending_buy_ts = None
                         else:
-                            print("[COOLDOWN] 冷却结束，重新尝试买入…")
-                            action_queue.put(pending_buy)
-                            pending_buy = None
+                            if (
+                                pending_buy_ts is not None
+                                and shock_guard_cfg.max_pending_buy_age_sec > 0
+                                and (time.time() - pending_buy_ts) > shock_guard_cfg.max_pending_buy_age_sec
+                            ):
+                                print("[COOLDOWN] 待执行买入信号已过期，丢弃。")
+                                strategy.on_reject("pending buy expired")
+                                pending_buy = None
+                                pending_buy_ts = None
+                            else:
+                                print("[COOLDOWN] 冷却结束，重新尝试买入…")
+                                action_queue.put(pending_buy)
+                                pending_buy = None
 
                 if now >= next_position_sync:
                     _maybe_refresh_position_size("[LOOP]")
@@ -4336,6 +4406,16 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                     extra_lines: List[str] = []
 
+                    shock_status = shock_guard.status(now=time.time())
+                    if shock_status.get("enabled"):
+                        extra_lines.append(
+                            "    SHOCK: phase={phase} hold_remaining={hold:.1f}s blocked_remaining={block:.1f}s".format(
+                                phase=shock_status.get("phase"),
+                                hold=float(shock_status.get("hold_remaining_sec") or 0.0),
+                                block=float(shock_status.get("blocked_remaining_sec") or 0.0),
+                            )
+                        )
+
                     drop_stats = st.get("drop_stats") or {}
                     config_snapshot = st.get("config") or {}
                     history_len = st.get("price_history_len")
@@ -4436,7 +4516,33 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if action.action != ActionType.BUY:
                     print(f"[WARN] 收到未预期的动作 {action.action}，已忽略。")
                     continue
-    
+
+                gate = shock_guard.gate_buy(ts=time.time())
+                if gate.decision == GateDecision.DEFER:
+                    retry_in = None
+                    if gate.retry_at_ts is not None:
+                        retry_in = max(gate.retry_at_ts - time.time(), 0.0)
+                    print(
+                        "[SHOCK][BUY][DEFER] "
+                        f"{gate.reason}"
+                        + (f"，约 {retry_in:.1f}s 后重试" if retry_in is not None else "")
+                    )
+                    pending_buy = action
+                    if pending_buy_ts is None:
+                        pending_buy_ts = time.time()
+                    defer_cooldown = short_buy_cooldown
+                    if gate.retry_at_ts is not None:
+                        defer_cooldown = max(gate.retry_at_ts - time.time(), defer_cooldown)
+                    buy_cooldown_until = time.time() + max(defer_cooldown, 0.1)
+                    strategy.on_reject(f"shock deferred: {gate.reason}")
+                    continue
+                if gate.decision == GateDecision.REJECT:
+                    print(f"[SHOCK][BUY][REJECT] {gate.reason}")
+                    strategy.on_reject(f"shock blocked: {gate.reason}")
+                    pending_buy = None
+                    pending_buy_ts = None
+                    continue
+
                 if sell_only_event.is_set():
                     print("[COUNTDOWN] 当前处于倒计时仅卖出模式，忽略买入信号。")
                     strategy.on_reject("sell-only window active")
@@ -4469,6 +4575,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         f"[BUY][BLOCK] 检测到可卖出仓位 {actionable_position:.4f}，先清仓后再尝试买入。"
                     )
                     pending_buy = action
+                    pending_buy_ts = time.time()
                     buy_cooldown_until = time.time() + short_buy_cooldown
                     # 计算清仓地板价：优先使用策略的入场价格，否则查询持仓均价
                     block_floor_hint: Optional[float] = None
@@ -4565,11 +4672,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         f"[COOLDOWN] 买入冷却中，剩余 {remaining:.1f}s 再尝试买入。"
                     )
                     pending_buy = action
+                    if pending_buy_ts is None:
+                        pending_buy_ts = time.time()
                     continue
     
                 if max_position_cap is not None:
                     _maybe_refresh_position_size("[BUY][PRE]", force=True)
-    
+
+                pending_buy_ts = None
                 ref_price = action.ref_price or ask or float(snap.get("price") or 0.0)
                 if manual_order_size is not None:
                     probed_size, origin_display = _probe_position_size_for_buy()

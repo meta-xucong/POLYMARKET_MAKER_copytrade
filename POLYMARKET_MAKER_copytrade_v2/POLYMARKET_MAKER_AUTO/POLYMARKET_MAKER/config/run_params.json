@@ -32,5 +32,21 @@
     "minutes_before_end": 300,
     "absolute_time": null,
     "timezone": null
+  },
+  "shock_guard": {
+    "enabled": false,
+    "shock_window_sec": 30,
+    "shock_drop_pct": 0.2,
+    "shock_velocity_pct_per_sec": null,
+    "shock_abs_floor": 0.03,
+    "observation_hold_sec": 90,
+    "recovery": {
+      "rebound_pct_min": 0.05,
+      "reconfirm_sec": 30,
+      "spread_cap": 0.03,
+      "require_conditions": 2
+    },
+    "blocked_cooldown_sec": 300,
+    "max_pending_buy_age_sec": 180
   }
 }
