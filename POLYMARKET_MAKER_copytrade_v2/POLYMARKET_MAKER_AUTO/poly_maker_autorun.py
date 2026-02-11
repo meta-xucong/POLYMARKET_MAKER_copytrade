@@ -2148,6 +2148,10 @@ class AutoRunManager:
             refill_retry_count = topic_info.get("refill_retry_count", 0)
             merged["refill_retry_count"] = refill_retry_count
 
+        resume_drop_pct = topic_info.get("resume_drop_pct")
+        if resume_drop_pct is not None:
+            merged["resume_drop_pct"] = resume_drop_pct
+
         # Maker 子进程配置（从 global_config 传递）
         merged["maker_poll_sec"] = self.config.maker_poll_sec
         merged["maker_position_sync_interval"] = self.config.maker_position_sync_interval
@@ -2890,6 +2894,7 @@ class AutoRunManager:
             exit_reason = record.get("exit_reason", "UNKNOWN")
             exit_data = record.get("exit_data", {}) or {}
             has_position = exit_data.get("has_position", False)
+            resume_drop_pct = exit_data.get("drop_pct_current")
 
             # 增加重试计数
             self._refill_retry_counts[token_id] = self._refill_retry_counts.get(token_id, 0) + 1
@@ -2914,6 +2919,10 @@ class AutoRunManager:
             self.topic_details[token_id]["resume_state"] = resume_state
             self.topic_details[token_id]["refill_retry_count"] = retry_count
             self.topic_details[token_id]["refill_exit_reason"] = exit_reason
+            if resume_drop_pct is not None:
+                self.topic_details[token_id]["resume_drop_pct"] = resume_drop_pct
+            else:
+                self.topic_details[token_id].pop("resume_drop_pct", None)
 
             # 加入pending队列
             self._enqueue_pending_topic(token_id)
@@ -2934,11 +2943,12 @@ class AutoRunManager:
             # 保留已有的 resume_state（回填恢复状态），只更新 copytrade 数据
             old_resume_states: Dict[str, Any] = {}
             for tid, detail in self.topic_details.items():
-                if detail.get("resume_state") or detail.get("refill_exit_reason"):
+                if detail.get("resume_state") or detail.get("refill_exit_reason") or detail.get("resume_drop_pct") is not None:
                     old_resume_states[tid] = {
                         "resume_state": detail.get("resume_state"),
                         "refill_retry_count": detail.get("refill_retry_count", 0),
                         "refill_exit_reason": detail.get("refill_exit_reason"),
+                        "resume_drop_pct": detail.get("resume_drop_pct"),
                     }
             self.topic_details = {}
             for item in self.latest_topics:
@@ -2956,6 +2966,8 @@ class AutoRunManager:
                 self.topic_details[tid]["refill_retry_count"] = saved.get("refill_retry_count", 0)
                 if saved.get("refill_exit_reason"):
                     self.topic_details[tid]["refill_exit_reason"] = saved["refill_exit_reason"]
+                if saved.get("resume_drop_pct") is not None:
+                    self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
 
             sell_signals = self._load_copytrade_sell_signals()
             self._apply_sell_signals(sell_signals)
