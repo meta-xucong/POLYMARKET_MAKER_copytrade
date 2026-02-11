@@ -4183,6 +4183,35 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                 or status.get("size")
                                 or position_size
                             )
+                            # 有持仓超时场景：先做强制清理动作，避免遗留挂单与仓位状态漂移
+                            try:
+                                canceled_orders = _cancel_open_orders_for_token(client, token_id)
+                            except Exception as cancel_exc:
+                                canceled_orders = 0
+                                print(f"[SIGNAL_TIMEOUT] 撤销挂单失败: {cancel_exc}")
+                            if canceled_orders:
+                                print(f"[SIGNAL_TIMEOUT] 有持仓超时，已撤销挂单数量={canceled_orders}")
+
+                            try:
+                                refreshed_snapshot, _ = _fetch_position_snapshot_with_cache(
+                                    client=client,
+                                    token_id=token_id,
+                                    cache=None,
+                                    cache_ts=0.0,
+                                    log_errors=True,
+                                    force=True,
+                                )
+                            except Exception as refresh_exc:
+                                refreshed_snapshot = None
+                                print(f"[SIGNAL_TIMEOUT] 仓位刷新失败: {refresh_exc}")
+
+                            if refreshed_snapshot:
+                                refreshed_size = float(refreshed_snapshot[1] or 0.0)
+                                position_size_for_exit = refreshed_size
+                                print(
+                                    "[SIGNAL_TIMEOUT] 有持仓超时，仓位重读完成 -> "
+                                    f"size={refreshed_size:.6f}"
+                                )
                         strategy.stop("signal timeout (force exit)")
                         print("[QUEUE] 释放队列：长时间无交易信号，已退出。")
                         # 获取最后的价格数据用于回填判断
