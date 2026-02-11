@@ -2050,6 +2050,26 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     else:
         print("[INIT] 未启用递增跌幅阈值，保持固定阈值运行。")
 
+    resume_drop_pct_raw = _coerce_float(run_cfg.get("resume_drop_pct"))
+    if resume_drop_pct_raw is not None:
+        if resume_drop_pct_raw > 1:
+            resume_drop_pct_raw = resume_drop_pct_raw / 100.0
+        if resume_drop_pct_raw >= 0:
+            resume_drop_pct = max(resume_drop_pct_raw, drop_pct)
+            cap_raw = _coerce_float(run_cfg.get("incremental_drop_pct_cap"))
+            if cap_raw is not None:
+                if cap_raw > 1:
+                    cap_raw = cap_raw / 100.0
+                if cap_raw >= 0:
+                    cap = max(cap_raw, drop_pct)
+                    resume_drop_pct = min(resume_drop_pct, cap)
+            if resume_drop_pct > drop_pct:
+                print(
+                    "[REFILL] 继续沿用历史递增买入阈值："
+                    f"drop_pct {drop_pct:.6f} -> {resume_drop_pct:.6f}"
+                )
+                drop_pct = resume_drop_pct
+
     print(f"[INIT] 买入价格上限: {max_buy_price:.4f}（价格>=此值时不买入）")
 
     stagnation_window_minutes = _coerce_float(run_cfg.get("stagnation_window_minutes"))
@@ -2172,6 +2192,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     )
     strategy = VolArbStrategy(cfg)
     strategy_supports_total_position = _strategy_accepts_total_position(strategy)
+
+    def _current_drop_pct_for_exit() -> Optional[float]:
+        try:
+            strategy_cfg = strategy.status().get("config") or {}
+            drop_val = strategy_cfg.get("drop_pct")
+            return float(drop_val) if drop_val is not None else None
+        except Exception:
+            return None
 
     latest: Dict[str, Dict[str, Any]] = {}
     action_queue: Queue[Action] = Queue()
@@ -3854,6 +3882,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 "last_ask": float(snap.get("best_ask") or 0.0),
                 "sell_floor_price": floor_price,
                 "inactive_timeout_hours": dynamic_sell_timeout_sec / 3600.0,
+                "drop_pct_current": _current_drop_pct_for_exit(),
             })
             strategy.stop("sell inactive release")
             stop_event.set()
@@ -3989,6 +4018,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 "stagnation_threshold": stagnation_pct,
                 "last_bid": float(snap.get("best_bid") or 0.0),
                 "last_ask": float(snap.get("best_ask") or 0.0),
+                "drop_pct_current": _current_drop_pct_for_exit(),
             })
             stop_event.set()
 
@@ -4022,6 +4052,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 "idle_minutes": idle_seconds / 60.0,
                 "last_bid": float(snap.get("best_bid") or 0.0),
                 "last_ask": float(snap.get("best_ask") or 0.0),
+                "drop_pct_current": _current_drop_pct_for_exit(),
             })
             stop_event.set()
 
@@ -4250,6 +4281,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                 "position_size": position_size_for_exit,
                                 "last_bid": float(snap.get("best_bid") or 0.0),
                                 "last_ask": float(snap.get("best_ask") or 0.0),
+                                "drop_pct_current": _current_drop_pct_for_exit(),
                             })
                             stop_event.set()
                             if stop_event.is_set():
