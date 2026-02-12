@@ -152,6 +152,36 @@ def test_taker_price_applies_slippage_bps():
         assert abs(px - 0.5 * (1 - 0.003)) < 1e-9
 
 
+
+
+def _install_fake_balance_types_module():
+    import types
+
+    fake_mod = types.ModuleType("py_clob_client.clob_types")
+
+    class _AssetType:
+        COLLATERAL = "COLLATERAL"
+
+    class _BalanceAllowanceParams:
+        def __init__(self, asset_type=None, token_id=None, signature_type=-1):
+            self.asset_type = asset_type
+            self.token_id = token_id
+            self.signature_type = signature_type
+
+    fake_mod.AssetType = _AssetType
+    fake_mod.BalanceAllowanceParams = _BalanceAllowanceParams
+    old = sys.modules.get("py_clob_client.clob_types")
+    sys.modules["py_clob_client.clob_types"] = fake_mod
+    return old
+
+
+def _restore_fake_balance_types_module(old):
+    if old is None:
+        sys.modules.pop("py_clob_client.clob_types", None)
+    else:
+        sys.modules["py_clob_client.clob_types"] = old
+
+
 def test_balance_probe_is_rate_limited():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=True)
@@ -172,8 +202,13 @@ def test_balance_probe_is_rate_limited():
         mgr._cached_client = fake
         autorun = _Autorun(cfg, running_tasks=0)
 
-        v1 = mgr._query_free_balance_usdc(autorun)
-        v2 = mgr._query_free_balance_usdc(autorun)
+        old_mod = _install_fake_balance_types_module()
+        try:
+            v1 = mgr._query_free_balance_usdc(autorun)
+            v2 = mgr._query_free_balance_usdc(autorun)
+        finally:
+            _restore_fake_balance_types_module(old_mod)
+
         assert v1 == 100.0
         assert v2 == 100.0
         assert fake.calls == 1
@@ -291,7 +326,12 @@ def test_balance_query_does_not_call_none_fallback_on_exception():
         mgr._cached_free_balance = 7.0
         autorun = _Autorun(cfg, running_tasks=0)
 
-        v = mgr._query_free_balance_usdc(autorun)
+        old_mod = _install_fake_balance_types_module()
+        try:
+            v = mgr._query_free_balance_usdc(autorun)
+        finally:
+            _restore_fake_balance_types_module(old_mod)
+
         assert v == 7.0
         assert fake.calls == 1
         assert mgr._last_balance_probe_error == "boom"

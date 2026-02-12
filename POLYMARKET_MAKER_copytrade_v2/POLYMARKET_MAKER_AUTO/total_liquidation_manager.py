@@ -317,11 +317,33 @@ class TotalLiquidationManager:
 
     @staticmethod
     def _extract_balance_float(payload: Any) -> Optional[float]:
+        """
+        严格按 balance 语义字段提取余额，避免误取 allowance 等其他数值。
+        """
+        if isinstance(payload, (int, float)) and not isinstance(payload, bool):
+            return float(payload)
+        if isinstance(payload, str):
+            try:
+                return float(payload)
+            except ValueError:
+                return None
         if isinstance(payload, dict):
             for key in ("balance", "available", "availableBalance", "available_balance"):
                 if key in payload:
-                    return TotalLiquidationManager._extract_balance_float(payload[key])
-        return TotalLiquidationManager._extract_first_float(payload)
+                    parsed = TotalLiquidationManager._extract_balance_float(payload[key])
+                    if parsed is not None:
+                        return parsed
+            for v in payload.values():
+                parsed = TotalLiquidationManager._extract_balance_float(v)
+                if parsed is not None:
+                    return parsed
+            return None
+        if isinstance(payload, (list, tuple)):
+            for item in payload:
+                parsed = TotalLiquidationManager._extract_balance_float(item)
+                if parsed is not None:
+                    return parsed
+        return None
 
     @staticmethod
     def _extract_first_float(payload: Any) -> Optional[float]:
@@ -392,21 +414,15 @@ class TotalLiquidationManager:
 
         try:
             from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        except Exception as exc:
+            self._last_balance_probe_error = f"py_clob_client 类型导入失败: {exc}"
+            return self._cached_free_balance
 
-            params = BalanceAllowanceParams(
-                asset_type=AssetType.COLLATERAL,
-                token_id=None,
-                signature_type=-1,
-            )
-        except Exception:
-            # 本地缺少 py_clob_client 类型定义时，构造兼容参数对象，保持官方接口形状。
-            class _CompatParams:
-                def __init__(self):
-                    self.asset_type = "COLLATERAL"
-                    self.token_id = None
-                    self.signature_type = -1
-
-            params = _CompatParams()
+        params = BalanceAllowanceParams(
+            asset_type=AssetType.COLLATERAL,
+            token_id=None,
+            signature_type=-1,
+        )
 
         try:
             resp = get_balance_allowance(params)
