@@ -316,13 +316,16 @@ class TotalLiquidationManager:
         return result
 
     @staticmethod
-    def _extract_balance_float(payload: Any) -> Optional[float]:
+    def _extract_balance_float(payload: Any, from_balance_key: bool = False) -> Optional[float]:
         """
         严格按 balance 语义字段提取余额，避免误取 allowance 等其他数值。
+        只有命中余额语义键（balance/available）后的值才允许被解析为数值。
         """
         if isinstance(payload, (int, float)) and not isinstance(payload, bool):
-            return float(payload)
+            return float(payload) if from_balance_key else None
         if isinstance(payload, str):
+            if not from_balance_key:
+                return None
             try:
                 return float(payload)
             except ValueError:
@@ -330,19 +333,21 @@ class TotalLiquidationManager:
         if isinstance(payload, dict):
             for key in ("balance", "available", "availableBalance", "available_balance"):
                 if key in payload:
-                    parsed = TotalLiquidationManager._extract_balance_float(payload[key])
+                    parsed = TotalLiquidationManager._extract_balance_float(payload[key], True)
                     if parsed is not None:
                         return parsed
             for v in payload.values():
-                parsed = TotalLiquidationManager._extract_balance_float(v)
-                if parsed is not None:
-                    return parsed
+                if isinstance(v, (dict, list, tuple)):
+                    parsed = TotalLiquidationManager._extract_balance_float(v, False)
+                    if parsed is not None:
+                        return parsed
             return None
         if isinstance(payload, (list, tuple)):
             for item in payload:
-                parsed = TotalLiquidationManager._extract_balance_float(item)
-                if parsed is not None:
-                    return parsed
+                if isinstance(item, (dict, list, tuple)):
+                    parsed = TotalLiquidationManager._extract_balance_float(item, False)
+                    if parsed is not None:
+                        return parsed
         return None
 
     @staticmethod
