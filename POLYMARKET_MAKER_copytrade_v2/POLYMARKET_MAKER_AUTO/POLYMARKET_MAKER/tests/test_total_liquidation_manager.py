@@ -183,6 +183,38 @@ def _restore_fake_balance_types_module(old):
         sys.modules["py_clob_client.clob_types"] = old
 
 
+
+
+def test_balance_query_uses_official_balance_allowance_params_shape():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        captured = {}
+
+        class _FakeClient:
+            def get_balance_allowance(self, params):
+                captured["asset_type"] = getattr(params, "asset_type", None)
+                captured["token_id"] = getattr(params, "token_id", "__missing__")
+                captured["signature_type"] = getattr(params, "signature_type", None)
+                return {"balance": "3.21"}
+
+        mgr._cached_client = _FakeClient()
+        autorun = _Autorun(cfg, running_tasks=0)
+
+        old_mod = _install_fake_balance_types_module()
+        try:
+            value = mgr._query_free_balance_usdc(autorun)
+        finally:
+            _restore_fake_balance_types_module(old_mod)
+
+        assert value == 3.21
+        assert captured["asset_type"] == "COLLATERAL"
+        assert captured["token_id"] is None
+        assert captured["signature_type"] == -1
+
 def test_balance_probe_is_rate_limited():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=True)
