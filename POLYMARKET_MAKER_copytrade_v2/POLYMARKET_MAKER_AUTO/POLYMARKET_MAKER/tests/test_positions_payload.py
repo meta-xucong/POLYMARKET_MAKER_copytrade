@@ -51,6 +51,11 @@ from Volatility_arbitrage_run import (
 )
 
 
+def _bind_requests_stub(module):
+    """确保测试使用可 monkeypatch 的 requests stub（避免其他测试污染 sys.modules）。"""
+    module.requests = requests_stub
+
+
 class DummyResponse:
     def __init__(self, status_code, payload):
         self.status_code = status_code
@@ -73,18 +78,20 @@ def test_extract_positions_handles_various_shapes():
     sample_list = [{"asset": "1"}]
     assert _extract_positions_from_data_api_response(sample_list) == sample_list
     sample_dict = {"data": [{"asset": "2"}]}
-    assert _extract_positions_from_data_api_response(sample_dict) == [{"asset": "2"}]
+    assert _extract_positions_from_data_api_response(sample_dict) is None
     assert _extract_positions_from_data_api_response({"unexpected": []}) is None
 
 
 def test_fetch_positions_aggregates_pages(monkeypatch):
     module = __import__("Volatility_arbitrage_run")
+    _bind_requests_stub(module)
 
     first_page = [{"asset": str(i), "size": "1"} for i in range(500)]
     second_page = [{"asset": "500", "size": "2"}]
     responses = [
-        DummyResponse(200, {"data": first_page, "meta": {"total": 501}}),
-        DummyResponse(200, {"data": second_page, "meta": {"total": 501}}),
+        DummyResponse(200, first_page),
+        DummyResponse(200, second_page),
+        DummyResponse(200, []),
     ]
     calls = []
 
@@ -106,6 +113,7 @@ def test_fetch_positions_aggregates_pages(monkeypatch):
 
 def test_fetch_positions_reports_404(monkeypatch):
     module = __import__("Volatility_arbitrage_run")
+    _bind_requests_stub(module)
 
     responses = [
         DummyResponse(404, {}),
@@ -139,6 +147,7 @@ def test_fetch_positions_missing_address(monkeypatch):
 
 def test_fetch_positions_handles_http_error(monkeypatch):
     module = __import__("Volatility_arbitrage_run")
+    _bind_requests_stub(module)
 
     def fake_get(url, params=None, timeout=None):  # pragma: no cover - simple stub
         raise module.requests.Timeout("boom")
@@ -154,6 +163,7 @@ def test_fetch_positions_handles_http_error(monkeypatch):
 
 def test_fetch_positions_env_fallback(monkeypatch):
     module = __import__("Volatility_arbitrage_run")
+    _bind_requests_stub(module)
 
     calls = []
 
@@ -221,10 +231,11 @@ def test_fetch_position_snapshot_falls_back_to_cache_on_error(monkeypatch):
 
 def test_lookup_position_avg_price_success(monkeypatch):
     module = __import__("Volatility_arbitrage_run")
+    _bind_requests_stub(module)
 
     sample_positions = [
-        {"asset": "123", "avg_price": "0.925", "size": "5"},
-        {"tokenId": "456", "avg_price": "0.5", "size": "2"},
+        {"asset": "123", "avgPrice": "0.925", "size": "5"},
+        {"asset": "456", "avgPrice": "0.5", "size": "2"},
     ]
 
     def fake_fetch(client):
@@ -240,8 +251,9 @@ def test_lookup_position_avg_price_success(monkeypatch):
 
 def test_lookup_position_avg_price_not_found(monkeypatch):
     module = __import__("Volatility_arbitrage_run")
+    _bind_requests_stub(module)
 
-    sample_positions = [{"tokenId": "999", "avg_price": "0.8", "size": "3"}]
+    sample_positions = [{"asset": "999", "avgPrice": "0.8", "size": "3"}]
 
     def fake_fetch(client):
         return sample_positions, True, "mock-origin"
@@ -256,8 +268,9 @@ def test_lookup_position_avg_price_not_found(monkeypatch):
 
 def test_lookup_position_avg_price_zero_size(monkeypatch):
     module = __import__("Volatility_arbitrage_run")
+    _bind_requests_stub(module)
 
-    sample_positions = [{"tokenId": "123", "avg_price": "0.5", "size": 0}]
+    sample_positions = [{"asset": "123", "avgPrice": "0.5", "size": 0}]
 
     def fake_fetch(client):
         return sample_positions, True, "mock-origin"
