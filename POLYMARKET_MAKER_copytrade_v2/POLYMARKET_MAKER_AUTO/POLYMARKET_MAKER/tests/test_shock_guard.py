@@ -58,8 +58,9 @@ def test_recovery_fail_enters_blocked_and_then_restarts_observation():
     guard.on_market_snapshot(bid=0.60, ask=0.62, ts=1.0)
     assert guard.gate_buy(ts=2.0).decision == GateDecision.DEFER
 
-    # hold结束但没有反弹+点差过大 -> fail
-    guard.on_market_snapshot(bid=0.44, ask=0.54, ts=36.0)
+    # hold阶段内先出现高位再急跌，形成shock证据；恢复条件要求3项时应fail
+    guard.on_market_snapshot(bid=0.60, ask=0.62, ts=30.0)
+    guard.on_market_snapshot(bid=0.40, ask=0.50, ts=36.0)
     result_fail = guard.gate_buy(ts=36.0)
     assert result_fail.decision == GateDecision.REJECT
 
@@ -71,3 +72,27 @@ def test_recovery_fail_enters_blocked_and_then_restarts_observation():
     guard.on_market_snapshot(bid=0.48, ask=0.50, ts=80.0)
     final_result = guard.gate_buy(ts=80.0)
     assert final_result.decision == GateDecision.DEFER
+
+
+def test_non_shock_observation_not_blocked_by_wide_spread_recovery_check():
+    guard = _build_guard()
+    guard.on_market_snapshot(bid=0.60, ask=0.62, ts=1.0)
+    assert guard.gate_buy(ts=2.0).decision == GateDecision.DEFER
+
+    # 无shock证据的纯观察窗口结束后，即使点差偏大也不应进入blocked
+    guard.on_market_snapshot(bid=0.58, ask=0.70, ts=36.0)
+    result = guard.gate_buy(ts=36.0)
+    assert result.decision == GateDecision.ALLOW
+
+
+def test_recovery_pass_still_defers_when_abs_floor_hit_before_buy():
+    guard = _build_guard(shock_abs_floor=0.55)
+    guard.on_market_snapshot(bid=0.60, ask=0.62, ts=1.0)
+    assert guard.gate_buy(ts=2.0).decision == GateDecision.DEFER
+
+    # 进入恢复检查前后价格均在绝对阈值下方，放行前应再次触发完整检测并继续DEFER
+    guard.on_market_snapshot(bid=0.50, ask=0.52, ts=36.0)
+    guard.on_market_snapshot(bid=0.53, ask=0.55, ts=48.0)
+    result = guard.gate_buy(ts=48.0)
+    assert result.decision == GateDecision.DEFER
+    assert "shock" in result.reason.lower()
