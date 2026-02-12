@@ -342,13 +342,14 @@ class TotalLiquidationManager:
             if from_balance_key:
                 for key in ("amount", "value", "balance", "available", "availableBalance", "available_balance"):
                     if key in payload:
-                        parsed = TotalLiquidationManager._extract_first_float(payload[key])
+                        parsed = TotalLiquidationManager._extract_balance_float(payload[key], True)
                         if parsed is not None:
                             return parsed
                 for v in payload.values():
-                    parsed = TotalLiquidationManager._extract_first_float(v)
-                    if parsed is not None:
-                        return parsed
+                    if isinstance(v, (dict, list, tuple)):
+                        parsed = TotalLiquidationManager._extract_balance_float(v, True)
+                        if parsed is not None:
+                            return parsed
 
             for v in payload.values():
                 if isinstance(v, (dict, list, tuple)):
@@ -359,7 +360,7 @@ class TotalLiquidationManager:
         if isinstance(payload, (list, tuple)):
             for item in payload:
                 if from_balance_key:
-                    parsed = TotalLiquidationManager._extract_first_float(item)
+                    parsed = TotalLiquidationManager._extract_balance_float(item, True)
                     if parsed is not None:
                         return parsed
                 if isinstance(item, (dict, list, tuple)):

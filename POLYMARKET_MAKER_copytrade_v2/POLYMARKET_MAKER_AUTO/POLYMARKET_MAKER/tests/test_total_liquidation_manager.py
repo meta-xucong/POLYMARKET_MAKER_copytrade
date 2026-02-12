@@ -341,6 +341,19 @@ def test_balance_parser_supports_balance_list_payload():
     assert parsed == 1.38
 
 
+
+
+def test_balance_parser_rejects_allowance_inside_balance_subtree():
+    payload = {"balance": {"allowance": "5000"}, "foo": "1"}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed is None
+
+
+def test_balance_parser_supports_balance_list_of_objects_payload():
+    payload = {"balance": [{"allowance": "5000"}, {"amount": "1.38"}]}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed == 1.38
+
 def test_balance_parser_prefers_balance_field_over_other_numeric_values():
     payload = {
         "allowance": "5000",
