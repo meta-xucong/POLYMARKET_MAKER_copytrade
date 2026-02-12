@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import types
 import time
@@ -78,6 +79,7 @@ def test_disabled_never_triggers():
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         cfg.log_dir.mkdir(parents=True, exist_ok=True)
         mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        _install_fake_clob_modules()
         autorun = _Autorun(cfg, running_tasks=0)
         metrics = mgr.update_metrics(autorun)
         ok, reasons = mgr.should_trigger(metrics)
@@ -91,6 +93,7 @@ def test_trigger_with_two_conditions_and_interval_guard():
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         cfg.log_dir.mkdir(parents=True, exist_ok=True)
         mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        _install_fake_clob_modules()
         mgr.cfg.startup_grace_hours = 0
         autorun = _Autorun(cfg, running_tasks=0)
 
@@ -683,3 +686,105 @@ def test_should_trigger_fallback_startup_grace_when_metric_missing():
         ok, reasons = mgr.should_trigger(metrics)
         assert ok is False
         assert all("idle_slots" not in r for r in reasons)
+
+
+def _install_fake_clob_modules():
+    fake_clob_types = types.ModuleType("py_clob_client.clob_types")
+
+    class _OrderArgs:
+        def __init__(self, token_id, side, price, size):
+            self.token_id = token_id
+            self.side = side
+            self.price = price
+            self.size = size
+
+    class _OrderType:
+        FAK = "FAK"
+        IOC = "IOC"
+        FOK = "FOK"
+
+    fake_clob_types.OrderArgs = _OrderArgs
+    fake_clob_types.OrderType = _OrderType
+
+    fake_constants = types.ModuleType("py_clob_client.order_builder.constants")
+    fake_constants.SELL = "SELL"
+
+    fake_client_mod = types.ModuleType("py_clob_client.client")
+
+    class _ClobClient:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self._api_creds = None
+
+        def create_or_derive_api_creds(self):
+            return {"api_key": "k", "api_secret": "s", "api_passphrase": "p"}
+
+        def set_api_creds(self, creds):
+            self._api_creds = creds
+
+    fake_client_mod.ClobClient = _ClobClient
+
+    fake_pkg = types.ModuleType("py_clob_client")
+    fake_pkg.__path__ = []
+    fake_order_builder = types.ModuleType("py_clob_client.order_builder")
+
+    sys.modules["py_clob_client"] = fake_pkg
+    sys.modules["py_clob_client.client"] = fake_client_mod
+    sys.modules["py_clob_client.clob_types"] = fake_clob_types
+    sys.modules["py_clob_client.order_builder"] = fake_order_builder
+    sys.modules["py_clob_client.order_builder.constants"] = fake_constants
+
+    # 让 Volatility_arbitrage_main_rest.get_client() 在测试环境下可初始化
+    os.environ.setdefault("POLY_KEY", "0x" + "1" * 64)
+    os.environ.setdefault("POLY_FUNDER", "0x" + "2" * 40)
+
+
+def test_place_sell_ioc_fak_no_match_fallback_to_ladder_price():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        class _Client:
+            def __init__(self):
+                self.prices = []
+
+            def create_order(self, order):
+                self.prices.append(float(order.price))
+                return {"price": order.price}
+
+            def post_order(self, _signed, _order_type):
+                if len(self.prices) < 3:
+                    raise Exception("no orders found to match with FAK order")
+                return {"status": "accepted"}
+
+        client = _Client()
+        resp = mgr._place_sell_ioc(client, token_id="A", price=0.5, size=10)
+        assert resp["status"] == "accepted"
+        assert len(client.prices) == 3
+        assert client.prices[0] > client.prices[1] > client.prices[2]
+
+
+def test_place_sell_ioc_non_fak_error_raises_immediately():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        class _Client:
+            def create_order(self, order):
+                return order
+
+            def post_order(self, _signed, _order_type):
+                raise RuntimeError("signature expired")
+
+        try:
+            mgr._place_sell_ioc(_Client(), token_id="A", price=0.5, size=10)
+            raised = False
+        except RuntimeError as exc:
+            raised = True
+            assert "signature expired" in str(exc)
+        assert raised is True

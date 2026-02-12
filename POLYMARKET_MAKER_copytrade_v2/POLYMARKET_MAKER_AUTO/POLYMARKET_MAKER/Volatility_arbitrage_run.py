@@ -1658,6 +1658,66 @@ def _place_sell_ioc(client, token_id: str, price: float, size: float) -> Dict[st
     return client.post_order(signed, order_type)
 
 
+def _is_fak_no_match_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return "no orders found to match" in text and "fak" in text
+
+
+def _build_exit_price_ladder(base_price: float, min_price: float) -> List[float]:
+    """构建清仓 IOC 的价格阶梯，避免一直卡在同一价格。"""
+    base = max(float(base_price or 0.0), float(min_price))
+    floor_price = max(float(min_price), 0.01)
+    ladder = [
+        base,
+        max(floor_price, base * 0.997),
+        max(floor_price, base * 0.992),
+        max(floor_price, base * 0.985),
+        floor_price,
+    ]
+    dedup: List[float] = []
+    for px in ladder:
+        px = float(_normalize_sell_pair(px, 1.0)[0])
+        if dedup and abs(dedup[-1] - px) < 1e-9:
+            continue
+        dedup.append(px)
+    return dedup
+
+
+def _try_exit_ioc_with_ladder(
+    *,
+    client: Any,
+    token_id: str,
+    size: float,
+    base_price: float,
+    min_price: float,
+    context: str,
+) -> Dict[str, Any]:
+    """按价格阶梯尝试 IOC 清仓，优先应对 FAK 无对手盘场景。"""
+    ladder = _build_exit_price_ladder(base_price=base_price, min_price=min_price)
+    last_exc: Optional[Exception] = None
+    for idx, px in enumerate(ladder, start=1):
+        try:
+            resp = _place_sell_ioc(client, token_id=token_id, price=px, size=size)
+            print(
+                f"[EXIT] {context} IOC 下单成功(level={idx}/{len(ladder)}) "
+                f"size={size:.4f} price={px:.4f} resp={resp}"
+            )
+            return resp
+        except Exception as exc:
+            last_exc = exc
+            if _is_fak_no_match_error(exc):
+                print(
+                    f"[EXIT] {context} IOC level={idx}/{len(ladder)} 无可匹配买单 "
+                    f"price={px:.4f}，继续尝试更激进价格"
+                )
+                continue
+            print(f"[EXIT] {context} IOC level={idx}/{len(ladder)} 失败: {exc}")
+            raise
+    if last_exc is not None:
+        raise last_exc
+    return {}
+
+
 def _normalize_open_order(order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not isinstance(order, dict):
         return None
@@ -2351,16 +2411,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             except Exception as exc:
                 print(f"[EXIT] 获取 best_bid 失败: {exc}，使用最低清仓价: {MIN_PRICE}")
 
-            # 4. 发出 IOC 卖单（允许部分成交）
+            # 4. 发出 IOC 卖单（允许部分成交），若 FAK 无法撮合则自动阶梯降价重试
             try:
-                resp = _place_sell_ioc(
-                    client,
+                _try_exit_ioc_with_ladder(
+                    client=client,
                     token_id=token_id,
-                    price=exit_price,
-                    size=remaining_pos
-                )
-                print(
-                    f"[EXIT] 已发出 IOC 清仓卖单 size={remaining_pos:.4f} price={exit_price:.4f} resp={resp}"
+                    size=remaining_pos,
+                    base_price=exit_price,
+                    min_price=MIN_PRICE,
+                    context="exit-only",
                 )
             except Exception as exc:
                 print(f"[EXIT] IOC 清仓卖单失败: {exc}")
@@ -3496,16 +3555,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 except Exception:
                     exit_price = MIN_PRICE
 
-            # 4. 发出 IOC 卖单（允许部分成交）
+            # 4. 发出 IOC 卖单（允许部分成交），若 FAK 无法撮合则自动阶梯降价重试
             try:
-                resp = _place_sell_ioc(
-                    client,
+                _try_exit_ioc_with_ladder(
+                    client=client,
                     token_id=token_id,
-                    price=exit_price,
-                    size=remaining_pos
-                )
-                print(
-                    f"[EXIT] 已发出 IOC 清仓卖单 size={remaining_pos:.4f} price={exit_price:.4f} resp={resp}"
+                    size=remaining_pos,
+                    base_price=exit_price,
+                    min_price=MIN_PRICE,
+                    context="force-exit",
                 )
             except Exception as exc:
                 print(f"[EXIT] IOC 清仓卖单失败: {exc}")
@@ -3570,6 +3628,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     buy_cooldown_until: float = 0.0
     pending_buy: Optional[Action] = None
     pending_buy_ts: Optional[float] = None
+    shock_reject_since_ts: Optional[float] = None
     short_buy_cooldown = 1.0
     next_position_sync: float = 0.0
     position_sync_block_until: float = 0.0
@@ -4519,6 +4578,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 gate = shock_guard.gate_buy(ts=time.time())
                 if gate.decision == GateDecision.DEFER:
+                    shock_reject_since_ts = None
                     retry_in = None
                     if gate.retry_at_ts is not None:
                         retry_in = max(gate.retry_at_ts - time.time(), 0.0)
@@ -4537,11 +4597,37 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     strategy.on_reject(f"shock deferred: {gate.reason}")
                     continue
                 if gate.decision == GateDecision.REJECT:
-                    print(f"[SHOCK][BUY][REJECT] {gate.reason}")
+                    now_ts = time.time()
+                    if shock_reject_since_ts is None:
+                        shock_reject_since_ts = now_ts
+                    elapsed = now_ts - shock_reject_since_ts
+                    threshold = max(float(shock_guard_cfg.max_pending_buy_age_sec or 0.0), 0.0)
+                    print(
+                        f"[SHOCK][BUY][REJECT] {gate.reason} "
+                        f"(elapsed={elapsed:.1f}s"
+                        + (f", threshold={threshold:.1f}s" if threshold > 0 else "")
+                        + ")"
+                    )
                     strategy.on_reject(f"shock blocked: {gate.reason}")
                     pending_buy = None
                     pending_buy_ts = None
+                    if threshold > 0 and elapsed >= threshold:
+                        print("[QUEUE] 释放队列：急跌风控阻断超时，退出并交由回填机制处理。")
+                        _cancel_open_buy_orders_before_exit("SHOCK_BLOCK_TIMEOUT")
+                        _record_exit_token(token_id, "SHOCK_BLOCK_TIMEOUT", {
+                            "blocked_seconds": elapsed,
+                            "threshold_seconds": threshold,
+                            "reason": gate.reason,
+                            "last_bid": bid,
+                            "last_ask": ask,
+                            "drop_pct_current": _current_drop_pct_for_exit(),
+                            "has_position": _has_actionable_position(),
+                        })
+                        strategy.stop("shock blocked timeout")
+                        stop_event.set()
                     continue
+
+                shock_reject_since_ts = None
 
                 if sell_only_event.is_set():
                     print("[COUNTDOWN] 当前处于倒计时仅卖出模式，忽略买入信号。")

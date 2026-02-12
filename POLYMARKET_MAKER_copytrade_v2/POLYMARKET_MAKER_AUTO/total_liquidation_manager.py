@@ -526,17 +526,56 @@ class TotalLiquidationManager:
 
         return _get_client()
 
+
+
     @staticmethod
-    def _place_sell_ioc(client: Any, token_id: str, price: float, size: float) -> Dict[str, Any]:
+    def _is_fak_no_match_error(exc: Exception) -> bool:
+        text = str(exc or "").lower()
+        return "no orders found to match" in text and "fak" in text
+
+    @staticmethod
+    def _build_sell_price_ladder(price: float) -> List[float]:
+        base = max(float(price or 0.0), 0.01)
+        ladder = [base, max(0.01, base * 0.997), max(0.01, base * 0.992), max(0.01, base * 0.985), 0.01]
+        dedup: List[float] = []
+        for px in ladder:
+            px = round(float(px), 4)
+            if dedup and abs(dedup[-1] - px) < 1e-9:
+                continue
+            dedup.append(px)
+        return dedup
+
+    def _place_sell_ioc(self, client: Any, token_id: str, price: float, size: float) -> Dict[str, Any]:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import SELL
 
-        eff_price = max(float(price), 0.01)
         eff_size = max(float(size), 0.0)
-        order = OrderArgs(token_id=str(token_id), side=SELL, price=eff_price, size=eff_size)
-        signed = client.create_order(order)
         order_type = getattr(OrderType, "FAK", None) or getattr(OrderType, "IOC", OrderType.FOK)
-        return client.post_order(signed, order_type)
+        last_exc: Optional[Exception] = None
+
+        for idx, eff_price in enumerate(self._build_sell_price_ladder(price), start=1):
+            order = OrderArgs(token_id=str(token_id), side=SELL, price=max(float(eff_price), 0.01), size=eff_size)
+            signed = client.create_order(order)
+            try:
+                resp = client.post_order(signed, order_type)
+                if idx > 1:
+                    print(
+                        f"[GLB_LIQ][IOC] token={token_id} 阶梯价格 level={idx} price={eff_price:.4f} 下单成功"
+                    )
+                return resp
+            except Exception as exc:
+                last_exc = exc
+                if self._is_fak_no_match_error(exc):
+                    print(
+                        f"[GLB_LIQ][IOC] token={token_id} level={idx} price={eff_price:.4f} "
+                        "无可匹配买单，继续尝试更低价"
+                    )
+                    continue
+                raise
+
+        if last_exc is not None:
+            raise last_exc
+        return {}
 
     def _estimate_value(self, size: float, pos_price: float, bid: float, ask: float) -> float:
         if pos_price > 0:
