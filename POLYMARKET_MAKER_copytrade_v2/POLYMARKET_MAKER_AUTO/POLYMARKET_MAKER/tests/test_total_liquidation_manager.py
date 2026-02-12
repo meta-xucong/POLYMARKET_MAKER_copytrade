@@ -20,6 +20,7 @@ class _Task:
     def __init__(self, running: bool, log_excerpt: str = ""):
         self._running = running
         self.log_excerpt = log_excerpt
+        self.last_log_excerpt_ts = 0.0
 
     def is_running(self) -> bool:
         return self._running
@@ -231,6 +232,28 @@ def test_startup_grace_blocks_idle_trigger():
         assert all("idle_slots" not in r for r in reasons)
 
 
+
+
+def test_trade_activity_refreshes_even_if_last_line_text_repeats():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[MAKER][BUY] 挂单 -> price=0.33 qty=5")
+        task = autorun.tasks["0"]
+        task.last_log_excerpt_ts = 100.0
+
+        t1 = mgr._collect_trade_activity_ts(autorun)
+        assert t1 > 0
+
+        # 文本不变，但时间戳更新，说明是新一轮日志刷新，应被视为活动
+        task.last_log_excerpt_ts = 101.0
+        t2 = mgr._collect_trade_activity_ts(autorun)
+        assert t2 > 0
+
+
 def test_trade_activity_is_based_on_order_behavior_not_ws_updates():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=True)
@@ -294,6 +317,14 @@ def test_liquidation_scope_only_copytrade_tokens():
         result = mgr._liquidate_positions(autorun)
         assert result["liquidated"] == 1
         assert called == ["A"]
+
+
+
+
+def test_balance_parser_ignores_allowance_only_payload():
+    payload = {"allowance": "5000", "nested": {"x": "999"}}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed is None
 
 
 def test_balance_parser_prefers_balance_field_over_other_numeric_values():
