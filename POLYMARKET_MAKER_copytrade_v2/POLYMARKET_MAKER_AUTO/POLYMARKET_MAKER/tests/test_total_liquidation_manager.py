@@ -17,8 +17,10 @@ from total_liquidation_manager import TotalLiquidationManager
 
 
 class _Task:
-    def __init__(self, running: bool):
+    def __init__(self, running: bool, log_excerpt: str = ""):
         self._running = running
+        self.log_excerpt = log_excerpt
+        self.last_log_excerpt_ts = 0.0
 
     def is_running(self) -> bool:
         return self._running
@@ -33,9 +35,9 @@ class _Lock:
 
 
 class _Autorun:
-    def __init__(self, cfg, running_tasks: int):
+    def __init__(self, cfg, running_tasks: int, log_excerpt: str = ""):
         self.config = cfg
-        self.tasks = {str(i): _Task(True) for i in range(running_tasks)}
+        self.tasks = {str(i): _Task(True, log_excerpt=log_excerpt) for i in range(running_tasks)}
         self._ws_cache_lock = _Lock()
         self._ws_cache = {}
         self.pending_topics = []
@@ -151,6 +153,36 @@ def test_taker_price_applies_slippage_bps():
         assert abs(px - 0.5 * (1 - 0.003)) < 1e-9
 
 
+
+
+def _install_fake_balance_types_module():
+    import types
+
+    fake_mod = types.ModuleType("py_clob_client.clob_types")
+
+    class _AssetType:
+        COLLATERAL = "COLLATERAL"
+
+    class _BalanceAllowanceParams:
+        def __init__(self, asset_type=None, token_id=None, signature_type=-1):
+            self.asset_type = asset_type
+            self.token_id = token_id
+            self.signature_type = signature_type
+
+    fake_mod.AssetType = _AssetType
+    fake_mod.BalanceAllowanceParams = _BalanceAllowanceParams
+    old = sys.modules.get("py_clob_client.clob_types")
+    sys.modules["py_clob_client.clob_types"] = fake_mod
+    return old
+
+
+def _restore_fake_balance_types_module(old):
+    if old is None:
+        sys.modules.pop("py_clob_client.clob_types", None)
+    else:
+        sys.modules["py_clob_client.clob_types"] = old
+
+
 def test_balance_probe_is_rate_limited():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=True)
@@ -171,8 +203,13 @@ def test_balance_probe_is_rate_limited():
         mgr._cached_client = fake
         autorun = _Autorun(cfg, running_tasks=0)
 
-        v1 = mgr._query_free_balance_usdc(autorun)
-        v2 = mgr._query_free_balance_usdc(autorun)
+        old_mod = _install_fake_balance_types_module()
+        try:
+            v1 = mgr._query_free_balance_usdc(autorun)
+            v2 = mgr._query_free_balance_usdc(autorun)
+        finally:
+            _restore_fake_balance_types_module(old_mod)
+
         assert v1 == 100.0
         assert v2 == 100.0
         assert fake.calls == 1
@@ -193,6 +230,51 @@ def test_startup_grace_blocks_idle_trigger():
         ok, reasons = mgr.should_trigger(metrics)
         assert ok is False
         assert all("idle_slots" not in r for r in reasons)
+
+
+
+
+def test_trade_activity_refreshes_even_if_last_line_text_repeats():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[MAKER][BUY] 挂单 -> price=0.33 qty=5")
+        task = autorun.tasks["0"]
+        task.last_log_excerpt_ts = 100.0
+
+        t1 = mgr._collect_trade_activity_ts(autorun)
+        assert t1 > 0
+
+        # 文本不变，但时间戳更新，说明是新一轮日志刷新，应被视为活动
+        task.last_log_excerpt_ts = 101.0
+        t2 = mgr._collect_trade_activity_ts(autorun)
+        assert t2 > 0
+
+
+def test_trade_activity_is_based_on_order_behavior_not_ws_updates():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        mgr.cfg.startup_grace_hours = 0
+        mgr.cfg.no_trade_duration_minutes = 1
+
+        # 先让无交易活动超时
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[DIAG] no-op")
+        mgr._last_trade_activity_ts = time.time() - 120
+        metrics = mgr.update_metrics(autorun)
+        _, reasons = mgr.should_trigger(metrics)
+        assert any("no_trade_for=" in r for r in reasons)
+
+        # 出现真实下单行为后，no_trade 应清零
+        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单 -> price=0.33 qty=5.0000"
+        metrics2 = mgr.update_metrics(autorun)
+        _, reasons2 = mgr.should_trigger(metrics2)
+        assert all("no_trade_for=" not in r for r in reasons2)
 
 
 def test_liquidation_scope_only_copytrade_tokens():
@@ -235,6 +317,69 @@ def test_liquidation_scope_only_copytrade_tokens():
         result = mgr._liquidate_positions(autorun)
         assert result["liquidated"] == 1
         assert called == ["A"]
+
+
+
+
+def test_balance_parser_ignores_allowance_only_payload():
+    payload = {"allowance": "5000", "nested": {"x": "999"}}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed is None
+
+
+
+
+def test_balance_parser_supports_nested_balance_amount_payload():
+    payload = {"balance": {"amount": "1.38"}, "allowance": "5000"}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed == 1.38
+
+
+def test_balance_parser_supports_balance_list_payload():
+    payload = {"balance": ["1.38"], "allowance": "5000"}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed == 1.38
+
+
+def test_balance_parser_prefers_balance_field_over_other_numeric_values():
+    payload = {
+        "allowance": "5000",
+        "nested": {"x": "999"},
+        "balance": "1.38",
+    }
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed == 1.38
+
+
+def test_balance_query_does_not_call_none_fallback_on_exception():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        class _FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def get_balance_allowance(self, params):
+                self.calls += 1
+                raise RuntimeError("boom")
+
+        fake = _FakeClient()
+        mgr._cached_client = fake
+        mgr._cached_free_balance = 7.0
+        autorun = _Autorun(cfg, running_tasks=0)
+
+        old_mod = _install_fake_balance_types_module()
+        try:
+            v = mgr._query_free_balance_usdc(autorun)
+        finally:
+            _restore_fake_balance_types_module(old_mod)
+
+        assert v == 7.0
+        assert fake.calls == 1
+        assert mgr._last_balance_probe_error == "boom"
 
 
 def test_liquidation_scope_empty_skips_for_safety():
