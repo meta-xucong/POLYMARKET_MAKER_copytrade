@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import types
 import time
@@ -708,13 +709,35 @@ def _install_fake_clob_modules():
     fake_constants = types.ModuleType("py_clob_client.order_builder.constants")
     fake_constants.SELL = "SELL"
 
+    fake_client_mod = types.ModuleType("py_clob_client.client")
+
+    class _ClobClient:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self._api_creds = None
+
+        def create_or_derive_api_creds(self):
+            return {"api_key": "k", "api_secret": "s", "api_passphrase": "p"}
+
+        def set_api_creds(self, creds):
+            self._api_creds = creds
+
+    fake_client_mod.ClobClient = _ClobClient
+
     fake_pkg = types.ModuleType("py_clob_client")
+    fake_pkg.__path__ = []
     fake_order_builder = types.ModuleType("py_clob_client.order_builder")
 
     sys.modules["py_clob_client"] = fake_pkg
+    sys.modules["py_clob_client.client"] = fake_client_mod
     sys.modules["py_clob_client.clob_types"] = fake_clob_types
     sys.modules["py_clob_client.order_builder"] = fake_order_builder
     sys.modules["py_clob_client.order_builder.constants"] = fake_constants
+
+    # 让 Volatility_arbitrage_main_rest.get_client() 在测试环境下可初始化
+    os.environ.setdefault("POLY_KEY", "0x" + "1" * 64)
+    os.environ.setdefault("POLY_FUNDER", "0x" + "2" * 40)
 
 
 def test_place_sell_ioc_fak_no_match_fallback_to_ladder_price():
