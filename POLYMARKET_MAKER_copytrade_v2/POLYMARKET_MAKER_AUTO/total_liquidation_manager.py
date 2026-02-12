@@ -75,6 +75,20 @@ class TotalLiquidationManager:
         self._next_client_retry_at: float = 0.0
         self._cached_free_balance: Optional[float] = None
         self._next_balance_probe_at: float = 0.0
+        self._last_balance_probe_error: Optional[str] = None
+        self._task_activity_markers: Dict[str, str] = {}
+
+    _TRADE_ACTIVITY_HINTS = (
+        "[maker][buy] 挂单",
+        "[maker][sell] 挂单",
+        "买入成交",
+        "卖出成交",
+        "filled",
+        "挂单成功",
+        "撤单",
+        "下单",
+        "成交",
+    )
 
     def _load_state(self) -> Dict[str, Any]:
         if not self.state_path.exists():
@@ -111,21 +125,25 @@ class TotalLiquidationManager:
         else:
             self._idle_since = None
 
-        latest_ws_update = 0.0
-        with autorun._ws_cache_lock:
-            for data in autorun._ws_cache.values():
-                try:
-                    ts = float(data.get("updated_at") or 0.0)
-                except (TypeError, ValueError):
-                    ts = 0.0
-                latest_ws_update = max(latest_ws_update, ts)
-
-        if latest_ws_update > 0:
-            self._last_trade_activity_ts = max(self._last_trade_activity_ts, latest_ws_update)
+        latest_trade_activity = self._collect_trade_activity_ts(autorun)
+        if latest_trade_activity > 0:
+            self._last_trade_activity_ts = max(self._last_trade_activity_ts, latest_trade_activity)
 
         free_balance = self._query_free_balance_usdc(autorun)
         startup_grace_sec = max(0.0, self.cfg.startup_grace_hours * 3600.0)
         in_startup_grace = (now - self._started_at_ts) < startup_grace_sec
+
+        idle_minutes = ((now - float(self._idle_since)) / 60.0) if self._idle_since is not None else 0.0
+        no_trade_minutes = (now - float(self._last_trade_activity_ts or now)) / 60.0
+        bal_text = "NA" if free_balance is None else f"{float(free_balance):.4f}"
+        print(
+            "[GLB_LIQ][METRICS] "
+            f"running={running}/{max_slots} idle_ratio={idle_ratio:.2f} "
+            f"idle_minutes={idle_minutes:.1f} no_trade_minutes={no_trade_minutes:.1f} "
+            f"free_balance={bal_text}"
+        )
+        if self._last_balance_probe_error:
+            print(f"[GLB_LIQ][WARN] 余额查询失败，沿用缓存: {self._last_balance_probe_error}")
 
         return {
             "running": running,
@@ -172,6 +190,38 @@ class TotalLiquidationManager:
             reasons.append(f"free_balance={free_balance:.4f}<min={self.cfg.min_free_balance:.4f}")
 
         return len(reasons) >= self.cfg.require_conditions, reasons
+
+    def _collect_trade_activity_ts(self, autorun: Any) -> float:
+        latest = 0.0
+        active_ids: set[str] = set()
+
+        for topic_id, task in (getattr(autorun, "tasks", {}) or {}).items():
+            if not task or not getattr(task, "is_running", lambda: False)():
+                continue
+            active_ids.add(str(topic_id))
+
+            excerpt = str(getattr(task, "log_excerpt", "") or "")
+            if not excerpt:
+                continue
+
+            last_line = (excerpt.strip().splitlines() or [""])[-1].strip()
+            if not last_line:
+                continue
+
+            marker = f"{topic_id}:{last_line}"
+            if self._task_activity_markers.get(str(topic_id)) == marker:
+                continue
+            self._task_activity_markers[str(topic_id)] = marker
+
+            normalized = last_line.lower()
+            if any(hint in normalized for hint in self._TRADE_ACTIVITY_HINTS):
+                latest = max(latest, time.time())
+
+        stale = [tid for tid in self._task_activity_markers.keys() if tid not in active_ids]
+        for tid in stale:
+            self._task_activity_markers.pop(tid, None)
+
+        return latest
 
     def _precheck_liquidation_ready(self) -> Tuple[Optional[str], Optional[Any], Optional[set[str]]]:
         client = self._get_cached_client()
@@ -266,6 +316,14 @@ class TotalLiquidationManager:
         return result
 
     @staticmethod
+    def _extract_balance_float(payload: Any) -> Optional[float]:
+        if isinstance(payload, dict):
+            for key in ("balance", "available", "availableBalance", "available_balance"):
+                if key in payload:
+                    return TotalLiquidationManager._extract_balance_float(payload[key])
+        return TotalLiquidationManager._extract_first_float(payload)
+
+    @staticmethod
     def _extract_first_float(payload: Any) -> Optional[float]:
         if isinstance(payload, (int, float)) and not isinstance(payload, bool):
             return float(payload)
@@ -319,14 +377,17 @@ class TotalLiquidationManager:
             return self._cached_free_balance
 
         self._next_balance_probe_at = now + self.cfg.balance_poll_interval_sec
+        self._last_balance_probe_error = None
 
         client = self._get_cached_client()
         if client is None:
+            self._last_balance_probe_error = "client init failed"
             return self._cached_free_balance
 
         # 严格使用官方 py-clob-client 方法：get_balance_allowance(BalanceAllowanceParams)
         get_balance_allowance = getattr(client, "get_balance_allowance", None)
         if not callable(get_balance_allowance):
+            self._last_balance_probe_error = "client.get_balance_allowance 不可调用"
             return self._cached_free_balance
 
         try:
@@ -337,19 +398,25 @@ class TotalLiquidationManager:
                 token_id=None,
                 signature_type=-1,
             )
+        except Exception:
+            # 本地缺少 py_clob_client 类型定义时，构造兼容参数对象，保持官方接口形状。
+            class _CompatParams:
+                def __init__(self):
+                    self.asset_type = "COLLATERAL"
+                    self.token_id = None
+                    self.signature_type = -1
+
+            params = _CompatParams()
+
+        try:
             resp = get_balance_allowance(params)
-            parsed = self._extract_first_float(resp)
+            parsed = self._extract_balance_float(resp)
             if parsed is not None:
                 self._cached_free_balance = parsed
-        except Exception:
-            # 在本地缺少 py_clob_client 类型定义时，仍尝试调用官方同名方法。
-            try:
-                resp = get_balance_allowance(None)
-                parsed = self._extract_first_float(resp)
-                if parsed is not None:
-                    self._cached_free_balance = parsed
-            except Exception:
-                pass
+                return self._cached_free_balance
+            self._last_balance_probe_error = f"响应中未找到 balance 字段: {resp}"
+        except Exception as exc:
+            self._last_balance_probe_error = str(exc)
 
         return self._cached_free_balance
 
