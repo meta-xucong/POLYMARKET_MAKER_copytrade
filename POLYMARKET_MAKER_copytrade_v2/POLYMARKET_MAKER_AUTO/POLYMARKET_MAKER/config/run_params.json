@@ -27,7 +27,7 @@
   "no_event_exit_minutes": 10,
   "signal_timeout_minutes": 30,
   "max_buy_price": 0.98,
-  "sell_inactive_hours": 4,
+  "sell_inactive_hours": 2.5,
   "countdown": {
     "minutes_before_end": 300,
     "absolute_time": null,
