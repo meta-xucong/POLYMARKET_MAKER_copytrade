@@ -333,6 +333,14 @@ def test_balance_parser_supports_nested_balance_amount_payload():
     payload = {"balance": {"amount": "1.38"}, "allowance": "5000"}
     parsed = TotalLiquidationManager._extract_balance_float(payload)
     assert parsed == 1.38
+
+
+def test_balance_parser_supports_balance_list_payload():
+    payload = {"balance": ["1.38"], "allowance": "5000"}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed == 1.38
+
+
 def test_balance_parser_prefers_balance_field_over_other_numeric_values():
     payload = {
         "allowance": "5000",

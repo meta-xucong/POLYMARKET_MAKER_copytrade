@@ -358,6 +358,10 @@ class TotalLiquidationManager:
             return None
         if isinstance(payload, (list, tuple)):
             for item in payload:
+                if from_balance_key:
+                    parsed = TotalLiquidationManager._extract_first_float(item)
+                    if parsed is not None:
+                        return parsed
                 if isinstance(item, (dict, list, tuple)):
                     parsed = TotalLiquidationManager._extract_balance_float(item, False)
                     if parsed is not None:
