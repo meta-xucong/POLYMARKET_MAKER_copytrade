@@ -337,6 +337,19 @@ class TotalLiquidationManager:
                     parsed = TotalLiquidationManager._extract_balance_float(payload[key], True)
                     if parsed is not None:
                         return parsed
+
+            # 已进入余额语义子树时，允许解析常见数值承载字段（如 amount/value）
+            if from_balance_key:
+                for key in ("amount", "value", "balance", "available", "availableBalance", "available_balance"):
+                    if key in payload:
+                        parsed = TotalLiquidationManager._extract_first_float(payload[key])
+                        if parsed is not None:
+                            return parsed
+                for v in payload.values():
+                    parsed = TotalLiquidationManager._extract_first_float(v)
+                    if parsed is not None:
+                        return parsed
+
             for v in payload.values():
                 if isinstance(v, (dict, list, tuple)):
                     parsed = TotalLiquidationManager._extract_balance_float(v, False)
