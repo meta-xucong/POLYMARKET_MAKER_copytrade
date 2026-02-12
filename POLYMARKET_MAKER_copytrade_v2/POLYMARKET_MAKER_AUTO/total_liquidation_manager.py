@@ -59,6 +59,8 @@ class LiquidationConfig:
 class TotalLiquidationManager:
     """全局清仓管理器：监控活跃度 -> 触发清仓 -> 硬重置。"""
 
+    _COLLATERAL_DECIMALS = 6
+
     def __init__(self, cfg: Any, project_root: Path):
         self.cfg = LiquidationConfig.from_global_config(cfg)
         self.project_root = project_root
@@ -317,20 +319,43 @@ class TotalLiquidationManager:
         return result
 
     @staticmethod
+    def _normalize_collateral_balance(value: float, raw: Any) -> float:
+        """
+        CLOB balance-allowance 的 collateral balance 为 USDC 最小单位（6 decimals）。
+        若原始值为纯整数（如 "53608824"），换算为 53.608824 USDC。
+        """
+        if isinstance(raw, bool):
+            return value
+        if isinstance(raw, int):
+            return value / (10 ** TotalLiquidationManager._COLLATERAL_DECIMALS)
+        if isinstance(raw, float):
+            if raw.is_integer():
+                return value / (10 ** TotalLiquidationManager._COLLATERAL_DECIMALS)
+            return value
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text and text.lstrip("+-").isdigit():
+                return value / (10 ** TotalLiquidationManager._COLLATERAL_DECIMALS)
+        return value
+
+    @staticmethod
     def _extract_balance_float(payload: Any, from_balance_key: bool = False) -> Optional[float]:
         """
         严格按 balance 语义字段提取余额，避免误取 allowance 等其他数值。
         只有命中余额语义键（balance/available）后的值才允许被解析为数值。
         """
         if isinstance(payload, (int, float)) and not isinstance(payload, bool):
-            return float(payload) if from_balance_key else None
+            if not from_balance_key:
+                return None
+            return TotalLiquidationManager._normalize_collateral_balance(float(payload), payload)
         if isinstance(payload, str):
             if not from_balance_key:
                 return None
             try:
-                return float(payload)
+                parsed = float(payload)
             except ValueError:
                 return None
+            return TotalLiquidationManager._normalize_collateral_balance(parsed, payload)
         if isinstance(payload, dict):
             for key in ("balance", "available", "availableBalance", "available_balance"):
                 if key in payload:
