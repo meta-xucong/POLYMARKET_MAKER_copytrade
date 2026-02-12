@@ -232,7 +232,7 @@ def test_balance_probe_is_rate_limited():
 
             def get_balance_allowance(self, params):
                 self.calls += 1
-                return {"balance": "100"}
+                return {"balance": "100000000"}
 
         fake = _FakeClient()
         mgr._cached_client = fake
@@ -397,6 +397,32 @@ def test_balance_parser_prefers_balance_field_over_other_numeric_values():
     }
     parsed = TotalLiquidationManager._extract_balance_float(payload)
     assert parsed == 1.38
+
+
+def test_balance_parser_normalizes_integer_balance_string_from_base_units():
+    payload = {"balance": "53608824", "allowance": "999999999"}
+    parsed = TotalLiquidationManager._extract_balance_float(payload)
+    assert parsed == 53.608824
+
+
+def test_should_trigger_hits_low_balance_after_usdc_unit_normalization():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        cfg.total_liquidation["trigger"]["min_free_balance"] = 20
+        cfg.total_liquidation["trigger"]["require_conditions"] = 1
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        metrics = {
+            "idle_since": None,
+            "last_trade_activity_ts": time.time(),
+            "free_balance": TotalLiquidationManager._extract_balance_float({"balance": "19000000"}),
+            "in_startup_grace": True,
+        }
+        ok, reasons = mgr.should_trigger(metrics)
+        assert ok is True
+        assert any("free_balance=19.0000<min=20.0000" in r for r in reasons)
 
 
 def test_balance_query_does_not_call_none_fallback_on_exception():
