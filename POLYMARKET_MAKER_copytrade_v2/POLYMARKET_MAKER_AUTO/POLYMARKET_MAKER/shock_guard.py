@@ -72,6 +72,7 @@ class ShockGuard:
         self._shock_anchor_high: Optional[float] = None
         self._shock_low: Optional[float] = None
         self._last_low_ts: Optional[float] = None
+        self._holding_has_shock_evidence: bool = False
         self._last_mid: Optional[float] = None
         self._last_spread: Optional[float] = None
 
@@ -100,6 +101,7 @@ class ShockGuard:
             "shock_anchor_high": self._shock_anchor_high,
             "shock_low": self._shock_low,
             "last_low_ts": self._last_low_ts,
+            "holding_has_shock_evidence": self._holding_has_shock_evidence,
             "last_mid": self._last_mid,
             "last_spread": self._last_spread,
         }
@@ -123,8 +125,10 @@ class ShockGuard:
         if self._phase == ShockPhase.NORMAL:
             detected = self._detect_shock(ts)
             if detected is not None:
-                self._enter_holding(ts, detected)
+                self._enter_holding(ts, detected, has_shock_evidence=True)
         elif self._phase in (ShockPhase.HOLDING, ShockPhase.RECOVERY_CHECK):
+            if self._detect_shock(ts) is not None:
+                self._holding_has_shock_evidence = True
             if self._shock_low is None or mid < self._shock_low:
                 self._shock_low = mid
                 self._last_low_ts = ts
@@ -139,10 +143,12 @@ class ShockGuard:
             detected = self._detect_shock(ts)
             observe_reason = "pre-buy observation window"
             detail: Dict[str, Any] = {"reason": observe_reason}
+            has_shock_evidence = False
             if detected is not None:
                 observe_reason = f"pre-buy hold with shock evidence: {detected.get('reason', 'detected')}"
                 detail.update(detected)
-            self._enter_holding(ts, detail)
+                has_shock_evidence = True
+            self._enter_holding(ts, detail, has_shock_evidence=has_shock_evidence)
             return GateResult(
                 GateDecision.DEFER,
                 observe_reason,
@@ -166,8 +172,37 @@ class ShockGuard:
             )
 
         # RECOVERY_CHECK
+        if not self._holding_has_shock_evidence:
+            # 纯观察窗口：不应因为恢复条件不满足而阻断买入；仅在仍检测到shock时继续延后
+            detected = self._detect_shock(ts)
+            if detected is None:
+                self._reset_to_normal()
+                return GateResult(GateDecision.ALLOW, "pre-buy observation completed", details={"observed": True})
+            detail = dict(detected)
+            detail["reason"] = f"post-observation shock detected: {detected.get('reason', 'detected')}"
+            self._enter_holding(ts, detail, has_shock_evidence=True)
+            return GateResult(
+                GateDecision.DEFER,
+                detail["reason"],
+                retry_at_ts=self._hold_until_ts,
+                details=detail,
+            )
+
         passed, detail = self._evaluate_recovery(ts)
         if passed:
+            # 最终放行前再做一次完整 shock 检测，避免恢复路径绕过 abs_floor/drop/velocity
+            post_detect = self._detect_shock(ts)
+            if post_detect is not None:
+                rebound_detail = dict(detail)
+                rebound_detail["post_detect_reason"] = post_detect.get("reason")
+                rebound_detail.update(post_detect)
+                self._enter_holding(ts, rebound_detail, has_shock_evidence=True)
+                return GateResult(
+                    GateDecision.DEFER,
+                    "recovery passed but shock still detected",
+                    retry_at_ts=self._hold_until_ts,
+                    details=rebound_detail,
+                )
             self._reset_to_normal()
             return GateResult(GateDecision.ALLOW, "recovery validation passed", details=detail)
 
@@ -186,7 +221,7 @@ class ShockGuard:
         if self._phase == ShockPhase.HOLDING and self._hold_until_ts is not None and ts >= self._hold_until_ts:
             self._phase = ShockPhase.RECOVERY_CHECK
 
-    def _enter_holding(self, ts: float, detail: Dict[str, Any]) -> None:
+    def _enter_holding(self, ts: float, detail: Dict[str, Any], *, has_shock_evidence: bool) -> None:
         self._phase = ShockPhase.HOLDING
         self._shock_trigger_ts = ts
         self._hold_until_ts = ts + max(float(self.cfg.observation_hold_sec), 0.0)
@@ -194,6 +229,7 @@ class ShockGuard:
         self._shock_anchor_high = float(detail.get("window_high") or 0.0) or self._last_mid
         self._shock_low = self._last_mid
         self._last_low_ts = ts
+        self._holding_has_shock_evidence = bool(has_shock_evidence)
 
     def _reset_to_normal(self) -> None:
         self._phase = ShockPhase.NORMAL
@@ -203,6 +239,7 @@ class ShockGuard:
         self._shock_anchor_high = None
         self._shock_low = None
         self._last_low_ts = None
+        self._holding_has_shock_evidence = False
 
     def _detect_shock(self, ts: float) -> Optional[Dict[str, Any]]:
         if self._last_mid is None:

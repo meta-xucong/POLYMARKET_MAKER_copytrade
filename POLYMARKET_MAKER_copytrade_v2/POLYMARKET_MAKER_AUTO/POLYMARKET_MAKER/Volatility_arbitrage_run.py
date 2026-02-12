@@ -3628,6 +3628,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     buy_cooldown_until: float = 0.0
     pending_buy: Optional[Action] = None
     pending_buy_ts: Optional[float] = None
+    shock_reject_since_ts: Optional[float] = None
     short_buy_cooldown = 1.0
     next_position_sync: float = 0.0
     position_sync_block_until: float = 0.0
@@ -4577,6 +4578,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 gate = shock_guard.gate_buy(ts=time.time())
                 if gate.decision == GateDecision.DEFER:
+                    shock_reject_since_ts = None
                     retry_in = None
                     if gate.retry_at_ts is not None:
                         retry_in = max(gate.retry_at_ts - time.time(), 0.0)
@@ -4595,11 +4597,37 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     strategy.on_reject(f"shock deferred: {gate.reason}")
                     continue
                 if gate.decision == GateDecision.REJECT:
-                    print(f"[SHOCK][BUY][REJECT] {gate.reason}")
+                    now_ts = time.time()
+                    if shock_reject_since_ts is None:
+                        shock_reject_since_ts = now_ts
+                    elapsed = now_ts - shock_reject_since_ts
+                    threshold = max(float(shock_guard_cfg.max_pending_buy_age_sec or 0.0), 0.0)
+                    print(
+                        f"[SHOCK][BUY][REJECT] {gate.reason} "
+                        f"(elapsed={elapsed:.1f}s"
+                        + (f", threshold={threshold:.1f}s" if threshold > 0 else "")
+                        + ")"
+                    )
                     strategy.on_reject(f"shock blocked: {gate.reason}")
                     pending_buy = None
                     pending_buy_ts = None
+                    if threshold > 0 and elapsed >= threshold:
+                        print("[QUEUE] 释放队列：急跌风控阻断超时，退出并交由回填机制处理。")
+                        _cancel_open_buy_orders_before_exit("SHOCK_BLOCK_TIMEOUT")
+                        _record_exit_token(token_id, "SHOCK_BLOCK_TIMEOUT", {
+                            "blocked_seconds": elapsed,
+                            "threshold_seconds": threshold,
+                            "reason": gate.reason,
+                            "last_bid": bid,
+                            "last_ask": ask,
+                            "drop_pct_current": _current_drop_pct_for_exit(),
+                            "has_position": _has_actionable_position(),
+                        })
+                        strategy.stop("shock blocked timeout")
+                        stop_event.set()
                     continue
+
+                shock_reject_since_ts = None
 
                 if sell_only_event.is_set():
                     print("[COUNTDOWN] 当前处于倒计时仅卖出模式，忽略买入信号。")
