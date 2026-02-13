@@ -1,0 +1,209 @@
+[CONFIG] 使用配置文件: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/run_params_64813622005572880826921415601193114344795141045778644315653050770662962654578.json
+[INIT] API 凭证已验证。
+[INIT] ClobClient 就绪。
+[INFO] 未提供 market_url，尝试通过 token_id 获取市场元数据。
+[INFO] 市场/子问题标题: Will the government shutdown last 6 days or more?
+[INFO] 使用 token_id: 64813622005572880826921415601193114344795141045778644315653050770662962654578
+[INFO] 市场标注时区: America/New_York
+[INFO] 市场计划截止时间 (UTC): 2026-03-14T00:00:00+00:00
+[WARN] 自动获取的截止日期缺少具体时刻，已按默认配置设置截止时间为 2026-03-14T23:59:00-04:00 (America/New_York)。
+[INFO] 监控目标结束时间 (UTC): 2026-03-15T03:59:00+00:00
+[INFO] 未能识别市场价格精度，默认按盈利百分比下限 0.300% 执行。
+[INIT] 目标 token_id: 64813622005572880826921415601193114344795141045778644315653050770662962654578
+[INIT] 已读取手动份数 10.0，模式：总持仓目标。
+[INIT] 卖出挂单模式：aggressive
+[INIT] 卖出后递增买入阈值已启用，步长 0.2000%。
+[INIT] 买入价格上限: 0.9800（价格>=此值时不买入）
+[INIT] 价格停滞监控窗口 120.0 分钟，阈值 0.2000%。
+[INIT] 启动后无行情自动退出阈值 10.0 分钟。
+[INIT] 数据异常超时风控阈值 30.0 分钟（仅在持续无法获取有效数据时退出）。
+[INIT] 最终价格None次数退出阈值 100 次（WS+REST）。
+[INIT][SHOCK] 急跌门禁已启用：window=90.0s drop=10.00% hold=180.0s
+[INIT] 卖出挂单空窗释放阈值 2.5 小时。
+[INFO] 倒计时卖出模式将在市场结束前 300 分钟开启。
+[INIT] Maker 配置: poll_sec=15.0s, position_sync_interval=90.0s
+[WS][SHARED] ✓ 将使用共享 WS 缓存模式
+[WS][SHARED] 缓存路径: /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/ws_cache.json
+[WS][SHARED] ✓ 缓存文件新鲜（0秒前更新）
+[RUN] 监听行情中… 输入 stop / exit 可手动停止。
+[WS][SHARED][TRACE] 函数调用次数: 1
+[WS][SHARED][DEBUG] 读取统计: read=1, skip=0, 当前seq=13 (last=0), updated_at=1771011206.45 (last=0.00)
+[WS][SHARED] ✓ 检测到seq增长: 0 → 13 (+13)
+[WS][SHARED] 开始从共享缓存读取数据 (token=64813622005572880826921415601193114344795141045778644315653050770662962654578)
+[WS][SHARED] seq=13, updates=1 (2.0/min), bid=0.88, ask=0.9, price=0.89
+[WS][SHARED][TRACE] ✓ 函数执行完成，准备返回 (latest已设置: True)
+[WAIT][TRACE] _apply_shared_ws_snapshot()返回，latest已设置: True, stop_event: False
+[WAIT][TRACE] Loop iteration 1, latest: True, stop: False
+[WAIT][END] ✓ Waiting loop结束，latest已设置: True
+[WAIT][END] ✓ stop_event未设置，继续初始化...
+[INIT][TRACE] 1. 准备启动input_listener线程...
+[INIT][TRACE] 2. input_listener线程已启动
+[INIT][TRACE] 3. 准备初始化变量和策略状态...
+[INIT][TRACE] 4. 策略状态已获取
+[INIT] no_event_exit_minutes 已由统一数据风控接管（仅保留兼容字段）。
+[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts=1773529140.0, market_deadline_ts=1773547140.0)
+[INIT][TRACE] 7. 启动countdown_monitor线程...
+[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...
+[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws=True)
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=2): seq和updated_at都未变化且距上次tick仅0.2秒
+[WS][SHARED][SKIP] 当前状态: seq=13, last_seq=13, bid=0.88, ask=0.9
+[HEARTBEAT] 主循环运行中... (use_shared_ws=True) (首次心跳)
+[PX] bid=0.8800 ask=0.9000 mid=0.8900 last=0.8900 | state=FLAT awaiting=None entry=None
+    SHOCK: phase=NORMAL hold_remaining=0.0s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 1
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 1.00%
+    窗口价格(mid): 高 0.8900 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=0.0分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[WS][SHARED] ✓ 检测到seq增长: 13 → 31 (+18)
+[PX] bid=0.8900 ask=0.9300 mid=0.9100 last=0.9100 | state=FLAT awaiting=None entry=None
+    SHOCK: phase=NORMAL hold_remaining=0.0s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 7
+    窗口跌幅: 当前 0.00% / 最大 0.00% / 阈值 1.00%
+    窗口价格(mid): 高 0.9100 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=0.0分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[WS][SHARED] seq=34, updates=7 (12.3/min), bid=0.89, ask=0.93, price=0.91
+[WS][SHARED] ✓ 检测到seq增长: 34 → 36 (+2)
+[WS][SHARED][DEBUG] 读取统计: read=100, skip=170, 当前seq=36 (last=36), updated_at=1771011249.00 (last=1771011249.00)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=100, use_shared_ws=True)
+[WS][SHARED][TRACE] 函数调用次数: 101
+[PX] bid=0.8900 ask=0.9200 mid=0.9050 last=0.9050 | state=FLAT awaiting=None entry=None
+    SHOCK: phase=NORMAL hold_remaining=0.0s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 14
+    窗口跌幅: 当前 0.55% / 最大 0.55% / 阈值 1.00%
+    窗口价格(mid): 高 0.9100 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=0.0分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[WS][SHARED] seq=36, updates=7 (13.7/min), bid=0.89, ask=0.92, price=0.905
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=202): seq和updated_at都未变化且距上次tick仅3.5秒
+[WS][SHARED][SKIP] 当前状态: seq=36, last_seq=36, bid=0.89, ask=0.92
+[WS][SHARED] ✓ 检测到seq增长: 36 → 38 (+2)
+[WS][SHARED] ✓ 检测到seq增长: 39 → 42 (+3)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] pre-buy observation window，约 180.0s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 179.9s 后重试
+[WS][SHARED] ✓ 检测到seq增长: 43 → 48 (+5)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 176.3s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 175.2s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 174.6s 后重试
+[WS][SHARED] seq=51, updates=11 (18.1/min), bid=0.88, ask=0.9, price=0.89
+[PX] bid=0.8800 ask=0.9000 mid=0.8900 last=0.8900 | state=FLAT awaiting=BUY entry=None
+    SHOCK: phase=HOLDING hold_remaining=162.6s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 26
+    窗口跌幅: 当前 2.20% / 最大 2.20% / 阈值 1.00%
+    窗口价格(mid): 高 0.9100 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=-0.0分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 162.6s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 157.5s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 152.4s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 147.3s 后重试
+[WS][SHARED][TRACE] 函数调用次数: 201
+[WS][SHARED][DEBUG] 读取统计: read=207, skip=354, 当前seq=51 (last=51), updated_at=1771011310.65 (last=1771011310.65)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=207, use_shared_ws=True)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 142.1s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 137.0s 后重试
+[PX] bid=0.8800 ask=0.9000 mid=0.8900 last=0.8900 | state=FLAT awaiting=None entry=None
+    SHOCK: phase=HOLDING hold_remaining=132.4s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 31
+    窗口跌幅: 当前 2.20% / 最大 2.20% / 阈值 1.00%
+    窗口价格(mid): 高 0.9100 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=0.1分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[WS][SHARED] seq=51, updates=6 (11.7/min), bid=0.88, ask=0.9, price=0.89
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 131.9s 后重试
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=402): seq和updated_at都未变化且距上次tick仅0.6秒
+[WS][SHARED][SKIP] 当前状态: seq=51, last_seq=51, bid=0.88, ask=0.9
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 130.8s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 128.7s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 123.6s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 118.5s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 113.4s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 109.3s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 108.7s 后重试
+[WS][SHARED] ✓ 检测到seq增长: 55 → 59 (+4)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 108.1s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 102.9s 后重试
+[PX] bid=0.8900 ask=0.9000 mid=0.8950 last=0.8950 | state=FLAT awaiting=None entry=None
+    SHOCK: phase=HOLDING hold_remaining=102.3s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 41
+    窗口跌幅: 当前 1.65% / 最大 2.20% / 阈值 1.00%
+    窗口价格(mid): 高 0.9100 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=0.0分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[WS][SHARED][TRACE] 函数调用次数: 301
+[WS][SHARED] seq=59, updates=10 (17.6/min), bid=0.89, ask=0.9, price=0.895
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 97.8s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 92.7s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 87.6s 后重试
+[WS][SHARED][DEBUG] 读取统计: read=339, skip=588, 当前seq=59 (last=59), updated_at=1771011370.47 (last=1771011370.47)
+[MAIN_LOOP] ✓ 主循环运行中 (iterations=339, use_shared_ws=True)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 72.4s 后重试
+[PX] bid=0.8900 ask=0.9000 mid=0.8950 last=0.8950 | state=FLAT awaiting=None entry=None
+    SHOCK: phase=HOLDING hold_remaining=72.3s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 45
+    窗口跌幅: 当前 1.65% / 最大 2.20% / 阈值 1.00%
+    窗口价格(mid): 高 0.9100 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=0.0分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[WS][SHARED][SKIP] 跳过策略调用 (总跳过次数=602): seq和updated_at都未变化且距上次tick仅2.6秒
+[WS][SHARED][SKIP] 当前状态: seq=60, last_seq=60, bid=0.89, ask=0.9
+[WS][SHARED] seq=61, updates=4 (8.0/min), bid=0.89, ask=0.9, price=0.895
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 67.8s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 62.7s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 57.6s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 53.4s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 48.3s 后重试
+[WS][SHARED][TRACE] 函数调用次数: 401
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 43.2s 后重试
+[PX] bid=0.8900 ask=0.9000 mid=0.8950 last=0.8950 | state=FLAT awaiting=None entry=None
+    SHOCK: phase=HOLDING hold_remaining=42.1s blocked_remaining=0.0s
+    时间窗口: 30.0m | 采样点数: 51
+    窗口跌幅: 当前 1.65% / 最大 2.20% / 阈值 1.00%
+    窗口价格(mid): 高 0.9100 / 低 0.8900
+    数据风控: unhealthy=0.0分钟 / 阈值 30分钟
+    数据风控细项: event_age=0.0分钟 snapshot_age=-0.0分钟 has_valid_snapshot=True
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 38.1s 后重试
+[WS][SHARED] seq=63, updates=7 (13.9/min), bid=0.89, ask=0.9, price=0.895
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 37.5s 后重试
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 32.4s 后重试
+[WS][SHARED] ✓ 检测到seq增长: 63 → 65 (+2)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 27.3s 后重试
+[WS][SHARED][DEBUG] 读取统计: read=448, skip=784, 当前seq=65 (last=65), updated_at=1771011450.94 (last=1771011450.94)
+[ACTION] 🔔 收到交易信号: type=ActionType.BUY, target_price=None
+[SHOCK][BUY][DEFER] observation hold active，约 22.2s 后重试
