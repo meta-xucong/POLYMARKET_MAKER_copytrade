@@ -2370,6 +2370,8 @@ class AutoRunManager:
         task.process = proc
         task.config_path = cfg_path
         task.log_path = log_path
+        # 重新成功启动后，清除历史 no_restart 标记，避免后续异常退出无法自恢复
+        task.no_restart = False
         task.status = "running"
         task.heartbeat("started")
         self.tasks[topic_id] = task

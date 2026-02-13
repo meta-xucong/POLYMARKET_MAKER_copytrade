@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,9 +93,6 @@ class TotalLiquidationManager:
     _FILL_ACTIVITY_HINTS = (
         "买入成交",
         "卖出成交",
-        "filled",
-        "sold=",
-        "filled=",
         "成交",
     )
 
@@ -229,7 +227,7 @@ class TotalLiquidationManager:
             normalized = last_line.lower()
             if any(hint in normalized for hint in self._TRADE_ACTIVITY_HINTS):
                 latest_trade = max(latest_trade, time.time())
-            if any(hint in normalized for hint in self._FILL_ACTIVITY_HINTS):
+            if self._line_has_real_fill_activity(normalized):
                 latest_fill = max(latest_fill, time.time())
 
         stale = [tid for tid in self._task_activity_markers.keys() if tid not in active_ids]
@@ -237,6 +235,24 @@ class TotalLiquidationManager:
             self._task_activity_markers.pop(tid, None)
 
         return latest_trade, latest_fill
+
+    def _line_has_real_fill_activity(self, normalized_line: str) -> bool:
+        """仅在明确出现正成交量时返回 True，避免 filled=0 / sold=0 误判。"""
+        if not normalized_line:
+            return False
+
+        # 先处理显式数量字段：filled= / sold= 仅当数值 > 0 才算真实成交
+        for key in ("filled", "sold"):
+            m = re.search(rf"\b{key}\s*=\s*([0-9]+(?:\.[0-9]+)?)", normalized_line)
+            if m is not None:
+                try:
+                    if float(m.group(1)) > 0:
+                        return True
+                except (TypeError, ValueError):
+                    pass
+
+        # 回退：中文成交语义（不含显式 0 数量时）
+        return any(hint in normalized_line for hint in self._FILL_ACTIVITY_HINTS)
 
     def _precheck_liquidation_ready(self) -> Tuple[Optional[str], Optional[Any], Optional[set[str]]]:
         client = self._get_cached_client()

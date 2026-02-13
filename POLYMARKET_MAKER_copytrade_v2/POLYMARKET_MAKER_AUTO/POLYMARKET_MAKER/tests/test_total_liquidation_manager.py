@@ -818,3 +818,25 @@ def test_place_sell_ioc_non_fak_error_raises_immediately():
             raised = True
             assert "signature expired" in str(exc)
         assert raised is True
+
+
+def test_fill_activity_requires_positive_quantity_for_filled_or_sold_markers():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[MAKER][BUY] 挂单状态 -> price=0.33 filled=0.0000 remaining=10.0000 status=LIVE")
+        _, fill_ts_zero = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts_zero == 0
+
+        autorun.tasks["0"].last_log_excerpt_ts = 1.0
+        autorun.tasks["0"].log_excerpt = "[MAKER][SELL] 挂单状态 -> price=0.95 sold=0.00 remaining=10.00 status=LIVE"
+        _, fill_ts_sold_zero = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts_sold_zero == 0
+
+        autorun.tasks["0"].last_log_excerpt_ts = 2.0
+        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单状态 -> price=0.33 filled=1.2500 remaining=8.7500 status=LIVE"
+        _, fill_ts_positive = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts_positive > 0
