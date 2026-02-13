@@ -60,6 +60,41 @@
 | `shock_guard.blocked_cooldown_sec` | 恢复失败后封禁买入时长（秒）。 | 浮点 | 常用 `120~600`。 |
 | `shock_guard.max_pending_buy_age_sec` | 延迟买入信号最大保留时长（秒）。 | 浮点 | 常用 `60~300`。 |
 
+### 1.1 `shock_guard`（大跌风控）参数逐项解释（按你给的示例）
+
+```json
+"shock_guard": {
+  "enabled": true,
+  "shock_window_sec": 90,
+  "shock_drop_pct": 0.1,
+  "shock_velocity_pct_per_sec": null,
+  "shock_abs_floor": 0.05,
+  "observation_hold_sec": 180,
+  "recovery": {
+    "rebound_pct_min": 0.08,
+    "reconfirm_sec": 90,
+    "spread_cap": 0.04,
+    "require_conditions": 2
+  }
+}
+```
+
+- `enabled: true`：启用大跌门禁。开启后，策略在“疑似快速下杀”时会先冻结买入，而不是立即抄底。
+- `shock_window_sec: 90`：用最近 90 秒作为急跌识别窗口。窗口越大，识别更稳但反应更慢。
+- `shock_drop_pct: 0.1`：若窗口内价格从局部高点到低点跌幅达到 10%，判定为“shock”。
+- `shock_velocity_pct_per_sec: null`：不启用“每秒跌速”这一额外条件，仅按跌幅判定。
+- `shock_abs_floor: 0.05`：绝对低价地板线。价格低于/接近该区域时，会更偏向风险规避（避免在极低流动性区间接刀）。
+- `observation_hold_sec: 180`：触发 shock 后，至少观察 180 秒不买入，等待波动收敛。
+
+`recovery` 表示“观察期后是否允许恢复买入”的确认规则：
+
+- `rebound_pct_min: 0.08`：从 shock 低点至少反弹 8%，才算有恢复迹象。
+- `reconfirm_sec: 90`：即使出现反弹，也需再确认 90 秒（通常要求这段时间不再创新低）。
+- `spread_cap: 0.04`：恢复买入前，盘口点差需不高于 0.04，防止在流动性差时误开仓。
+- `require_conditions: 2`：恢复条件里至少满足 2 项才放行（常见是“有反弹 + 未再破低”或“有反弹 + 点差达标”）。
+
+> 实战理解：这一组参数是“先刹车、后观察、再分条件恢复”的防抄底踩踏机制，核心目标是避免在瀑布段连续接刀。
+
 ---
 
 ## 2) global_config.json —— 调度与系统行为
