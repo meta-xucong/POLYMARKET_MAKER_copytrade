@@ -21,6 +21,8 @@ class LiquidationConfig:
     startup_grace_hours: float = 6.0
     no_trade_duration_minutes: float = 180.0
     min_free_balance: float = 20.0
+    low_balance_force_hours: float = 6.0
+    enable_low_balance_force_trigger: bool = True
     balance_poll_interval_sec: float = 120.0
     require_conditions: int = 2
     position_value_threshold: float = 3.0
@@ -45,6 +47,8 @@ class LiquidationConfig:
             startup_grace_hours=max(0.0, float(trigger.get("startup_grace_hours", 6.0))),
             no_trade_duration_minutes=float(trigger.get("no_trade_duration_minutes", 180.0)),
             min_free_balance=float(trigger.get("min_free_balance", 20.0)),
+            low_balance_force_hours=max(0.0, float(trigger.get("low_balance_force_hours", 6.0))),
+            enable_low_balance_force_trigger=bool(trigger.get("enable_low_balance_force_trigger", True)),
             balance_poll_interval_sec=max(5.0, float(trigger.get("balance_poll_interval_sec", 120.0))),
             require_conditions=max(1, int(trigger.get("require_conditions", 2))),
             position_value_threshold=float(liquidation.get("position_value_threshold", 3.0)),
@@ -78,6 +82,7 @@ class TotalLiquidationManager:
         self._cached_client: Optional[Any] = None
         self._next_client_retry_at: float = 0.0
         self._cached_free_balance: Optional[float] = None
+        self._low_balance_since: Optional[float] = None
         self._next_balance_probe_at: float = 0.0
         self._last_balance_probe_error: Optional[str] = None
         self._task_activity_markers: Dict[str, str] = {}
@@ -132,6 +137,12 @@ class TotalLiquidationManager:
             self._last_fill_activity_ts = max(self._last_fill_activity_ts, latest_fill_activity)
 
         free_balance = self._query_free_balance_usdc(autorun)
+        if free_balance is not None and free_balance < self.cfg.min_free_balance:
+            if self._low_balance_since is None:
+                self._low_balance_since = now
+        else:
+            self._low_balance_since = None
+
         startup_grace_sec = max(0.0, self.cfg.startup_grace_hours * 3600.0)
         in_startup_grace = (now - self._started_at_ts) < startup_grace_sec
 
@@ -155,6 +166,7 @@ class TotalLiquidationManager:
             "last_trade_activity_ts": self._last_trade_activity_ts,
             "last_fill_activity_ts": self._last_fill_activity_ts,
             "free_balance": free_balance,
+            "low_balance_since": self._low_balance_since,
             "in_startup_grace": in_startup_grace,
         }
 
@@ -191,6 +203,17 @@ class TotalLiquidationManager:
         free_balance = metrics.get("free_balance")
         if free_balance is not None and free_balance < self.cfg.min_free_balance:
             reasons.append(f"free_balance={free_balance:.4f}<min={self.cfg.min_free_balance:.4f}")
+
+        if self.cfg.enable_low_balance_force_trigger:
+            low_balance_since = metrics.get("low_balance_since")
+            if low_balance_since is not None:
+                low_balance_hours = (now - float(low_balance_since)) / 3600.0
+                if low_balance_hours >= self.cfg.low_balance_force_hours:
+                    reasons.append(
+                        f"low_balance_for={low_balance_hours:.2f}h"
+                        f">=force={self.cfg.low_balance_force_hours:.2f}h"
+                    )
+                    return True, reasons
 
         return len(reasons) >= self.cfg.require_conditions, reasons
 
