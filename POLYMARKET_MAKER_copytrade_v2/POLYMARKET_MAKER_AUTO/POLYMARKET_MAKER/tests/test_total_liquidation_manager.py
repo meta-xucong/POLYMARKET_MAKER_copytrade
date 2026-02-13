@@ -840,3 +840,15 @@ def test_fill_activity_requires_positive_quantity_for_filled_or_sold_markers():
         autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单状态 -> price=0.33 filled=1.2500 remaining=8.7500 status=LIVE"
         _, fill_ts_positive = mgr._collect_trade_activity_ts(autorun)
         assert fill_ts_positive > 0
+
+
+def test_fill_activity_does_not_use_plain_chinese_keywords_without_quantity():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[MAKER][BUY] 买入成交，等待后续同步")
+        _, fill_ts = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts == 0

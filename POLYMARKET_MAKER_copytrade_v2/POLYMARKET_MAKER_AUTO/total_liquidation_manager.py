@@ -90,12 +90,6 @@ class TotalLiquidationManager:
         "下单",
     )
 
-    _FILL_ACTIVITY_HINTS = (
-        "买入成交",
-        "卖出成交",
-        "成交",
-    )
-
     def _load_state(self) -> Dict[str, Any]:
         if not self.state_path.exists():
             return {}
@@ -237,22 +231,22 @@ class TotalLiquidationManager:
         return latest_trade, latest_fill
 
     def _line_has_real_fill_activity(self, normalized_line: str) -> bool:
-        """仅在明确出现正成交量时返回 True，避免 filled=0 / sold=0 误判。"""
+        """仅在显式出现正成交量字段时返回 True。"""
         if not normalized_line:
             return False
 
-        # 先处理显式数量字段：filled= / sold= 仅当数值 > 0 才算真实成交
+        # 严格口径：仅识别显式数量字段，且数值必须 > 0。
         for key in ("filled", "sold"):
             m = re.search(rf"\b{key}\s*=\s*([0-9]+(?:\.[0-9]+)?)", normalized_line)
-            if m is not None:
-                try:
-                    if float(m.group(1)) > 0:
-                        return True
-                except (TypeError, ValueError):
-                    pass
+            if m is None:
+                continue
+            try:
+                if float(m.group(1)) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
 
-        # 回退：中文成交语义（不含显式 0 数量时）
-        return any(hint in normalized_line for hint in self._FILL_ACTIVITY_HINTS)
+        return False
 
     def _precheck_liquidation_ready(self) -> Tuple[Optional[str], Optional[Any], Optional[set[str]]]:
         client = self._get_cached_client()
