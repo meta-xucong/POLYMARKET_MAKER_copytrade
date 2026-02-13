@@ -2422,7 +2422,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     context="exit-only",
                 )
             except Exception as exc:
-                print(f"[EXIT] IOC 清仓卖单失败: {exc}")
+                if _is_fak_no_match_error(exc):
+                    print(
+                        "[EXIT][WARN] IOC 清仓未成交：当前无可匹配买单，"
+                        "等待下一轮重试"
+                    )
+                else:
+                    print(f"[EXIT] IOC 清仓卖单失败: {exc}")
 
             # 5. 等待一段时间后再次检查
             time.sleep(RETRY_INTERVAL_SEC)
@@ -3566,7 +3572,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     context="force-exit",
                 )
             except Exception as exc:
-                print(f"[EXIT] IOC 清仓卖单失败: {exc}")
+                if _is_fak_no_match_error(exc):
+                    print(
+                        "[EXIT][WARN] IOC 清仓未成交：当前无可匹配买单，"
+                        "等待下一轮重试"
+                    )
+                else:
+                    print(f"[EXIT] IOC 清仓卖单失败: {exc}")
 
             # 5. 等待一段时间后再次检查
             time.sleep(RETRY_INTERVAL_SEC)
