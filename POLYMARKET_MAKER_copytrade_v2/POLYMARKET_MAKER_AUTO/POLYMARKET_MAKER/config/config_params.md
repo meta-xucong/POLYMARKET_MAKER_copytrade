@@ -65,7 +65,7 @@
 ```json
 "shock_guard": {
   "enabled": true,
-  "shock_window_sec": 90,
+  "shock_window_sec": 180,
   "shock_drop_pct": 0.1,
   "shock_velocity_pct_per_sec": null,
   "shock_abs_floor": 0.05,
@@ -80,7 +80,7 @@
 ```
 
 - `enabled: true`：启用大跌门禁。开启后，策略在“疑似快速下杀”时会先冻结买入，而不是立即抄底。
-- `shock_window_sec: 90`：用最近 90 秒作为急跌识别窗口。窗口越大，识别更稳但反应更慢。
+- `shock_window_sec: 180`：用最近 180 秒作为急跌识别窗口。窗口越大，识别更稳但反应更慢。
 - `shock_drop_pct: 0.1`：若窗口内价格从局部高点到低点跌幅达到 10%，判定为“shock”。
 - `shock_velocity_pct_per_sec: null`：不启用“每秒跌速”这一额外条件，仅按跌幅判定。
 - `shock_abs_floor: 0.05`：绝对低价地板线。价格低于/接近该区域时，会更偏向风险规避（避免在极低流动性区间接刀）。

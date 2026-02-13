@@ -4594,7 +4594,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if gate.retry_at_ts is not None:
                         defer_cooldown = max(gate.retry_at_ts - time.time(), defer_cooldown)
                     buy_cooldown_until = time.time() + max(defer_cooldown, 0.1)
-                    strategy.on_reject(f"shock deferred: {gate.reason}")
                     continue
                 if gate.decision == GateDecision.REJECT:
                     now_ts = time.time()
