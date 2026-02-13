@@ -70,6 +70,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "enable_pending_soft_eviction": True,
     "pending_soft_eviction_minutes": 45.0,
     "pending_soft_eviction_check_interval_sec": 300.0,
+    # 卡顿剔除（命中后会终止子进程并立即回填）
+    "price_cap_refill_stuck_minutes": 120.0,
+    "shock_refill_stuck_minutes": 45.0,
     # Shared WS 等待配置
     "shared_ws_max_pending_wait_sec": 45.0,
     "shared_ws_wait_poll_sec": 0.5,
@@ -585,6 +588,12 @@ class GlobalConfig:
     pending_soft_eviction_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
         "pending_soft_eviction_check_interval_sec"
     ]
+    price_cap_refill_stuck_minutes: float = DEFAULT_GLOBAL_CONFIG[
+        "price_cap_refill_stuck_minutes"
+    ]
+    shock_refill_stuck_minutes: float = DEFAULT_GLOBAL_CONFIG[
+        "shock_refill_stuck_minutes"
+    ]
     # Maker 子进程配置
     maker_poll_sec: float = 10.0  # 挂单轮询间隔（秒）
     maker_position_sync_interval: float = 60.0  # 仓位同步间隔（秒）
@@ -787,6 +796,18 @@ class GlobalConfig:
                     merged.get("pending_soft_eviction_check_interval_sec", 300.0),
                 )
             ),
+            price_cap_refill_stuck_minutes=float(
+                scheduler.get(
+                    "price_cap_refill_stuck_minutes",
+                    merged.get("price_cap_refill_stuck_minutes", 120.0),
+                )
+            ),
+            shock_refill_stuck_minutes=float(
+                scheduler.get(
+                    "shock_refill_stuck_minutes",
+                    merged.get("shock_refill_stuck_minutes", 45.0),
+                )
+            ),
             # Maker 子进程配置
             maker_poll_sec=float(
                 maker.get("poll_sec", merged.get("maker_poll_sec", 10.0))
@@ -878,6 +899,8 @@ class AutoRunManager:
         self._pending_first_seen: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
+        self._price_cap_stuck_since: Dict[str, float] = {}
+        self._shock_stuck_since: Dict[str, float] = {}
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
         self._handled_sell_signals: set[str] = set()
@@ -1687,8 +1710,11 @@ class AutoRunManager:
             rc = proc.poll()
             if rc is None:
                 task.status = "running"
-                task.last_heartbeat = time.time()
+                now = time.time()
+                task.last_heartbeat = now
                 self._update_log_excerpt(task)
+                if self._check_stuck_and_refill(task, now):
+                    continue
                 if self._log_indicates_market_end(task):
                     task.status = "ended"
                     task.no_restart = True
@@ -1705,7 +1731,84 @@ class AutoRunManager:
 
         self._purge_inactive_tasks()
 
+    def _check_stuck_and_refill(self, task: TopicTask, now: float) -> bool:
+        """检测长期卡顿话题：触发后终止并立即回填。"""
+        last_line = (task.log_excerpt.splitlines() or [""])[-1].strip()
+        lowered = last_line.lower()
+        topic_id = task.topic_id
+
+        price_cap_hit = (
+            "[maker][buy]" in lowered
+            and "已达到上限" in lowered
+            and "等待回落" in lowered
+        )
+        shock_stuck_hit = "[shock][buy][defer]" in lowered or "[shock][buy][reject]" in lowered
+
+        if not price_cap_hit:
+            self._price_cap_stuck_since.pop(topic_id, None)
+        if not shock_stuck_hit:
+            self._shock_stuck_since.pop(topic_id, None)
+
+        cap_limit_sec = max(0.0, float(self.config.price_cap_refill_stuck_minutes)) * 60.0
+        if price_cap_hit and cap_limit_sec > 0:
+            since = self._price_cap_stuck_since.setdefault(topic_id, now)
+            if now - since >= cap_limit_sec:
+                self._force_stuck_refill(task, "PRICE_CAP_STUCK", last_line, now - since)
+                return True
+
+        shock_limit_sec = max(0.0, float(self.config.shock_refill_stuck_minutes)) * 60.0
+        if shock_stuck_hit and shock_limit_sec > 0:
+            since = self._shock_stuck_since.setdefault(topic_id, now)
+            if now - since >= shock_limit_sec:
+                self._force_stuck_refill(task, "SHOCK_GUARD_STUCK", last_line, now - since)
+                return True
+        return False
+
+    def _force_stuck_refill(
+        self,
+        task: TopicTask,
+        exit_reason: str,
+        last_line: str,
+        stuck_seconds: float,
+    ) -> None:
+        """复用现有回填机制：记录退出原因 + 终止进程 + 立即入队。"""
+        token_id = task.topic_id
+        self._append_exit_token_record(
+            token_id,
+            exit_reason,
+            exit_data={
+                "stuck_seconds": stuck_seconds,
+                "stuck_minutes": round(stuck_seconds / 60.0, 2),
+                "last_line": last_line,
+                "source": "autorun_stall_watchdog",
+            },
+            refillable=True,
+        )
+
+        # 立即回填（避免等待 refill_cooldown）
+        self._refill_retry_counts[token_id] = self._refill_retry_counts.get(token_id, 0) + 1
+        retry_count = self._refill_retry_counts[token_id]
+        self._refilled_tokens.add(token_id)
+        detail = self.topic_details.setdefault(token_id, {})
+        detail["refill_retry_count"] = retry_count
+        detail["refill_exit_reason"] = exit_reason
+        detail.pop("resume_state", None)
+        detail.pop("resume_drop_pct", None)
+        self._enqueue_pending_topic(token_id)
+
+        task.no_restart = True
+        task.end_reason = exit_reason.lower()
+        self._terminate_task(task, reason=f"{exit_reason} -> refill")
+        self._price_cap_stuck_since.pop(token_id, None)
+        self._shock_stuck_since.pop(token_id, None)
+        print(
+            f"[REFILL][STUCK] token={token_id[:20]}... reason={exit_reason} "
+            f"stuck={stuck_seconds/60.0:.1f}m retry={retry_count}/{self.config.max_refill_retries}"
+        )
+
     def _handle_process_exit(self, task: TopicTask, rc: int) -> None:
+        self._price_cap_stuck_since.pop(task.topic_id, None)
+        self._shock_stuck_since.pop(task.topic_id, None)
         task.process = None
         if task.status not in {"stopped", "exited", "error", "ended"}:
             task.status = "exited" if rc == 0 else "error"
