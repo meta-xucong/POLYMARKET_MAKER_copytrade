@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,6 +70,7 @@ class TotalLiquidationManager:
 
         self._idle_since: Optional[float] = None
         self._last_trade_activity_ts: float = time.time()
+        self._last_fill_activity_ts: float = time.time()
 
         self._state = self._load_state()
         self._started_at_ts: float = time.time()
@@ -83,12 +85,14 @@ class TotalLiquidationManager:
     _TRADE_ACTIVITY_HINTS = (
         "[maker][buy] 挂单",
         "[maker][sell] 挂单",
-        "买入成交",
-        "卖出成交",
-        "filled",
         "挂单成功",
         "撤单",
         "下单",
+    )
+
+    _FILL_ACTIVITY_HINTS = (
+        "买入成交",
+        "卖出成交",
         "成交",
     )
 
@@ -127,16 +131,18 @@ class TotalLiquidationManager:
         else:
             self._idle_since = None
 
-        latest_trade_activity = self._collect_trade_activity_ts(autorun)
+        latest_trade_activity, latest_fill_activity = self._collect_trade_activity_ts(autorun)
         if latest_trade_activity > 0:
             self._last_trade_activity_ts = max(self._last_trade_activity_ts, latest_trade_activity)
+        if latest_fill_activity > 0:
+            self._last_fill_activity_ts = max(self._last_fill_activity_ts, latest_fill_activity)
 
         free_balance = self._query_free_balance_usdc(autorun)
         startup_grace_sec = max(0.0, self.cfg.startup_grace_hours * 3600.0)
         in_startup_grace = (now - self._started_at_ts) < startup_grace_sec
 
         idle_minutes = ((now - float(self._idle_since)) / 60.0) if self._idle_since is not None else 0.0
-        no_trade_minutes = (now - float(self._last_trade_activity_ts or now)) / 60.0
+        no_trade_minutes = (now - float(self._last_fill_activity_ts or now)) / 60.0
         bal_text = "NA" if free_balance is None else f"{float(free_balance):.4f}"
         print(
             "[GLB_LIQ][METRICS] "
@@ -153,6 +159,7 @@ class TotalLiquidationManager:
             "idle_ratio": idle_ratio,
             "idle_since": self._idle_since,
             "last_trade_activity_ts": self._last_trade_activity_ts,
+            "last_fill_activity_ts": self._last_fill_activity_ts,
             "free_balance": free_balance,
             "in_startup_grace": in_startup_grace,
         }
@@ -183,7 +190,7 @@ class TotalLiquidationManager:
                     f"idle_slots>={self.cfg.idle_slot_ratio_threshold:.2f} for {idle_minutes:.1f}m"
                 )
 
-        no_trade_minutes = (now - float(metrics.get("last_trade_activity_ts") or now)) / 60.0
+        no_trade_minutes = (now - float(metrics.get("last_fill_activity_ts") or now)) / 60.0
         if no_trade_minutes >= self.cfg.no_trade_duration_minutes:
             reasons.append(f"no_trade_for={no_trade_minutes:.1f}m")
 
@@ -193,8 +200,9 @@ class TotalLiquidationManager:
 
         return len(reasons) >= self.cfg.require_conditions, reasons
 
-    def _collect_trade_activity_ts(self, autorun: Any) -> float:
-        latest = 0.0
+    def _collect_trade_activity_ts(self, autorun: Any) -> Tuple[float, float]:
+        latest_trade = 0.0
+        latest_fill = 0.0
         active_ids: set[str] = set()
 
         for topic_id, task in (getattr(autorun, "tasks", {}) or {}).items():
@@ -218,13 +226,33 @@ class TotalLiquidationManager:
 
             normalized = last_line.lower()
             if any(hint in normalized for hint in self._TRADE_ACTIVITY_HINTS):
-                latest = max(latest, time.time())
+                latest_trade = max(latest_trade, time.time())
+            if self._line_has_real_fill_activity(normalized):
+                latest_fill = max(latest_fill, time.time())
 
         stale = [tid for tid in self._task_activity_markers.keys() if tid not in active_ids]
         for tid in stale:
             self._task_activity_markers.pop(tid, None)
 
-        return latest
+        return latest_trade, latest_fill
+
+    def _line_has_real_fill_activity(self, normalized_line: str) -> bool:
+        """仅在明确出现正成交量时返回 True，避免 filled=0 / sold=0 误判。"""
+        if not normalized_line:
+            return False
+
+        # 先处理显式数量字段：filled= / sold= 仅当数值 > 0 才算真实成交
+        for key in ("filled", "sold"):
+            m = re.search(rf"\b{key}\s*=\s*([0-9]+(?:\.[0-9]+)?)", normalized_line)
+            if m is not None:
+                try:
+                    if float(m.group(1)) > 0:
+                        return True
+                except (TypeError, ValueError):
+                    pass
+
+        # 回退：中文成交语义（不含显式 0 数量时）
+        return any(hint in normalized_line for hint in self._FILL_ACTIVITY_HINTS)
 
     def _precheck_liquidation_ready(self) -> Tuple[Optional[str], Optional[Any], Optional[set[str]]]:
         client = self._get_cached_client()
