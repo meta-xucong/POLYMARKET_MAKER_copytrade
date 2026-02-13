@@ -99,6 +99,7 @@ def test_trigger_with_two_conditions_and_interval_guard():
 
         mgr._idle_since = time.time() - 120
         mgr._last_trade_activity_ts = time.time() - 120
+        mgr._last_fill_activity_ts = time.time() - 120
         metrics = mgr.update_metrics(autorun)
         ok, reasons = mgr.should_trigger(metrics)
         assert ok is True
@@ -280,13 +281,15 @@ def test_trade_activity_refreshes_even_if_last_line_text_repeats():
         task = autorun.tasks["0"]
         task.last_log_excerpt_ts = 100.0
 
-        t1 = mgr._collect_trade_activity_ts(autorun)
-        assert t1 > 0
+        t1_trade, t1_fill = mgr._collect_trade_activity_ts(autorun)
+        assert t1_trade > 0
+        assert t1_fill == 0
 
         # 文本不变，但时间戳更新，说明是新一轮日志刷新，应被视为活动
         task.last_log_excerpt_ts = 101.0
-        t2 = mgr._collect_trade_activity_ts(autorun)
-        assert t2 > 0
+        t2_trade, t2_fill = mgr._collect_trade_activity_ts(autorun)
+        assert t2_trade > 0
+        assert t2_fill == 0
 
 
 def test_trade_activity_is_based_on_order_behavior_not_ws_updates():
@@ -301,12 +304,13 @@ def test_trade_activity_is_based_on_order_behavior_not_ws_updates():
         # 先让无交易活动超时
         autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[DIAG] no-op")
         mgr._last_trade_activity_ts = time.time() - 120
+        mgr._last_fill_activity_ts = time.time() - 120
         metrics = mgr.update_metrics(autorun)
         _, reasons = mgr.should_trigger(metrics)
         assert any("no_trade_for=" in r for r in reasons)
 
-        # 出现真实下单行为后，no_trade 应清零
-        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单 -> price=0.33 qty=5.0000"
+        # 出现真实成交行为后，no_trade 应清零
+        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单状态 -> price=0.33 filled=1.0000 remaining=4.0000 status=LIVE"
         metrics2 = mgr.update_metrics(autorun)
         _, reasons2 = mgr.should_trigger(metrics2)
         assert all("no_trade_for=" not in r for r in reasons2)
@@ -814,3 +818,37 @@ def test_place_sell_ioc_non_fak_error_raises_immediately():
             raised = True
             assert "signature expired" in str(exc)
         assert raised is True
+
+
+def test_fill_activity_requires_positive_quantity_for_filled_or_sold_markers():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[MAKER][BUY] 挂单状态 -> price=0.33 filled=0.0000 remaining=10.0000 status=LIVE")
+        _, fill_ts_zero = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts_zero == 0
+
+        autorun.tasks["0"].last_log_excerpt_ts = 1.0
+        autorun.tasks["0"].log_excerpt = "[MAKER][SELL] 挂单状态 -> price=0.95 sold=0.00 remaining=10.00 status=LIVE"
+        _, fill_ts_sold_zero = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts_sold_zero == 0
+
+        autorun.tasks["0"].last_log_excerpt_ts = 2.0
+        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单状态 -> price=0.33 filled=1.2500 remaining=8.7500 status=LIVE"
+        _, fill_ts_positive = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts_positive > 0
+
+
+def test_fill_activity_does_not_use_plain_chinese_keywords_without_quantity():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[MAKER][BUY] 买入成交，等待后续同步")
+        _, fill_ts = mgr._collect_trade_activity_ts(autorun)
+        assert fill_ts == 0
