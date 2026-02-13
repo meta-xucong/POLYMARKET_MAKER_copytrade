@@ -95,6 +95,8 @@ DEFAULT_GLOBAL_CONFIG = {
             "startup_grace_hours": 6.0,
             "no_trade_duration_minutes": 180.0,
             "min_free_balance": 20.0,
+            "low_balance_force_hours": 6.0,
+            "enable_low_balance_force_trigger": True,
             "balance_poll_interval_sec": 120.0,
             "require_conditions": 2,
         },

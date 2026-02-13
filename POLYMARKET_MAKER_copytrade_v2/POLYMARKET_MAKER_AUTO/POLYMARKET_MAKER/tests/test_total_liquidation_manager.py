@@ -59,6 +59,8 @@ def _build_cfg(tmp: Path, enable: bool = True):
                 "startup_grace_hours": 6,
                 "no_trade_duration_minutes": 1,
                 "min_free_balance": 20,
+                "low_balance_force_hours": 6,
+                "enable_low_balance_force_trigger": True,
                 "require_conditions": 2,
             },
             "liquidation": {
@@ -109,6 +111,65 @@ def test_trigger_with_two_conditions_and_interval_guard():
         ok2, _ = mgr.should_trigger(metrics)
         assert ok2 is False
 
+
+
+
+def test_force_trigger_when_low_balance_persists_long_enough():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        _install_fake_clob_modules()
+        autorun = _Autorun(cfg, running_tasks=10)
+
+        mgr.cfg.startup_grace_hours = 0
+        mgr.cfg.no_trade_duration_minutes = 99999
+        mgr.cfg.idle_slot_duration_minutes = 99999
+        mgr.cfg.require_conditions = 2
+        mgr.cfg.low_balance_force_hours = 6
+        mgr._cached_free_balance = 10.0
+        mgr._next_balance_probe_at = time.time() + 60
+
+        metrics = mgr.update_metrics(autorun)
+        assert metrics["low_balance_since"] is not None
+
+        mgr._low_balance_since = time.time() - (6 * 3600 + 10)
+        metrics = mgr.update_metrics(autorun)
+        ok, reasons = mgr.should_trigger(metrics)
+
+        assert ok is True
+        assert any("low_balance_for=" in r for r in reasons)
+
+
+def test_force_trigger_resets_after_balance_recovers():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        _install_fake_clob_modules()
+        autorun = _Autorun(cfg, running_tasks=10)
+
+        mgr.cfg.startup_grace_hours = 0
+        mgr.cfg.no_trade_duration_minutes = 99999
+        mgr.cfg.idle_slot_duration_minutes = 99999
+        mgr.cfg.require_conditions = 2
+        mgr.cfg.low_balance_force_hours = 6
+
+        mgr._cached_free_balance = 10.0
+        mgr._next_balance_probe_at = time.time() + 60
+        metrics = mgr.update_metrics(autorun)
+        assert metrics["low_balance_since"] is not None
+
+        mgr._cached_free_balance = 100.0
+        mgr._next_balance_probe_at = time.time() + 60
+        metrics = mgr.update_metrics(autorun)
+        assert metrics["low_balance_since"] is None
+
+        ok, reasons = mgr.should_trigger(metrics)
+        assert ok is False
+        assert not any("low_balance_for=" in r for r in reasons)
 
 def test_hard_reset_preserves_copytrade_config_and_clears_state_files():
     with tempfile.TemporaryDirectory() as td:
