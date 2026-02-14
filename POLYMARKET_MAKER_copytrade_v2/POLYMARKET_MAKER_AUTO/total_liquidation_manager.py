@@ -316,7 +316,6 @@ class TotalLiquidationManager:
             if hasattr(autorun, "_suspend_ws_updates"):
                 autorun._suspend_ws_updates("total-liquidation")
 
-            autorun._stop_ws_aggregator()
             autorun._cleanup_all_tasks()
             wait_timeout_sec = max(30.0, self.cfg.task_stop_timeout_minutes * 60.0)
             tasks_stopped = self._wait_for_tasks_stopped(autorun, timeout_sec=wait_timeout_sec)
@@ -738,6 +737,21 @@ class TotalLiquidationManager:
             ask = 0.0
         return bid, ask
 
+    def _is_quote_fresh(self, autorun: Any, token_id: str, max_age_sec: float = 30.0) -> bool:
+        try:
+            with autorun._ws_cache_lock:
+                cached = dict(autorun._ws_cache.get(token_id) or {})
+        except Exception:
+            return False
+        updated_at = cached.get("updated_at")
+        try:
+            ts = float(updated_at)
+        except (TypeError, ValueError):
+            return False
+        if ts <= 0:
+            return False
+        return (time.time() - ts) <= max(1.0, float(max_age_sec))
+
     def _compute_taker_price(self, bid: float, ask: float) -> float:
         base = bid if bid > 0 else ask if ask > 0 else 0.01
         bps = max(0.0, float(self.cfg.taker_slippage_bps))
@@ -831,7 +845,10 @@ class TotalLiquidationManager:
             try:
                 spread = (ask - bid) if (ask > 0 and bid > 0 and ask >= bid) else 0.0
 
-                if spread > self.cfg.spread_threshold:
+                quote_fresh = self._is_quote_fresh(autorun, token_id)
+                can_use_maker = spread > self.cfg.spread_threshold and ask > 0 and quote_fresh
+
+                if can_use_maker:
                     maker_count += 1
 
                     def _best_ask_fn() -> Optional[float]:
@@ -863,6 +880,12 @@ class TotalLiquidationManager:
                                 remain,
                             )
                 else:
+                    if spread > self.cfg.spread_threshold and not can_use_maker:
+                        quote_state = "fresh" if quote_fresh else "stale"
+                        print(
+                            f"[GLB_LIQ][QUOTE] token={token_id} spread={spread:.4f} 但报价{quote_state}/ask无效，"
+                            "跳过 Maker，直接 Taker IOC"
+                        )
                     taker_count += 1
                     self._place_sell_ioc(client, token_id, self._compute_taker_price(bid=bid, ask=ask), size)
 
