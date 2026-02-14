@@ -197,7 +197,17 @@ def test_hard_reset_preserves_copytrade_config_and_clears_state_files():
 
         assert (copytrade_dir / "copytrade_config.json").exists()
         assert not (cfg.log_dir / "a.log").exists()
-        assert not (cfg.data_dir / "autorun_status.json").exists()
+        assert (cfg.data_dir / "autorun_status.json").exists()
+
+        handled_payload = json.loads((cfg.data_dir / "handled_topics.json").read_text(encoding="utf-8"))
+        assert handled_payload.get("topics") == []
+
+        runtime_payload = json.loads((cfg.data_dir / "autorun_status.json").read_text(encoding="utf-8"))
+        assert runtime_payload.get("handled_topics") == []
+        assert runtime_payload.get("pending_topics") == []
+
+        liq_state_payload = json.loads((cfg.data_dir / "total_liquidation_state.json").read_text(encoding="utf-8"))
+        assert liq_state_payload == {}
 
         tokens_payload = json.loads((copytrade_dir / "tokens_from_copytrade.json").read_text(encoding="utf-8"))
         assert tokens_payload.get("tokens") == []
@@ -913,3 +923,139 @@ def test_fill_activity_does_not_use_plain_chinese_keywords_without_quantity():
         autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[MAKER][BUY] 买入成交，等待后续同步")
         _, fill_ts = mgr._collect_trade_activity_ts(autorun)
         assert fill_ts == 0
+
+
+def test_execute_wait_timeout_uses_liquidation_config_minutes():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        cfg.total_liquidation["liquidation"]["task_stop_timeout_minutes"] = 4
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+        mgr._precheck_liquidation_ready = lambda: (None, object(), {"A"})
+
+        observed = {"timeout": None}
+
+        def _fake_wait(_autorun, timeout_sec=0.0):
+            observed["timeout"] = timeout_sec
+            return False
+
+        mgr._wait_for_tasks_stopped = _fake_wait
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = []
+                self.pending_exit_topics = []
+                self.stop_event = _Evt()
+
+            def _stop_ws_aggregator(self):
+                return None
+
+            def _cleanup_all_tasks(self):
+                return None
+
+        result = mgr.execute(_Run(), ["cond_a", "cond_b"])
+        assert result.get("aborted") is True
+        assert observed["timeout"] == 240.0
+
+
+def test_fetch_positions_accepts_official_list_payload():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        os.environ["POLY_DATA_ADDRESS"] = "0x1111111111111111111111111111111111111111"
+
+        class _Resp:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def read(self):
+                return json.dumps(self._payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        calls = {"n": 0}
+
+        def _fake_urlopen(req, timeout=0):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _Resp([{"asset": "A", "size": "1.0"}])
+            return _Resp([])
+
+        import total_liquidation_manager as tlm
+        old_urlopen = tlm.urllib.request.urlopen
+        tlm.urllib.request.urlopen = _fake_urlopen
+        try:
+            rows = mgr._fetch_positions()
+        finally:
+            tlm.urllib.request.urlopen = old_urlopen
+
+        assert len(rows) == 1
+        assert mgr._last_positions_fetch_error is None
+
+
+
+
+def test_execute_success_marks_clean_bootstrap_before_stop():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+        mgr.cfg.hard_reset_enabled = False
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = []
+                self.pending_exit_topics = []
+                self.stop_event = _Evt()
+                self.marked = False
+
+            def _stop_ws_aggregator(self):
+                return None
+
+            def _cleanup_all_tasks(self):
+                return None
+
+            def _mark_clean_bootstrap_after_liquidation(self):
+                self.marked = True
+
+        autorun = _Run()
+        mgr._precheck_liquidation_ready = lambda: (None, object(), {"A"})
+        mgr._liquidate_positions = lambda _a, **_kw: {
+            "liquidated": 1,
+            "maker_count": 0,
+            "taker_count": 1,
+            "errors": [],
+        }
+
+        result = mgr.execute(autorun, ["cond_a", "cond_b"])
+
+        assert result.get("aborted") is None
+        assert autorun.marked is True
+        assert autorun.stop_event.called is True
