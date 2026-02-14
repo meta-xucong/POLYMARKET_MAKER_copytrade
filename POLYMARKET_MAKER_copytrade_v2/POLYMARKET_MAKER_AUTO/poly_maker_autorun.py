@@ -1065,7 +1065,9 @@ class AutoRunManager:
                     current_count = getattr(self, '_ws_event_count', 0)
 
                     # 检查数据流是否停滞（区分“连接异常”与“仅无事件”）
-                    ws_connected = bool(self._ws_client and self._ws_client.is_connected())
+                    with self._ws_client_lock:
+                        client = self._ws_client
+                    ws_connected = bool(client and client.is_connected())
                     if current_count == last_event_count and self._ws_token_ids:
                         level = "INFO" if ws_connected else "WARN"
                         reason = "连接正常但全局无新增事件" if ws_connected else "连接异常或数据流停滞"

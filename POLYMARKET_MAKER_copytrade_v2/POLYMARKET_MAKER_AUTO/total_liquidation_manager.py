@@ -32,6 +32,7 @@ class LiquidationConfig:
     hard_reset_enabled: bool = True
     remove_logs: bool = True
     remove_json_state: bool = True
+    task_stop_timeout_minutes: float = 5.0
 
     @classmethod
     def from_global_config(cls, cfg: Any) -> "LiquidationConfig":
@@ -58,6 +59,7 @@ class LiquidationConfig:
             hard_reset_enabled=bool(reset.get("hard_reset_enabled", True)),
             remove_logs=bool(reset.get("remove_logs", True)),
             remove_json_state=bool(reset.get("remove_json_state", True)),
+            task_stop_timeout_minutes=max(0.5, float(liquidation.get("task_stop_timeout_minutes", 5.0))),
         )
 
 
@@ -316,9 +318,10 @@ class TotalLiquidationManager:
 
             autorun._stop_ws_aggregator()
             autorun._cleanup_all_tasks()
-            tasks_stopped = self._wait_for_tasks_stopped(autorun, timeout_sec=30.0)
+            wait_timeout_sec = max(30.0, self.cfg.task_stop_timeout_minutes * 60.0)
+            tasks_stopped = self._wait_for_tasks_stopped(autorun, timeout_sec=wait_timeout_sec)
             if not tasks_stopped:
-                msg = "timeout waiting tasks to stop"
+                msg = f"timeout waiting tasks to stop ({wait_timeout_sec:.0f}s)"
                 result.update({"errors": [msg], "aborted": True})
                 now = time.time()
                 self._save_state(
@@ -565,7 +568,7 @@ class TotalLiquidationManager:
         return self._cached_free_balance
 
     def _resolve_wallet(self) -> Optional[str]:
-        for key in ("POLY_DATA_ADDRESS", "POLY_FUNDER", "POLY_WALLET", "POLY_ADDRESS"):
+        for key in ("POLY_DATA_ADDRESS", "POLY_FUNDER"):
             cand = os.getenv(key)
             if cand and str(cand).strip():
                 return str(cand).strip()
@@ -583,25 +586,38 @@ class TotalLiquidationManager:
         self._last_positions_fetch_error = None
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json",
-            "Origin": "https://polymarket.com",
+            "User-Agent": "POLYMARKET_MAKER_AUTO/1.0 (+data-api-positions)",
         }
 
         for attempt in range(3):
             try:
+                cursor = dict(params)
                 while True:
-                    query = urllib.parse.urlencode(params)
+                    query = urllib.parse.urlencode(cursor)
                     req = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
                     with urllib.request.urlopen(req, timeout=20) as resp:
                         payload = json.loads(resp.read().decode("utf-8"))
-                    items = payload if isinstance(payload, list) else payload.get("data")
-                    if not isinstance(items, list) or not items:
+
+                    if isinstance(payload, list):
+                        items = payload
+                    elif isinstance(payload, dict):
+                        items = payload.get("data")
+                    else:
+                        items = None
+
+                    if not isinstance(items, list):
+                        self._last_positions_fetch_error = "positions response schema invalid"
+                        return []
+
+                    if not items:
                         break
+
                     out.extend([x for x in items if isinstance(x, dict)])
-                    if len(items) < int(params["limit"]):
+                    if len(items) < int(cursor["limit"]):
                         break
-                    params["offset"] = int(params["offset"]) + len(items)
+                    cursor["offset"] = int(cursor["offset"]) + len(items)
+
                 return out
             except Exception as exc:
                 self._last_positions_fetch_error = str(exc)
@@ -610,7 +626,7 @@ class TotalLiquidationManager:
                     continue
 
         print(f"[GLB_LIQ][WARN] 拉取持仓失败: {self._last_positions_fetch_error}")
-        return out
+        return []
 
     @staticmethod
     def _extract_token(entry: Dict[str, Any]) -> Optional[str]:
