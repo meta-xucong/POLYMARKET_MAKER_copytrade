@@ -7,13 +7,15 @@ cd /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade
 sudo bash POLYMARKET_MAKER_copytrade_v2/systemd/install_services.sh \
   /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade \
   root \
-  /root/.pyenv/versions/poly312/bin/python
+  /root/.pyenv/versions/poly312/bin/python \
+  /root/.polymarket.env
 ```
 
 参数说明：
 1. `APP_ROOT`：仓库根目录。
 2. `RUN_USER`：systemd 运行用户（默认 `root`）。
 3. `PYTHON_BIN`：python 绝对路径。
+4. `ENV_FILE`：环境变量文件路径（支持 `export KEY=VALUE` 格式，默认 `/root/.polymarket.env`）。
 
 ## 常用命令
 
@@ -63,19 +65,20 @@ sudo bash POLYMARKET_MAKER_copytrade_v2/systemd/install_services.sh \
 systemd 默认不会继承你在 shell/screen 里的环境变量。若缺失 `POLY_KEY` / `POLY_FUNDER`，会出现：
 - `error_rest: 'POLY_KEY'`
 
-模板已支持读取：`__APP_ROOT__/POLYMARKET_MAKER_copytrade_v2/.env`。
+模板已改为 `bash -lc 'source ENV_FILE'` 模式，兼容你当前使用的：
+- `~/.polymarket.env`（文件内是 `export POLY_KEY=...` 这种写法）
 
-请创建（或更新）该文件，例如：
+请确认该文件存在并可读，例如：
 
 ```bash
-cat > /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade/POLYMARKET_MAKER_copytrade_v2/.env <<'EOF'
+cat > /root/.polymarket.env <<'EOF'
 POLY_KEY=0x你的私钥
 POLY_FUNDER=0x你的资金地址
 POLY_API_KEY=你的apiKey
 POLY_API_SECRET=你的apiSecret
 POLY_API_PASSPHRASE=你的apiPassphrase
 EOF
-chmod 600 /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade/POLYMARKET_MAKER_copytrade_v2/.env
+chmod 600 /root/.polymarket.env
 ```
 
 然后重新安装/重启服务：
@@ -85,7 +88,8 @@ cd /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade
 sudo bash POLYMARKET_MAKER_copytrade_v2/systemd/install_services.sh \
   /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade \
   root \
-  /root/.pyenv/versions/poly312/bin/python
+  /root/.pyenv/versions/poly312/bin/python \
+  /root/.polymarket.env
 ```
 
 ## 关于路径是否是根因
@@ -95,4 +99,4 @@ sudo bash POLYMARKET_MAKER_copytrade_v2/systemd/install_services.sh \
 
 本次错误的直接原因是：
 1. `Volatility_arbitrage_main_ws` 缺少 `get_client` 导出（已在代码中补齐兼容函数）。
-2. systemd 环境缺少 `POLY_KEY` 等变量（通过 `.env + EnvironmentFile` 解决）。
+2. systemd 环境缺少 `POLY_KEY` 等变量（通过 `source ~/.polymarket.env` 解决）。
