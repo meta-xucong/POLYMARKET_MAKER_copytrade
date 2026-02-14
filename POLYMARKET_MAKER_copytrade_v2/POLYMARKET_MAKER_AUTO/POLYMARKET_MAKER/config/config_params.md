@@ -133,6 +133,7 @@
 | `trigger.min_free_balance` | 可用 USDC 余额下限阈值。 | 浮点 | `20` |
 | `trigger.balance_poll_interval_sec` | 余额采样间隔。 | 浮点（秒） | `120` |
 | `trigger.require_conditions` | 触发所需命中条件数（3 选 N）。 | 整数 | `2` |
+| `liquidation.token_scope_mode` | 总清仓范围模式：`copytrade`=仅清仓 copytrade 记录 token；`all_positions`=清仓全部持仓 token。 | 枚举字符串 | `copytrade` |
 | `liquidation.position_value_threshold` | 仅清仓价值不低于该值的仓位。 | 浮点 | `3` |
 | `liquidation.spread_threshold` | 点差阈值：大于该值优先 maker，小于等于该值走 taker。 | 浮点 | `0.01` |
 | `liquidation.maker_timeout_minutes` | maker 清仓超时，超时后回退 taker。 | 浮点（分钟） | `20` |
@@ -145,6 +146,25 @@
 - 30 bps = 0.30%
 - 若 `best_bid=0.60`，则 taker 卖出保护价约为 `0.60 * (1 - 0.003) = 0.5982`
 - 该值越大，越容易成交，但均价可能更差。
+
+`token_scope_mode` 例子：
+- `copytrade`：只会清仓 copytrade 文件里出现过的 token（更保守，避免误清其他策略持仓）。
+- `all_positions`：会清仓当前账户全部持仓 token（紧急风控场景推荐）。
+
+`global_config.json` 配置示例：
+
+```json
+"total_liquidation": {
+  "enable_total_liquidation": true,
+  "liquidation": {
+    "token_scope_mode": "all_positions",
+    "position_value_threshold": 3.0,
+    "spread_threshold": 0.01,
+    "maker_timeout_minutes": 30.0,
+    "taker_slippage_bps": 30.0
+  }
+}
+```
 
 ### 2.3 `maker` 子进程参数
 
