@@ -17,7 +17,7 @@
         "min_free_balance": 20.0,
         "require_conditions": 2,
         "balance_poll_interval_sec": 600.0,
-        "startup_grace_hours": 6.0
+        "startup_grace_hours": 4.0
       },
       "liquidation": {
         "token_scope_mode": "all_positions",
