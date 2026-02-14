@@ -17,10 +17,10 @@
         "min_free_balance": 20.0,
         "require_conditions": 2,
         "balance_poll_interval_sec": 600.0,
-        "startup_grace_hours": 6.0
+        "startup_grace_hours": 4.0
       },
       "liquidation": {
-        "token_scope_mode": "copytrade",
+        "token_scope_mode": "all_positions",
         "position_value_threshold": 3.0,
         "spread_threshold": 0.01,
         "maker_timeout_minutes": 30.0,
