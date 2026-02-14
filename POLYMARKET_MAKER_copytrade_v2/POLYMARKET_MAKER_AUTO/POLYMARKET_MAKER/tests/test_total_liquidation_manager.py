@@ -759,6 +759,104 @@ def test_execute_uses_prechecked_scope_without_reloading():
         assert autorun.stop_event.called is True
 
 
+def test_execute_liquidation_does_not_stop_ws_aggregator():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+        mgr._precheck_liquidation_ready = lambda: (None, object(), {"A"})
+        mgr._liquidate_positions = lambda _a, **_kw: {
+            "liquidated": 0,
+            "maker_count": 0,
+            "taker_count": 0,
+            "errors": ["dry run"],
+            "aborted": True,
+        }
+
+        touched = {"stop_ws": 0, "cleanup": 0, "suspend": 0, "resume": 0}
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = ["x"]
+                self.pending_exit_topics = ["y"]
+                self.stop_event = _Evt()
+
+            def _stop_ws_aggregator(self):
+                touched["stop_ws"] += 1
+
+            def _cleanup_all_tasks(self):
+                touched["cleanup"] += 1
+
+            def _suspend_ws_updates(self, _reason=""):
+                touched["suspend"] += 1
+
+            def _resume_ws_updates(self, _reason=""):
+                touched["resume"] += 1
+
+        autorun = _Run()
+        result = mgr.execute(autorun, ["cond_a", "cond_b"])
+
+        assert result.get("aborted") is True
+        assert touched["stop_ws"] == 0
+        assert touched["cleanup"] == 1
+        assert touched["suspend"] == 1
+        assert touched["resume"] == 1
+
+
+def test_liquidation_uses_taker_when_quote_stale_even_if_spread_wide():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+
+        # 若误走 Maker 分支，测试应失败
+        fake_mod = types.ModuleType("maker_execution")
+        fake_mod.maker_sell_follow_ask_with_floor_wait = lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("maker path should not be used for stale quote")
+        )
+        sys.modules["maker_execution"] = fake_mod
+
+        mgr._fetch_positions = lambda: [{"token_id": "A", "size": 10, "price": 0.5}]
+        mgr._load_copytrade_token_scope = lambda: {"A"}
+
+        taker_calls = []
+        mgr._place_sell_ioc = lambda client, token_id, price, size: taker_calls.append((token_id, price, size)) or {}
+
+        class _Client:
+            pass
+
+        mgr._cached_client = _Client()
+
+        autorun = _Autorun(cfg, running_tasks=0)
+        # 报价存在但已过期（总清仓里 WS 通常已停止）
+        autorun._ws_cache = {
+            "A": {
+                "best_bid": 0.4,
+                "best_ask": 0.8,
+                "updated_at": time.time() - 300,
+            }
+        }
+
+        result = mgr._liquidate_positions(autorun)
+        assert result["liquidated"] == 1
+        assert result["maker_count"] == 0
+        assert result["taker_count"] == 1
+        assert len(taker_calls) == 1
+
+
 def test_should_trigger_fallback_startup_grace_when_metric_missing():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=True)
@@ -998,4 +1096,3 @@ def test_fetch_positions_accepts_official_list_payload():
 
         assert len(rows) == 1
         assert mgr._last_positions_fetch_error is None
-

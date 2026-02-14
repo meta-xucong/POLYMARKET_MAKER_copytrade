@@ -1053,7 +1053,9 @@ class AutoRunManager:
                 desired = self._desired_ws_token_ids()
                 if desired != self._ws_token_ids:
                     if self._ws_updates_suspended:
-                        self._ws_token_ids = desired
+                        # 总清仓等场景下仅暂停“订阅变更”，不应覆盖当前 token 集。
+                        # 若此时把 _ws_token_ids 改成空集合，会导致 on_event 过滤掉全部行情。
+                        pass
                     else:
                         self._restart_ws_subscription(desired)
                 self._flush_ws_cache_if_needed()
@@ -1647,8 +1649,8 @@ class AutoRunManager:
 
             # 分级阈值检查（秒）
             THRESHOLD_WARNING = 1800  # 30分钟 - 警告
-            THRESHOLD_CLEANUP_DEFAULT = 1800  # 默认30分钟清理
-            THRESHOLD_CLEANUP_EXTENDED = 3600  # 白名单续命后60分钟清理
+            THRESHOLD_CLEANUP_DEFAULT = 1800  # 默认30分钟清理（仅对已退订token生效）
+            THRESHOLD_CLEANUP_EXTENDED = 3600  # 白名单续命后60分钟清理（仅对已退订token生效）
             RECOVERY_GRACE_WINDOW = 1800  # 最近30分钟内有恢复信号可续命
 
             now = time.time()
@@ -1681,7 +1683,11 @@ class AutoRunManager:
                     closed_market_tokens.append((token_id, age))
                     cleanup_tokens.append((token_id, age, "市场已关闭"))
                 elif age > cleanup_threshold:
-                    if has_recent_recovery:
+                    # WS 市场频道是事件驱动模型，长时间无事件并不代表 token 无效；
+                    # 若 token 仍在订阅集合中，仅告警，不应从缓存删除，否则策略将持续拿到 None。
+                    if token_id in self._ws_token_ids:
+                        warning_tokens.append((token_id, age))
+                    elif has_recent_recovery:
                         cleanup_tokens.append((token_id, age, f"{age/60:.0f}分钟无更新（恢复白名单已续命至60分钟）"))
                     else:
                         cleanup_tokens.append((token_id, age, f"{age/60:.0f}分钟无更新"))
@@ -1711,7 +1717,7 @@ class AutoRunManager:
                 self._last_warning_log = 0
 
             if warning_tokens and (now - self._last_warning_log >= 60):
-                print(f"[HEALTH] {len(warning_tokens)} 个token数据超过30分钟未更新（默认30分钟清理，最近恢复信号可续命至60分钟）")
+                print(f"[HEALTH] {len(warning_tokens)} 个token数据超过30分钟未更新（仍在订阅则仅告警，不清理）")
                 # 只显示前2个
                 for token_id, age in warning_tokens[:2]:
                     print(f"  - {token_id[:20]}...: {age/60:.0f}分钟前")
