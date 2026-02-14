@@ -31,6 +31,16 @@ except Exception:
 WS_BASE = "wss://ws-subscriptions-clob.polymarket.com"
 CHANNEL = "market"
 
+
+def get_client():
+    """
+    为兼容 Volatility_arbitrage_run._get_client() 的优先导入路径，
+    在 WS 模块中透传 REST 模块的 get_client。
+    """
+    from Volatility_arbitrage_main_rest import get_client as _rest_get_client
+
+    return _rest_get_client()
+
 _REST_RATE_LIMIT_SEC = 1.0
 _last_rest_call_ts = 0.0
 

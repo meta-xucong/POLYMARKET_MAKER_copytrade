@@ -7,7 +7,7 @@ Type=simple
 User=root
 WorkingDirectory=/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO
 Environment="PATH=/root/.pyenv/versions/poly312/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/root/.pyenv/versions/poly312/bin/python poly_maker_autorun.py
+ExecStart=/bin/bash -lc 'set -a; [ -f /root/.polymarket.env ] && source /root/.polymarket.env; set +a; exec /root/.pyenv/versions/poly312/bin/python poly_maker_autorun.py --no-repl'
 Restart=always
 RestartSec=10
 StandardOutput=append:/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/autorun_systemd.log
