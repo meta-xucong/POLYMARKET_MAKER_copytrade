@@ -85,6 +85,7 @@ class TotalLiquidationManager:
         self._low_balance_since: Optional[float] = None
         self._next_balance_probe_at: float = 0.0
         self._last_balance_probe_error: Optional[str] = None
+        self._last_positions_fetch_error: Optional[str] = None
         self._task_activity_markers: Dict[str, str] = {}
 
     _TRADE_ACTIVITY_HINTS = (
@@ -310,8 +311,27 @@ class TotalLiquidationManager:
                 print(f"[GLB_LIQ][WARN] 预检失败，跳过总清仓: {precheck_error}")
                 return result
 
+            if hasattr(autorun, "_suspend_ws_updates"):
+                autorun._suspend_ws_updates("total-liquidation")
+
             autorun._stop_ws_aggregator()
             autorun._cleanup_all_tasks()
+            tasks_stopped = self._wait_for_tasks_stopped(autorun, timeout_sec=30.0)
+            if not tasks_stopped:
+                msg = "timeout waiting tasks to stop"
+                result.update({"errors": [msg], "aborted": True})
+                now = time.time()
+                self._save_state(
+                    {
+                        "last_abort_ts": now,
+                        "last_abort_reason": reasons,
+                        "last_result": result,
+                        "last_duration_sec": now - start,
+                    }
+                )
+                print(f"[GLB_LIQ][WARN] 任务停止超时，终止总清仓: {msg}")
+                return result
+
             autorun.pending_topics.clear()
             autorun.pending_exit_topics.clear()
 
@@ -359,9 +379,23 @@ class TotalLiquidationManager:
             except Exception:
                 pass
         finally:
+            if hasattr(autorun, "_resume_ws_updates"):
+                autorun._resume_ws_updates("total-liquidation-finished")
             self._running = False
 
         return result
+
+    def _wait_for_tasks_stopped(self, autorun: Any, timeout_sec: float = 30.0) -> bool:
+        deadline = time.time() + max(1.0, float(timeout_sec))
+        while time.time() < deadline:
+            running = [
+                t for t in list(getattr(autorun, "tasks", {}).values())
+                if t and getattr(t, "is_running", lambda: False)()
+            ]
+            if not running:
+                return True
+            time.sleep(0.2)
+        return False
 
     @staticmethod
     def _normalize_collateral_balance(value: float, raw: Any) -> float:
@@ -540,25 +574,42 @@ class TotalLiquidationManager:
     def _fetch_positions(self) -> List[Dict[str, Any]]:
         address = self._resolve_wallet()
         if not address:
+            self._last_positions_fetch_error = "wallet address missing"
             return []
 
         url = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com").rstrip("/") + "/positions"
         params = {"user": address, "sizeThreshold": 0, "limit": 500, "offset": 0}
         out: List[Dict[str, Any]] = []
-        try:
-            while True:
-                query = urllib.parse.urlencode(params)
-                with urllib.request.urlopen(f"{url}?{query}", timeout=20) as resp:
-                    payload = json.loads(resp.read().decode("utf-8"))
-                items = payload if isinstance(payload, list) else payload.get("data")
-                if not isinstance(items, list) or not items:
-                    break
-                out.extend([x for x in items if isinstance(x, dict)])
-                if len(items) < int(params["limit"]):
-                    break
-                params["offset"] = int(params["offset"]) + len(items)
-        except Exception as exc:
-            print(f"[GLB_LIQ][WARN] 拉取持仓失败: {exc}")
+        self._last_positions_fetch_error = None
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Origin": "https://polymarket.com",
+        }
+
+        for attempt in range(3):
+            try:
+                while True:
+                    query = urllib.parse.urlencode(params)
+                    req = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        payload = json.loads(resp.read().decode("utf-8"))
+                    items = payload if isinstance(payload, list) else payload.get("data")
+                    if not isinstance(items, list) or not items:
+                        break
+                    out.extend([x for x in items if isinstance(x, dict)])
+                    if len(items) < int(params["limit"]):
+                        break
+                    params["offset"] = int(params["offset"]) + len(items)
+                return out
+            except Exception as exc:
+                self._last_positions_fetch_error = str(exc)
+                if attempt < 2:
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+
+        print(f"[GLB_LIQ][WARN] 拉取持仓失败: {self._last_positions_fetch_error}")
         return out
 
     @staticmethod
@@ -720,6 +771,15 @@ class TotalLiquidationManager:
             return {"liquidated": 0, "maker_count": 0, "taker_count": 0, "errors": ["client init failed"], "aborted": True}
 
         positions = self._fetch_positions()
+        if self._last_positions_fetch_error:
+            return {
+                "liquidated": 0,
+                "maker_count": 0,
+                "taker_count": 0,
+                "errors": [f"positions fetch failed: {self._last_positions_fetch_error}"],
+                "aborted": True,
+            }
+
         allowed_token_ids = prechecked_token_scope if prechecked_token_scope is not None else self._load_copytrade_token_scope()
         if not allowed_token_ids:
             return {
