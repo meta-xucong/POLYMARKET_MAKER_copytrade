@@ -25,6 +25,7 @@ class LiquidationConfig:
     enable_low_balance_force_trigger: bool = True
     balance_poll_interval_sec: float = 120.0
     require_conditions: int = 2
+    token_scope_mode: str = "copytrade"
     position_value_threshold: float = 3.0
     spread_threshold: float = 0.01
     maker_timeout_minutes: float = 20.0
@@ -52,6 +53,7 @@ class LiquidationConfig:
             enable_low_balance_force_trigger=bool(trigger.get("enable_low_balance_force_trigger", True)),
             balance_poll_interval_sec=max(5.0, float(trigger.get("balance_poll_interval_sec", 120.0))),
             require_conditions=max(1, int(trigger.get("require_conditions", 2))),
+            token_scope_mode=str(liquidation.get("token_scope_mode", "copytrade") or "copytrade").strip().lower(),
             position_value_threshold=float(liquidation.get("position_value_threshold", 3.0)),
             spread_threshold=float(liquidation.get("spread_threshold", 0.01)),
             maker_timeout_minutes=float(liquidation.get("maker_timeout_minutes", 20.0)),
@@ -67,6 +69,8 @@ class TotalLiquidationManager:
     """全局清仓管理器：监控活跃度 -> 触发清仓 -> 硬重置。"""
 
     _COLLATERAL_DECIMALS = 6
+    _TOKEN_SCOPE_COPYTRADE = "copytrade"
+    _TOKEN_SCOPE_ALL_POSITIONS = "all_positions"
 
     def __init__(self, cfg: Any, project_root: Path):
         self.cfg = LiquidationConfig.from_global_config(cfg)
@@ -278,6 +282,8 @@ class TotalLiquidationManager:
         client = self._get_cached_client()
         if client is None:
             return "client init failed", None, None
+        if self.cfg.token_scope_mode == self._TOKEN_SCOPE_ALL_POSITIONS:
+            return None, client, None
         allowed_token_ids = self._load_copytrade_token_scope()
         if not allowed_token_ids:
             return "copytrade token scope is empty; skip liquidation for safety", None, None
@@ -810,8 +816,11 @@ class TotalLiquidationManager:
                 "aborted": True,
             }
 
-        allowed_token_ids = prechecked_token_scope if prechecked_token_scope is not None else self._load_copytrade_token_scope()
-        if not allowed_token_ids:
+        allowed_token_ids = prechecked_token_scope
+        if self.cfg.token_scope_mode != self._TOKEN_SCOPE_ALL_POSITIONS and allowed_token_ids is None:
+            allowed_token_ids = self._load_copytrade_token_scope()
+
+        if self.cfg.token_scope_mode != self._TOKEN_SCOPE_ALL_POSITIONS and not allowed_token_ids:
             return {
                 "liquidated": 0,
                 "maker_count": 0,
@@ -829,7 +838,7 @@ class TotalLiquidationManager:
             token_id = self._extract_token(entry)
             if not token_id:
                 continue
-            if allowed_token_ids and token_id not in allowed_token_ids:
+            if allowed_token_ids is not None and token_id not in allowed_token_ids:
                 continue
 
             size = self._extract_size(entry)

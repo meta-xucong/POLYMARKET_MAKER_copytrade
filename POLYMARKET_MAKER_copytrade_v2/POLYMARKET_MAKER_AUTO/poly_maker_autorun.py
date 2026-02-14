@@ -101,6 +101,7 @@ DEFAULT_GLOBAL_CONFIG = {
             "require_conditions": 2,
         },
         "liquidation": {
+            "token_scope_mode": "copytrade",  # copytrade: 仅清仓copytrade记录token; all_positions: 清仓全部持仓token
             "position_value_threshold": 3.0,
             "spread_threshold": 0.01,
             "maker_timeout_minutes": 20.0,

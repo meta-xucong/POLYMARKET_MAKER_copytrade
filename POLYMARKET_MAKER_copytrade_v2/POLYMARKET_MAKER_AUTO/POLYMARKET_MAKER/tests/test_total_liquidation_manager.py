@@ -552,6 +552,58 @@ def test_liquidation_scope_empty_skips_for_safety():
         assert any("scope is empty" in err for err in result["errors"])
 
 
+def test_liquidation_scope_all_positions_liquidates_without_copytrade_files():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.total_liquidation["liquidation"]["token_scope_mode"] = "all_positions"
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        project_root = base / "POLYMARKET_MAKER_AUTO"
+        mgr = TotalLiquidationManager(cfg, project_root)
+
+        fake_mod = types.ModuleType("maker_execution")
+        fake_mod.maker_sell_follow_ask_with_floor_wait = lambda **kwargs: {"status": "FILLED"}
+        sys.modules["maker_execution"] = fake_mod
+
+        mgr._fetch_positions = lambda: [
+            {"token_id": "A", "size": 10, "price": 0.5},
+            {"token_id": "B", "size": 10, "price": 0.5},
+        ]
+
+        called = []
+        mgr._place_sell_ioc = lambda client, token_id, price, size: called.append(token_id) or {}
+
+        class _Client:
+            pass
+
+        mgr._cached_client = _Client()
+
+        autorun = _Autorun(cfg, running_tasks=0)
+        result = mgr._liquidate_positions(autorun)
+        assert result["liquidated"] == 2
+        assert called == ["A", "B"]
+
+
+def test_precheck_all_positions_does_not_require_copytrade_scope():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.total_liquidation["liquidation"]["token_scope_mode"] = "all_positions"
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+
+        fake_client = object()
+        mgr._cached_client = fake_client
+        err, client, scope = mgr._precheck_liquidation_ready()
+        assert err is None
+        assert client is fake_client
+        assert scope is None
+
+
 def test_execute_aborted_does_not_hard_reset_or_stop():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
