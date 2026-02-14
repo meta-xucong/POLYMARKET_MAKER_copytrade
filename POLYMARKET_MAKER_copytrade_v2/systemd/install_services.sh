@@ -46,6 +46,10 @@ systemctl restart polymaker-copytrade.service
 systemctl restart polymaker-autorun.service
 
 echo "[OK] 服务已安装并重启"
+if [[ ! -f "$APP_ROOT/POLYMARKET_MAKER_copytrade_v2/.env" ]]; then
+  echo "[WARN] 未检测到 .env: $APP_ROOT/POLYMARKET_MAKER_copytrade_v2/.env"
+  echo "[WARN] 如未通过其它方式注入环境变量，可能出现 POLY_KEY 缺失错误"
+fi
 echo "[INFO] 查看状态:"
 echo "  systemctl status polymaker-copytrade.service --no-pager -l"
 echo "  systemctl status polymaker-autorun.service --no-pager -l"

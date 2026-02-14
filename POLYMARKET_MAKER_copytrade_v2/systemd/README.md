@@ -57,3 +57,42 @@ sudo bash POLYMARKET_MAKER_copytrade_v2/systemd/install_services.sh \
 ## 日志文件
 - copytrade: `POLYMARKET_MAKER_copytrade_v2/copytrade/copytrade_systemd.log`
 - autorun: `POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/autorun_systemd.log`
+
+## 环境变量（重要）
+
+systemd 默认不会继承你在 shell/screen 里的环境变量。若缺失 `POLY_KEY` / `POLY_FUNDER`，会出现：
+- `error_rest: 'POLY_KEY'`
+
+模板已支持读取：`__APP_ROOT__/POLYMARKET_MAKER_copytrade_v2/.env`。
+
+请创建（或更新）该文件，例如：
+
+```bash
+cat > /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade/POLYMARKET_MAKER_copytrade_v2/.env <<'EOF'
+POLY_KEY=0x你的私钥
+POLY_FUNDER=0x你的资金地址
+POLY_API_KEY=你的apiKey
+POLY_API_SECRET=你的apiSecret
+POLY_API_PASSPHRASE=你的apiPassphrase
+EOF
+chmod 600 /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade/POLYMARKET_MAKER_copytrade_v2/.env
+```
+
+然后重新安装/重启服务：
+
+```bash
+cd /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade
+sudo bash POLYMARKET_MAKER_copytrade_v2/systemd/install_services.sh \
+  /home/trader/polymarket_api/POLYMARKET_MAKER_copytrade \
+  root \
+  /root/.pyenv/versions/poly312/bin/python
+```
+
+## 关于路径是否是根因
+
+你从 `/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade_v2` 迁到
+`/home/trader/polymarket_api/POLYMARKET_MAKER_copytrade/POLYMARKET_MAKER_copytrade_v2` 本身不是根因。
+
+本次错误的直接原因是：
+1. `Volatility_arbitrage_main_ws` 缺少 `get_client` 导出（已在代码中补齐兼容函数）。
+2. systemd 环境缺少 `POLY_KEY` 等变量（通过 `.env + EnvironmentFile` 解决）。
