@@ -3362,10 +3362,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    ts_from_cache = time.time()
                     # ✅ P0修复：验证缓存数据本身是否新鲜
                     cache_updated_at = fresh_snap.get("updated_at")
                     if cache_updated_at:
-                        cache_age = time.time() - float(cache_updated_at)
+                        ts_from_cache = float(cache_updated_at)
+                        cache_age = time.time() - ts_from_cache
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
                             fallback_bid = fresh_snap.get("best_bid")
                             fallback_ask = fresh_snap.get("best_ask")
@@ -3374,7 +3376,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                     "price": float(fresh_snap.get("price") or 0.0),
                                     "best_bid": float(fallback_bid or 0.0),
                                     "best_ask": float(fallback_ask or 0.0),
-                                    "ts": time.time(),
+                                    "ts": ts_from_cache,
+                                    "cache_seen_ts": time.time(),
                                 }
                                 snap = latest[token_id]
                                 print(
@@ -3390,7 +3393,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
                         "best_ask": float(fresh_snap.get("best_ask") or 0.0),
-                        "ts": time.time()
+                        "ts": ts_from_cache,
+                        "cache_seen_ts": time.time(),
                     }
                     snap = latest[token_id]
                     print(f"[DIAG][BID] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')} (缓存数据新鲜)")
@@ -3415,10 +3419,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    ts_from_cache = time.time()
                     # ✅ P0修复：验证缓存数据本身是否新鲜
                     cache_updated_at = fresh_snap.get("updated_at")
                     if cache_updated_at:
-                        cache_age = time.time() - float(cache_updated_at)
+                        ts_from_cache = float(cache_updated_at)
+                        cache_age = time.time() - ts_from_cache
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
                             fallback_ask = fresh_snap.get("best_ask")
                             fallback_bid = fresh_snap.get("best_bid")
@@ -3427,7 +3433,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                     "price": float(fresh_snap.get("price") or 0.0),
                                     "best_bid": float(fallback_bid or 0.0),
                                     "best_ask": float(fallback_ask or 0.0),
-                                    "ts": time.time(),
+                                    "ts": ts_from_cache,
+                                    "cache_seen_ts": time.time(),
                                 }
                                 snap = latest[token_id]
                                 print(
@@ -3445,7 +3452,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
                         "best_ask": float(fresh_snap.get("best_ask") or 0.0),
-                        "ts": time.time()
+                        "ts": ts_from_cache,
+                        "cache_seen_ts": time.time(),
                     }
                     snap = latest[token_id]
                     if not hasattr(_latest_best_ask, "_refresh_logged"):
@@ -3472,10 +3480,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    ts_from_cache = time.time()
                     # ✅ P0修复：验证缓存数据本身是否新鲜
                     cache_updated_at = fresh_snap.get("updated_at")
                     if cache_updated_at:
-                        cache_age = time.time() - float(cache_updated_at)
+                        ts_from_cache = float(cache_updated_at)
+                        cache_age = time.time() - ts_from_cache
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
                             # 缓存数据过期，返回None触发REST API fallback
                             return None
@@ -3484,7 +3494,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
                         "best_ask": float(fresh_snap.get("best_ask") or 0.0),
-                        "ts": time.time()
+                        "ts": ts_from_cache,
+                        "cache_seen_ts": time.time(),
                     }
                     snap = latest[token_id]
                 else:
