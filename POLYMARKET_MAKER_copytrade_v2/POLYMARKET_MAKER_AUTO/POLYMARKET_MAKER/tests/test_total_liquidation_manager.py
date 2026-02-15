@@ -190,6 +190,7 @@ def test_hard_reset_preserves_copytrade_config_and_clears_state_files():
         (copytrade_dir / "tokens_from_copytrade.json").write_text('{"tokens":[{"token_id":"1"}]}', encoding="utf-8")
         (copytrade_dir / "copytrade_sell_signals.json").write_text('{"sell_tokens":[{"token_id":"1"}]}', encoding="utf-8")
         (copytrade_dir / "copytrade_state.json").write_text('{"targets":{"a":1}}', encoding="utf-8")
+        (copytrade_dir / "liquidation_blacklist.json").write_text('{"tokens":[{"token_id":"1"}]}', encoding="utf-8")
 
         mgr = TotalLiquidationManager(cfg, project_root)
         autorun = _Autorun(cfg, running_tasks=0)
@@ -205,6 +206,8 @@ def test_hard_reset_preserves_copytrade_config_and_clears_state_files():
         assert signals_payload.get("sell_tokens") == []
         state_payload = json.loads((copytrade_dir / "copytrade_state.json").read_text(encoding="utf-8"))
         assert state_payload.get("targets") == {}
+        blacklist_payload = json.loads((copytrade_dir / "liquidation_blacklist.json").read_text(encoding="utf-8"))
+        assert blacklist_payload.get("tokens") == [{"token_id": "1"}]
 
 
 def test_taker_price_applies_slippage_bps():
@@ -417,6 +420,30 @@ def test_liquidation_scope_only_copytrade_tokens():
         result = mgr._liquidate_positions(autorun)
         assert result["liquidated"] == 1
         assert called == ["A"]
+
+
+
+def test_append_blacklist_tokens_merges_existing_rows():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        project_root = base / "POLYMARKET_MAKER_AUTO"
+
+        mgr = TotalLiquidationManager(cfg, project_root)
+        mgr.blacklist_path.parent.mkdir(parents=True, exist_ok=True)
+        mgr.blacklist_path.write_text(
+            json.dumps({"updated_at": "", "tokens": [{"token_id": "A", "blocked_at": "old"}]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        added = mgr._append_blacklist_tokens(["A", "B", ""])
+        assert added == 1
+
+        payload = json.loads(mgr.blacklist_path.read_text(encoding="utf-8"))
+        tokens = {row["token_id"] for row in payload.get("tokens", [])}
+        assert tokens == {"A", "B"}
 
 
 
