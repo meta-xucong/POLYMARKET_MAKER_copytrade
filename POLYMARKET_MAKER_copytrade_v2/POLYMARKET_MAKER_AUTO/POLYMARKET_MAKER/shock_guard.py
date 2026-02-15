@@ -76,6 +76,9 @@ class ShockGuard:
         self._last_mid: Optional[float] = None
         self._last_spread: Optional[float] = None
 
+        self._quote_unhealthy_since_ts: Optional[float] = None
+        self._quote_unhealthy_reason: Optional[str] = None
+
     @property
     def enabled(self) -> bool:
         return bool(self.cfg.enabled)
@@ -104,11 +107,32 @@ class ShockGuard:
             "holding_has_shock_evidence": self._holding_has_shock_evidence,
             "last_mid": self._last_mid,
             "last_spread": self._last_spread,
+            "quote_unhealthy_since_ts": self._quote_unhealthy_since_ts,
+            "quote_unhealthy_reason": self._quote_unhealthy_reason,
         }
 
-    def on_market_snapshot(self, *, bid: float, ask: float, ts: float) -> None:
+    def on_market_snapshot(self, *, bid: Optional[float], ask: Optional[float], ts: float) -> None:
         if not self.enabled:
             return
+
+        bid_ok = self._is_valid_quote_side(bid)
+        ask_ok = self._is_valid_quote_side(ask)
+        if not (bid_ok and ask_ok):
+            if self._quote_unhealthy_since_ts is None:
+                self._quote_unhealthy_since_ts = ts
+            missing = []
+            if not bid_ok:
+                missing.append("bid")
+            if not ask_ok:
+                missing.append("ask")
+            self._quote_unhealthy_reason = f"quote side missing/invalid: {','.join(missing)}"
+            self._last_spread = None
+            self._advance_timers(ts)
+            return
+
+        self._quote_unhealthy_since_ts = None
+        self._quote_unhealthy_reason = None
+
         mid = self._calc_mid(bid, ask)
         spread = self._calc_spread(bid, ask)
         if mid is None:
@@ -121,7 +145,6 @@ class ShockGuard:
         self._last_spread = spread
 
         self._advance_timers(ts)
-
         if self._phase == ShockPhase.NORMAL:
             detected = self._detect_shock(ts)
             if detected is not None:
@@ -138,6 +161,30 @@ class ShockGuard:
             return GateResult(GateDecision.ALLOW, "shock_guard disabled")
 
         self._advance_timers(ts)
+
+        if self._quote_unhealthy_since_ts is not None:
+            timeout = max(float(self.cfg.max_pending_buy_age_sec), 0.0)
+            unhealthy_age = max(ts - self._quote_unhealthy_since_ts, 0.0)
+            detail = {
+                "quote_unhealthy_reason": self._quote_unhealthy_reason,
+                "quote_unhealthy_since_ts": self._quote_unhealthy_since_ts,
+                "quote_unhealthy_age_sec": unhealthy_age,
+                "release_timeout_sec": timeout,
+            }
+            if timeout > 0 and unhealthy_age >= timeout:
+                return GateResult(
+                    GateDecision.REJECT,
+                    "quote unhealthy timeout reached; force release for refill",
+                    retry_at_ts=ts,
+                    details=detail,
+                )
+            retry_at = (self._quote_unhealthy_since_ts + timeout) if timeout > 0 else None
+            return GateResult(
+                GateDecision.DEFER,
+                "quote unhealthy; buy blocked by shock gate",
+                retry_at_ts=retry_at,
+                details=detail,
+            )
 
         if self._phase == ShockPhase.NORMAL:
             detected = self._detect_shock(ts)
@@ -336,6 +383,16 @@ class ShockGuard:
         cutoff = ts - self._history_window_sec
         while self._history and self._history[0][0] < cutoff:
             self._history.popleft()
+
+    @staticmethod
+    def _is_valid_quote_side(px: Optional[float]) -> bool:
+        if px is None:
+            return False
+        try:
+            v = float(px)
+        except (TypeError, ValueError):
+            return False
+        return v > 0
 
     @staticmethod
     def _calc_mid(bid: float, ask: float) -> Optional[float]:

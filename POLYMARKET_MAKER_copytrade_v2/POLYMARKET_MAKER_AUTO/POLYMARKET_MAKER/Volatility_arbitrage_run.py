@@ -4227,14 +4227,19 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     _apply_shared_ws_snapshot()
 
                 snap_for_shock = latest.get(token_id) or {}
-                shock_bid = float(snap_for_shock.get("best_bid") or 0.0)
-                shock_ask = float(snap_for_shock.get("best_ask") or 0.0)
-                if shock_bid > 0 and shock_ask > 0:
-                    shock_guard.on_market_snapshot(
-                        bid=shock_bid,
-                        ask=shock_ask,
-                        ts=_snapshot_ts(snap_for_shock),
-                    )
+
+                def _shock_quote(v):
+                    try:
+                        px = float(v)
+                    except (TypeError, ValueError):
+                        return None
+                    return px if px > 0 else None
+
+                shock_guard.on_market_snapshot(
+                    bid=_shock_quote(snap_for_shock.get("best_bid")),
+                    ask=_shock_quote(snap_for_shock.get("best_ask")),
+                    ts=_snapshot_ts(snap_for_shock),
+                )
 
                 if _exit_signal_active():
                     _force_exit("sell signal file detected")
