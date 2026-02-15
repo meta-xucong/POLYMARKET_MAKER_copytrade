@@ -802,6 +802,7 @@ def test_execute_uses_prechecked_scope_without_reloading():
         cfg.log_dir.mkdir(parents=True, exist_ok=True)
 
         mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+        mgr._hard_reset_files = lambda _a: None
 
         class _Evt:
             def __init__(self):
@@ -815,12 +816,16 @@ def test_execute_uses_prechecked_scope_without_reloading():
                 self.pending_topics = []
                 self.pending_exit_topics = []
                 self.stop_event = _Evt()
+                self.reset_called = False
 
             def _stop_ws_aggregator(self):
                 return None
 
             def _cleanup_all_tasks(self):
                 return None
+
+            def _reset_all_runtime_state(self):
+                self.reset_called = True
 
         fake_client = object()
         mgr._precheck_liquidation_ready = lambda: (None, fake_client, {"A"})
@@ -835,6 +840,7 @@ def test_execute_uses_prechecked_scope_without_reloading():
         assert result.get("aborted") is None
         assert result["liquidated"] == 1
         assert called and called[0][0] is fake_client
+        assert autorun.reset_called is True
         assert autorun.stop_event.called is True
 
 

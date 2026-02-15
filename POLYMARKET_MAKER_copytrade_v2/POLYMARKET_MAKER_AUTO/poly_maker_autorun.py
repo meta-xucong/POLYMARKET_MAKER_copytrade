@@ -3561,6 +3561,33 @@ class AutoRunManager:
         # 写回 handled_topics，确保最新状态落盘
         write_handled_topics(self.config.handled_topics_path, self.handled_topics)
 
+    def _reset_all_runtime_state(self) -> None:
+        """将调度器状态清零到初始空白态，并立即落盘。"""
+        self.pending_topics.clear()
+        self.pending_exit_topics.clear()
+        self.tasks.clear()
+        self.handled_topics.clear()
+        self.topic_details.clear()
+        self.latest_topics = []
+
+        self._handled_sell_signals.clear()
+        self._completed_exit_cleanup_tokens.clear()
+        self._exit_cleanup_retry_counts.clear()
+
+        self._pending_first_seen.clear()
+        self._refilled_tokens.clear()
+        self._refill_retry_counts.clear()
+
+        self._shared_ws_wait_failures.clear()
+        self._shared_ws_paused_until.clear()
+        self._shared_ws_wait_timeout_events.clear()
+        self._shared_ws_pending_since.clear()
+
+        self._ws_cache.clear()
+        self._ws_token_ids = []
+
+        self._dump_runtime_status()
+
     def _restore_runtime_status(self) -> None:
         """尝试从上次运行的状态文件恢复待处理队列等信息。"""
 

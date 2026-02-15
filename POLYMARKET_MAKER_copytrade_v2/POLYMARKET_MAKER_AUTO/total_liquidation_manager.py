@@ -384,6 +384,11 @@ class TotalLiquidationManager:
 
             if self.cfg.hard_reset_enabled:
                 self._hard_reset_files(autorun)
+                if hasattr(autorun, "_reset_all_runtime_state"):
+                    try:
+                        autorun._reset_all_runtime_state()
+                    except Exception as exc:
+                        print(f"[GLB_LIQ][WARN] 清空内存运行态失败: {exc}")
                 result["hard_reset"] = True
 
             print("[GLB_LIQ] 总清仓完成，准备重启 autorun")
