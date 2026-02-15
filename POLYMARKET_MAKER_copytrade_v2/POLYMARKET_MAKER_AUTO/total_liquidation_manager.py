@@ -34,6 +34,7 @@ class LiquidationConfig:
     remove_logs: bool = True
     remove_json_state: bool = True
     task_stop_timeout_minutes: float = 5.0
+    blacklist_enabled: bool = True
 
     @classmethod
     def from_global_config(cls, cfg: Any) -> "LiquidationConfig":
@@ -41,6 +42,7 @@ class LiquidationConfig:
         trigger = raw.get("trigger") or {}
         liquidation = raw.get("liquidation") or {}
         reset = raw.get("reset") or {}
+        blacklist = raw.get("blacklist") or {}
         return cls(
             enabled=bool(raw.get("enable_total_liquidation", False)),
             min_interval_hours=float(raw.get("min_interval_hours", 72.0)),
@@ -62,6 +64,7 @@ class LiquidationConfig:
             remove_logs=bool(reset.get("remove_logs", True)),
             remove_json_state=bool(reset.get("remove_json_state", True)),
             task_stop_timeout_minutes=max(0.5, float(liquidation.get("task_stop_timeout_minutes", 5.0))),
+            blacklist_enabled=bool(blacklist.get("enabled", True)),
         )
 
 
@@ -76,6 +79,7 @@ class TotalLiquidationManager:
         self.cfg = LiquidationConfig.from_global_config(cfg)
         self.project_root = project_root
         self.state_path = cfg.data_dir / "total_liquidation_state.json"
+        self.blacklist_path = project_root.parent / "copytrade" / "liquidation_blacklist.json"
         self._running = False
 
         self._idle_since: Optional[float] = None
@@ -350,6 +354,12 @@ class TotalLiquidationManager:
             )
             result.update(liquidation_stats)
 
+            blacklisted = 0
+            if self.cfg.blacklist_enabled:
+                liquidated_tokens = liquidation_stats.get("liquidated_tokens") or []
+                blacklisted = self._append_blacklist_tokens(liquidated_tokens)
+            result["blacklisted"] = blacklisted
+
             now = time.time()
             aborted = bool(liquidation_stats.get("aborted", False))
             if aborted:
@@ -374,6 +384,11 @@ class TotalLiquidationManager:
 
             if self.cfg.hard_reset_enabled:
                 self._hard_reset_files(autorun)
+                if hasattr(autorun, "_reset_all_runtime_state"):
+                    try:
+                        autorun._reset_all_runtime_state()
+                    except Exception as exc:
+                        print(f"[GLB_LIQ][WARN] 清空内存运行态失败: {exc}")
                 result["hard_reset"] = True
 
             print("[GLB_LIQ] 总清仓完成，准备重启 autorun")
@@ -832,6 +847,7 @@ class TotalLiquidationManager:
         maker_count = 0
         taker_count = 0
         liquidated = 0
+        liquidated_tokens: set[str] = set()
         errors: List[str] = []
 
         for entry in positions:
@@ -899,6 +915,7 @@ class TotalLiquidationManager:
                     self._place_sell_ioc(client, token_id, self._compute_taker_price(bid=bid, ask=ask), size)
 
                 liquidated += 1
+                liquidated_tokens.add(token_id)
             except Exception as exc:
                 errors.append(f"token={token_id}: {exc}")
 
@@ -906,8 +923,71 @@ class TotalLiquidationManager:
             "liquidated": liquidated,
             "maker_count": maker_count,
             "taker_count": taker_count,
+            "liquidated_tokens": sorted(liquidated_tokens),
             "errors": errors,
         }
+
+    def _append_blacklist_tokens(self, token_ids: List[str]) -> int:
+        normalized = {str(tid).strip() for tid in token_ids if str(tid).strip()}
+        if not normalized:
+            return 0
+
+        existing, payload = self._load_blacklist_payload()
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        rows = payload.get("tokens") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            rows = []
+
+        row_map: Dict[str, Dict[str, Any]] = {}
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            token_id = item.get("token_id") or item.get("tokenId")
+            if token_id is None or not str(token_id).strip():
+                continue
+            row_map[str(token_id).strip()] = dict(item)
+
+        added = 0
+        for token_id in sorted(normalized):
+            if token_id in existing:
+                continue
+            row_map[token_id] = {
+                "token_id": token_id,
+                "blocked_at": now_iso,
+                "source": "total_liquidation",
+                "reason": "global-liquidation",
+            }
+            added += 1
+
+        if added <= 0:
+            return 0
+
+        payload = {
+            "updated_at": now_iso,
+            "tokens": sorted(row_map.values(), key=lambda x: str(x.get("token_id") or "")),
+        }
+        self._safe_write_json(self.blacklist_path, payload)
+        print(f"[GLB_LIQ][BLACKLIST] 新增 {added} 个 token 到黑名单")
+        return added
+
+    def _load_blacklist_payload(self) -> Tuple[set[str], Dict[str, Any]]:
+        if not self.blacklist_path.exists():
+            return set(), {}
+        try:
+            with self.blacklist_path.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
+            rows = payload.get("tokens") if isinstance(payload, dict) else []
+            out: set[str] = set()
+            if isinstance(rows, list):
+                for item in rows:
+                    if not isinstance(item, dict):
+                        continue
+                    token_id = item.get("token_id") or item.get("tokenId")
+                    if token_id is not None and str(token_id).strip():
+                        out.add(str(token_id).strip())
+            return out, payload if isinstance(payload, dict) else {}
+        except Exception:
+            return set(), {}
 
     @staticmethod
     def _safe_write_json(path: Path, payload: Dict[str, Any]) -> None:

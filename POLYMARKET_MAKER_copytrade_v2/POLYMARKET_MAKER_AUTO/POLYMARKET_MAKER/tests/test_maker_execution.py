@@ -67,6 +67,18 @@ class InsufficientBalanceClient(DummyClient):
         return super().create_order(payload)
 
 
+class _ObjOrderSummary:
+    def __init__(self, price: str, size: str = "1"):
+        self.price = price
+        self.size = size
+
+
+class _ObjOrderBookSummary:
+    def __init__(self, bids=None, asks=None):
+        self.bids = bids or []
+        self.asks = asks or []
+
+
 @pytest.fixture(autouse=True)
 def _patch_adapter(monkeypatch):
     monkeypatch.setattr(maker, "ClobPolymarketAPI", lambda client: StubAdapter(client))
@@ -258,6 +270,44 @@ def test_maker_buy_retries_on_insufficient_balance_status():
 
     assert result["status"] == "FILLED"
     assert result["filled"] == pytest.approx(0.1499, rel=0, abs=1e-9)
+
+
+def test_extract_best_price_supports_object_orderbook_payload():
+    payload = _ObjOrderBookSummary(
+        bids=[_ObjOrderSummary("0.41")],
+        asks=[_ObjOrderSummary("0.43")],
+    )
+
+    bid = maker._extract_best_price(payload, "bid")
+    ask = maker._extract_best_price(payload, "ask")
+
+    assert bid is not None
+    assert ask is not None
+    assert bid.price == pytest.approx(0.41)
+    assert ask.price == pytest.approx(0.43)
+
+
+def test_best_price_info_tries_rest_before_ws_degrade_threshold(monkeypatch):
+    maker._ws_none_streak.clear()
+    maker._price_none_streak.clear()
+
+    called = {"rest": 0}
+
+    def _fake_fetch(*_args, **_kwargs):
+        called["rest"] += 1
+        return maker.PriceSample(0.55, 2)
+
+    monkeypatch.setattr(maker, "_fetch_best_price", _fake_fetch)
+    out = maker._best_price_info(
+        client=object(),
+        token_id="token-A",
+        best_fn=lambda: None,
+        side="bid",
+    )
+
+    assert called["rest"] == 1
+    assert out is not None
+    assert out.price == pytest.approx(0.55)
 
 
 def test_maker_buy_respects_max_buy_price_cap_before_placing_order():

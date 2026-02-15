@@ -96,3 +96,28 @@ def test_recovery_pass_still_defers_when_abs_floor_hit_before_buy():
     result = guard.gate_buy(ts=48.0)
     assert result.decision == GateDecision.DEFER
     assert "shock" in result.reason.lower()
+
+
+def test_unhealthy_quote_side_blocks_buy_until_timeout_then_rejects():
+    guard = _build_guard(max_pending_buy_age_sec=15.0)
+
+    guard.on_market_snapshot(bid=0.60, ask=None, ts=10.0)
+    defer = guard.gate_buy(ts=12.0)
+    assert defer.decision == GateDecision.DEFER
+    assert "quote unhealthy" in defer.reason
+
+    reject = guard.gate_buy(ts=26.0)
+    assert reject.decision == GateDecision.REJECT
+    assert "force release" in reject.reason
+
+
+def test_unhealthy_quote_side_recovers_after_quotes_become_valid():
+    guard = _build_guard(max_pending_buy_age_sec=20.0)
+
+    guard.on_market_snapshot(bid=0.60, ask=None, ts=10.0)
+    assert guard.gate_buy(ts=12.0).decision == GateDecision.DEFER
+
+    guard.on_market_snapshot(bid=0.60, ask=0.62, ts=13.0)
+    result = guard.gate_buy(ts=13.0)
+    assert result.decision == GateDecision.DEFER
+    assert "pre-buy" in result.reason
