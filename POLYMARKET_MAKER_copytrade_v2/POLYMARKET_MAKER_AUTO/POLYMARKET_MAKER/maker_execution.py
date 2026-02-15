@@ -252,6 +252,33 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
                 return extracted
         return None
 
+    # 兼容 py_clob_client 的 dataclass/对象返回（例如 OrderBookSummary / OrderSummary）。
+    # 官方客户端 get_order_book(token_id) 返回对象而非 dict。
+    if hasattr(payload, "__dict__") and not isinstance(payload, (str, bytes, bytearray)):
+        try:
+            obj_dict = dict(vars(payload))
+        except Exception:
+            obj_dict = None
+        if isinstance(obj_dict, Mapping):
+            extracted = _extract_best_price(obj_dict, side)
+            if extracted is not None:
+                return extracted
+
+        # 对象属性兜底：直接从 bids/asks 列表读取第一档价格
+        ladder_attr = "bids" if side == "bid" else "asks"
+        ladder = getattr(payload, ladder_attr, None)
+        if isinstance(ladder, Iterable) and not isinstance(ladder, (str, bytes, bytearray)):
+            for entry in ladder:
+                if hasattr(entry, "price"):
+                    candidate_raw = getattr(entry, "price", None)
+                    candidate = _coerce_float(candidate_raw)
+                    if candidate is not None:
+                        decimals = _infer_price_decimals(candidate_raw)
+                        return PriceSample(float(candidate), decimals)
+                extracted = _extract_best_price(entry, side)
+                if extracted is not None:
+                    return extracted
+
     if isinstance(payload, Iterable) and not isinstance(payload, (str, bytes, bytearray)):
         for item in payload:
             extracted = _extract_best_price(item, side)
@@ -431,22 +458,33 @@ def _best_price_info(
             _price_none_streak[streak_key] = 0
             return PriceSample(float(val), _infer_price_decimals(val))
         # P0诊断：记录为什么WebSocket数据不可用
+        ws_waiting = False
         if val is None:
             streak = _ws_none_streak.get(streak_key, 0) + 1
             _ws_none_streak[streak_key] = streak
             if streak < _WS_NONE_DEGRADE_THRESHOLD:
+                ws_waiting = True
                 print(
                     f"[DIAG][WS] WebSocket {side} 返回 None（连续 {streak}/{_WS_NONE_DEGRADE_THRESHOLD}），"
-                    "暂不降级，继续等待WS恢复"
+                    "先尝试一次 REST 兜底，再继续等待WS恢复"
                 )
-                return None
-            print(
-                f"[DIAG][WS] WebSocket {side} 返回 None（连续 {streak} 次）"
-                "，触发降级：回退 REST API"
-            )
+            else:
+                print(
+                    f"[DIAG][WS] WebSocket {side} 返回 None（连续 {streak} 次）"
+                    "，触发降级：回退 REST API"
+                )
         elif val <= 0:
             _ws_none_streak[streak_key] = 0
             print(f"[DIAG][WS] WebSocket {side} 值无效: {val}")
+
+        # 关键路径：即使尚未达到 WS 降级阈值，也尝试一次 REST 兜底，
+        # 避免短时 WS 抖动把价格直接传递为 None。
+        if ws_waiting:
+            result = _fetch_best_price(client, token_id, side)
+            if result is not None:
+                _price_none_streak[streak_key] = 0
+                return result
+
     result = _fetch_best_price(client, token_id, side)
     streak_key = (token_id, side)
     if result is not None:
