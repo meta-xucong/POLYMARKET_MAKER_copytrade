@@ -3362,10 +3362,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    ts_from_cache = time.time()
                     # ✅ P0修复：验证缓存数据本身是否新鲜
                     cache_updated_at = fresh_snap.get("updated_at")
                     if cache_updated_at:
-                        cache_age = time.time() - float(cache_updated_at)
+                        ts_from_cache = float(cache_updated_at)
+                        cache_age = time.time() - ts_from_cache
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
                             fallback_bid = fresh_snap.get("best_bid")
                             fallback_ask = fresh_snap.get("best_ask")
@@ -3374,7 +3376,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                     "price": float(fresh_snap.get("price") or 0.0),
                                     "best_bid": float(fallback_bid or 0.0),
                                     "best_ask": float(fallback_ask or 0.0),
-                                    "ts": time.time(),
+                                    "ts": ts_from_cache,
+                                    "cache_seen_ts": time.time(),
                                 }
                                 snap = latest[token_id]
                                 print(
@@ -3390,7 +3393,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
                         "best_ask": float(fresh_snap.get("best_ask") or 0.0),
-                        "ts": time.time()
+                        "ts": ts_from_cache,
+                        "cache_seen_ts": time.time(),
                     }
                     snap = latest[token_id]
                     print(f"[DIAG][BID] ✓ 已刷新快照: bid={snap.get('best_bid')}, ask={snap.get('best_ask')} (缓存数据新鲜)")
@@ -3415,10 +3419,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    ts_from_cache = time.time()
                     # ✅ P0修复：验证缓存数据本身是否新鲜
                     cache_updated_at = fresh_snap.get("updated_at")
                     if cache_updated_at:
-                        cache_age = time.time() - float(cache_updated_at)
+                        ts_from_cache = float(cache_updated_at)
+                        cache_age = time.time() - ts_from_cache
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
                             fallback_ask = fresh_snap.get("best_ask")
                             fallback_bid = fresh_snap.get("best_bid")
@@ -3427,7 +3433,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                     "price": float(fresh_snap.get("price") or 0.0),
                                     "best_bid": float(fallback_bid or 0.0),
                                     "best_ask": float(fallback_ask or 0.0),
-                                    "ts": time.time(),
+                                    "ts": ts_from_cache,
+                                    "cache_seen_ts": time.time(),
                                 }
                                 snap = latest[token_id]
                                 print(
@@ -3445,7 +3452,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
                         "best_ask": float(fresh_snap.get("best_ask") or 0.0),
-                        "ts": time.time()
+                        "ts": ts_from_cache,
+                        "cache_seen_ts": time.time(),
                     }
                     snap = latest[token_id]
                     if not hasattr(_latest_best_ask, "_refresh_logged"):
@@ -3472,10 +3480,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if use_shared_ws:
                 fresh_snap = _load_shared_ws_snapshot()
                 if fresh_snap:
+                    ts_from_cache = time.time()
                     # ✅ P0修复：验证缓存数据本身是否新鲜
                     cache_updated_at = fresh_snap.get("updated_at")
                     if cache_updated_at:
-                        cache_age = time.time() - float(cache_updated_at)
+                        ts_from_cache = float(cache_updated_at)
+                        cache_age = time.time() - ts_from_cache
                         if cache_age > ORDERBOOK_STALE_AFTER_SEC:
                             # 缓存数据过期，返回None触发REST API fallback
                             return None
@@ -3484,7 +3494,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "price": float(fresh_snap.get("price") or 0.0),
                         "best_bid": float(fresh_snap.get("best_bid") or 0.0),
                         "best_ask": float(fresh_snap.get("best_ask") or 0.0),
-                        "ts": time.time()
+                        "ts": ts_from_cache,
+                        "cache_seen_ts": time.time(),
                     }
                     snap = latest[token_id]
                 else:
@@ -4677,30 +4688,65 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     # 计算清仓地板价：优先使用策略的入场价格，否则查询持仓均价
                     block_floor_hint: Optional[float] = None
                     if strategy.sell_trigger_price() is None:
-                        # 策略没有入场价格，需要从 data-api 查询持仓均价
-                        try:
-                            block_avg_px, _, block_origin = _lookup_position_avg_price(client, token_id)
+                        # 策略没有入场价格：必须先同步 entry，再允许卖出。
+                        # 禁止使用 bid fallback 作为地板价（会导致亏本卖出）。
+                        block_avg_px: Optional[float] = None
+                        block_origin = ""
+                        sync_attempts = 3
+                        for idx in range(sync_attempts):
+                            try:
+                                block_avg_px, _, block_origin = _lookup_position_avg_price(client, token_id)
+                            except Exception as block_exc:
+                                print(f"[BUY][BLOCK] 查询持仓均价异常（{idx + 1}/{sync_attempts}）：{block_exc}")
+                                block_avg_px = None
                             if block_avg_px is not None and block_avg_px > 0:
-                                # 使用均价计算地板价：均价 * (1 + profit_pct)
-                                block_floor_hint = block_avg_px * (1.0 + profit_pct)
-                                print(
-                                    f"[BUY][BLOCK] 从 {block_origin} 获取均价 {block_avg_px:.4f}，"
-                                    f"计算地板价 {block_floor_hint:.4f}"
-                                )
-                                # 同步入场价格到策略，避免后续重复查询
-                                strategy.sync_long_state(ref_price=block_avg_px)
-                            else:
-                                # 查不到均价，使用当前 bid 作为保本地板价
-                                if bid is not None and bid > 0:
-                                    block_floor_hint = bid
-                                    print(
-                                        f"[BUY][BLOCK] 无法获取持仓均价，使用当前 bid={bid:.4f} 作为保本地板价"
-                                    )
-                        except Exception as block_exc:
-                            print(f"[BUY][BLOCK] 查询持仓均价异常：{block_exc}")
-                            if bid is not None and bid > 0:
-                                block_floor_hint = bid
-                                print(f"[BUY][BLOCK] 使用当前 bid={bid:.4f} 作为 fallback 地板价")
+                                break
+                            if idx < sync_attempts - 1:
+                                time.sleep(1.0)
+
+                        if block_avg_px is None or block_avg_px <= 0:
+                            print(
+                                "[BUY][BLOCK][FATAL] 无法同步持仓均价(entry)；"
+                                "禁止使用 bid-fallback 卖出，退出并交由回填机制处理。"
+                            )
+                            _cancel_open_buy_orders_before_exit("BUY_BLOCK_ENTRY_SYNC_FAILED")
+                            _record_exit_token(token_id, "BUY_BLOCK_ENTRY_SYNC_FAILED", {
+                                "has_position": True,
+                                "position_size": float(actionable_position or 0.0),
+                                "last_bid": bid,
+                                "last_ask": ask,
+                                "sync_attempts": sync_attempts,
+                                "reason": "entry price unavailable; bid-fallback sell disabled",
+                            })
+                            strategy.stop("buy block entry sync failed")
+                            stop_event.set()
+                            continue
+
+                        # 使用均价计算地板价：均价 * (1 + profit_pct)
+                        strategy.sync_long_state(ref_price=block_avg_px)
+                        block_floor_hint = strategy.sell_trigger_price()
+                        if block_floor_hint is None or block_floor_hint <= 0:
+                            print(
+                                "[BUY][BLOCK][FATAL] entry 已同步但仍无法得到 sell_trigger；"
+                                "停止卖出并退出回填。"
+                            )
+                            _cancel_open_buy_orders_before_exit("BUY_BLOCK_TRIGGER_UNAVAILABLE")
+                            _record_exit_token(token_id, "BUY_BLOCK_TRIGGER_UNAVAILABLE", {
+                                "has_position": True,
+                                "position_size": float(actionable_position or 0.0),
+                                "entry_price": float(block_avg_px),
+                                "last_bid": bid,
+                                "last_ask": ask,
+                                "origin": block_origin,
+                            })
+                            strategy.stop("buy block trigger unavailable")
+                            stop_event.set()
+                            continue
+
+                        print(
+                            f"[BUY][BLOCK] 从 {block_origin} 获取均价 {block_avg_px:.4f}，"
+                            f"计算地板价 {block_floor_hint:.4f}"
+                        )
                     _execute_sell(actionable_position, floor_hint=block_floor_hint, source="[BUY][BLOCK]")
                     continue
     

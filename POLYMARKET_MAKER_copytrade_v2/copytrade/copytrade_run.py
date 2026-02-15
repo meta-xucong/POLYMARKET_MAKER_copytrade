@@ -212,6 +212,21 @@ def _write_tokens(path: Path, mapping: Dict[str, Dict[str, Any]]) -> None:
     _write_json(path, payload)
 
 
+def _load_blacklist_tokens(path: Path) -> set[str]:
+    payload = _load_json(path)
+    rows = payload.get("tokens") if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        return set()
+    out: set[str] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        token_id = item.get("token_id") or item.get("tokenId")
+        if token_id is not None and str(token_id).strip():
+            out.add(str(token_id).strip())
+    return out
+
+
 def _collect_trades(
     client: DataApiClient,
     account: str,
@@ -267,6 +282,7 @@ def run_once(
     token_output_path = base_dir / "tokens_from_copytrade.json"
     sell_signal_path = base_dir / "copytrade_sell_signals.json"
     state_path = base_dir / "copytrade_state.json"
+    blacklist_path = Path(config.get("blacklist_path") or (base_dir / "liquidation_blacklist.json"))
 
     state = _load_json(state_path)
     if not isinstance(state, dict):
@@ -275,12 +291,22 @@ def run_once(
 
     token_map = _load_token_map(token_output_path)
     sell_map = _load_sell_signals(sell_signal_path)
+    blacklist_tokens = _load_blacklist_tokens(blacklist_path)
 
     now_ms = int(time.time() * 1000)
     changed = False
     sell_changed = False
 
+    for token_id in list(token_map.keys()):
+        if token_id in blacklist_tokens:
+            del token_map[token_id]
+            changed = True
+
     for token_id, entry in list(sell_map.items()):
+        if token_id in blacklist_tokens:
+            del sell_map[token_id]
+            sell_changed = True
+            continue
         token_entry = token_map.get(token_id)
         if not token_entry or not token_entry.get("introduced_by_buy", False):
             del sell_map[token_id]
@@ -321,6 +347,9 @@ def run_once(
             if not token_id:
                 continue
             key = str(token_id)
+            if key in blacklist_tokens:
+                logger.info("skip blacklisted token action: account=%s token=%s side=%s", account, key, action.get("side"))
+                continue
 
             last_seen = action["timestamp"].astimezone(timezone.utc).isoformat().replace(
                 "+00:00", "Z"

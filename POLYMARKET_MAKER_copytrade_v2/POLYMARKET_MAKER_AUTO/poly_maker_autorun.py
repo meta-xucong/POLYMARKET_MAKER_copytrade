@@ -53,6 +53,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "copytrade_sell_signals_path": str(
         PROJECT_ROOT.parent / "copytrade" / "copytrade_sell_signals.json"
     ),
+    "copytrade_blacklist_path": str(
+        PROJECT_ROOT.parent / "copytrade" / "liquidation_blacklist.json"
+    ),
     "process_start_retries": 1,
     "process_retry_delay_sec": 2.0,
     "process_graceful_timeout_sec": 5.0,
@@ -111,6 +114,9 @@ DEFAULT_GLOBAL_CONFIG = {
             "hard_reset_enabled": True,
             "remove_logs": True,
             "remove_json_state": True,
+        },
+        "blacklist": {
+            "enabled": True,
         },
     },
 }
@@ -535,6 +541,9 @@ class GlobalConfig:
     copytrade_sell_signals_path: Path = field(
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["copytrade_sell_signals_path"])
     )
+    copytrade_blacklist_path: Path = field(
+        default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["copytrade_blacklist_path"])
+    )
     process_start_retries: int = DEFAULT_GLOBAL_CONFIG["process_start_retries"]
     process_retry_delay_sec: float = DEFAULT_GLOBAL_CONFIG["process_retry_delay_sec"]
     process_graceful_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
@@ -636,6 +645,11 @@ class GlobalConfig:
             or paths.get("copytrade_sell_signals_file")
             or PROJECT_ROOT.parent / "copytrade" / "copytrade_sell_signals.json"
         )
+        copytrade_blacklist_path = Path(
+            merged.get("copytrade_blacklist_path")
+            or paths.get("copytrade_blacklist_file")
+            or PROJECT_ROOT.parent / "copytrade" / "liquidation_blacklist.json"
+        )
         runtime_status_path = Path(
             merged.get("runtime_status_path")
             or paths.get("run_state_file")
@@ -676,6 +690,7 @@ class GlobalConfig:
             handled_topics_path=handled_topics_path,
             copytrade_tokens_path=copytrade_tokens_path,
             copytrade_sell_signals_path=copytrade_sell_signals_path,
+            copytrade_blacklist_path=copytrade_blacklist_path,
             process_start_retries=int(
                 merged.get("process_start_retries", cls.process_start_retries)
             ),
@@ -3115,12 +3130,23 @@ class AutoRunManager:
                     self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
 
             sell_signals = self._load_copytrade_sell_signals()
+            blacklist_tokens = self._load_copytrade_blacklist()
             self._apply_sell_signals(sell_signals)
+            blocked_tokens = sell_signals | blacklist_tokens
             new_topics = [
                 topic_id
                 for topic_id in compute_new_topics(self.latest_topics, self.handled_topics)
-                if topic_id not in sell_signals
+                if topic_id not in blocked_tokens
             ]
+            skipped_blacklist = [
+                topic_id
+                for topic_id in compute_new_topics(self.latest_topics, self.handled_topics)
+                if topic_id in blacklist_tokens
+            ]
+            if skipped_blacklist:
+                print(
+                    f"[BLACKLIST] 已过滤黑名单 token {len(skipped_blacklist)} 个"
+                )
             if new_topics:
                 preview = ", ".join(new_topics[:5])
                 print(
@@ -3199,6 +3225,24 @@ class AutoRunManager:
         if skipped:
             print(f"[COPYTRADE] 已跳过未引入的 sell 信号 {skipped} 条")
         return signals
+
+    def _load_copytrade_blacklist(self) -> set[str]:
+        path = self.config.copytrade_blacklist_path
+        if not path.exists():
+            return set()
+        payload = _load_json_file(path)
+        rows = payload.get("tokens") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            print(f"[WARN] copytrade blacklist 文件格式异常：{path}")
+            return set()
+        out: set[str] = set()
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            token_id = item.get("token_id") or item.get("tokenId")
+            if token_id is not None and str(token_id).strip():
+                out.add(str(token_id).strip())
+        return out
 
     def _exit_signal_path(self, token_id: str) -> Path:
         safe_id = _safe_topic_filename(token_id)
