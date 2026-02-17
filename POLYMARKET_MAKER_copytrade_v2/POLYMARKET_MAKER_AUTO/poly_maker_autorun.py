@@ -1541,13 +1541,11 @@ class AutoRunManager:
                 old_data = self._ws_cache.get(token_id, {})
                 seq = old_data.get("seq", 0) + 1
 
-            suspicious_reason = None
-            if bid > 0 and ask > 0:
-                suspicious_reason = _detect_suspicious_quote(
-                    bid,
-                    ask,
-                    last_trade_price=last,
-                )
+            suspicious_reason = _detect_suspicious_quote(
+                bid,
+                ask,
+                last_trade_price=last,
+            )
 
             if suspicious_reason:
                 prev_bid = _coerce_float(old_data.get("best_bid")) or 0.0
