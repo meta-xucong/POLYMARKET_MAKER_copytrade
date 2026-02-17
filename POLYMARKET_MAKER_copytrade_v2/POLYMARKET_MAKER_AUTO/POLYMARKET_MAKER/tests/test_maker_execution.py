@@ -287,6 +287,49 @@ def test_extract_best_price_supports_object_orderbook_payload():
     assert ask.price == pytest.approx(0.43)
 
 
+def test_extract_best_price_uses_true_best_from_full_ladder():
+    payload = {
+        "bids": [
+            {"price": "0.001", "size": "100"},
+            {"price": "0.055", "size": "5"},
+            {"price": "0.054", "size": "3"},
+        ],
+        "asks": [
+            {"price": "0.999", "size": "100"},
+            {"price": "0.057", "size": "4"},
+            {"price": "0.058", "size": "2"},
+        ],
+    }
+
+    bid = maker._extract_best_price(payload, "bid")
+    ask = maker._extract_best_price(payload, "ask")
+
+    assert bid is not None
+    assert ask is not None
+    assert bid.price == pytest.approx(0.055)
+    assert ask.price == pytest.approx(0.057)
+
+
+def test_extract_best_price_ignores_unrelated_numeric_fields():
+    payload = {
+        "asset_id": "token-A",
+        "timestamp": 1771318756,
+        "meta": {"irrelevant": 0.999},
+        "orderbook": {
+            "bids": [{"price": "0.44", "size": "1"}],
+            "asks": [{"price": "0.46", "size": "1"}],
+        },
+    }
+
+    bid = maker._extract_best_price(payload, "bid")
+    ask = maker._extract_best_price(payload, "ask")
+
+    assert bid is not None
+    assert ask is not None
+    assert bid.price == pytest.approx(0.44)
+    assert ask.price == pytest.approx(0.46)
+
+
 def test_best_price_info_tries_rest_before_ws_degrade_threshold(monkeypatch):
     maker._ws_none_streak.clear()
     maker._price_none_streak.clear()
