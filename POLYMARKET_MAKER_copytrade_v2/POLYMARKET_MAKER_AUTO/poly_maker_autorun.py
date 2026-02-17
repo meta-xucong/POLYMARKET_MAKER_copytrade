@@ -375,6 +375,46 @@ def _fetch_position_snapshot_map_from_data_api(
     return snapshot, "ok"
 
 
+def _fetch_recent_trades_from_data_api(
+    address: str,
+    *,
+    limit: int = 200,
+) -> tuple[List[Dict[str, Any]], str]:
+    if not address:
+        return [], "缺少地址，无法查询成交。"
+    url = f"{DATA_API_ROOT}/trades"
+    params = {
+        "user": address,
+        "limit": max(1, min(int(limit), 500)),
+    }
+    try:
+        with _data_api_request_lock:
+            global _data_api_last_request_ts
+            now = time.time()
+            wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
+            if wait_sec > 0:
+                time.sleep(wait_sec)
+            _data_api_last_request_ts = time.time()
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 404:
+            return [], "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
+        resp.raise_for_status()
+        payload = resp.json()
+    except requests.RequestException as exc:
+        return [], f"数据接口请求失败：{exc}"
+    except ValueError:
+        return [], "数据接口响应解析失败"
+
+    if not isinstance(payload, list):
+        return [], "数据接口返回格式异常：/trades 应返回列表。"
+    out: List[Dict[str, Any]] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        out.append(row)
+    return out, "ok"
+
+
 def _topic_id_from_entry(entry: Any) -> str:
     """从 copytrade token 条目中提取 token_id。"""
 
@@ -1058,7 +1098,9 @@ class AutoRunManager:
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
         self._last_sell_fill_poll_at: float = 0.0
-        self._self_position_prev_snapshot: Optional[Dict[str, float]] = None
+        self._last_self_sell_trade_ts: int = 0
+        self._seen_self_sell_trade_keys: set[str] = set()
+        self._seen_self_sell_tokens: set[str] = set()
         self._price_cap_stuck_since: Dict[str, float] = {}
         self._shock_stuck_since: Dict[str, float] = {}
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
@@ -2506,41 +2548,67 @@ class AutoRunManager:
         if not self._position_address:
             return
 
-        snapshot, info = _fetch_position_snapshot_map_from_data_api(self._position_address)
+        trades, info = _fetch_recent_trades_from_data_api(
+            self._position_address,
+            limit=200,
+        )
         if info != "ok":
-            print(f"[AGGRESSIVE][INFO] 自有账户持仓快照刷新失败 info={info}")
+            print(f"[AGGRESSIVE][INFO] 自有账户成交查询失败 info={info}")
             return
 
-        if self._self_position_prev_snapshot is None:
-            self._self_position_prev_snapshot = dict(snapshot)
-            return
-
-        all_tokens = set(self._self_position_prev_snapshot) | set(snapshot)
-        for token_id in all_tokens:
-            prev_size = float(self._self_position_prev_snapshot.get(token_id, 0.0) or 0.0)
-            curr_size = float(snapshot.get(token_id, 0.0) or 0.0)
-            if prev_size <= POSITION_CLEANUP_DUST_THRESHOLD:
+        processed = 0
+        max_seen = self._last_self_sell_trade_ts
+        for row in trades:
+            side = str(row.get("side") or "").upper()
+            if side != "SELL":
                 continue
-            if curr_size >= prev_size - POSITION_CLEANUP_DUST_THRESHOLD:
+
+            token_id = str(row.get("asset") or row.get("token_id") or "").strip()
+            if not token_id:
+                continue
+            if self.config.aggressive_first_sell_fill_only and token_id in self._seen_self_sell_tokens:
+                continue
+            ts_raw = row.get("timestamp")
+            try:
+                ts = int(float(ts_raw)) if ts_raw is not None else 0
+            except (TypeError, ValueError):
+                ts = 0
+            if ts > max_seen:
+                max_seen = ts
+
+            trade_key = (
+                f"{token_id}:{side}:{ts}:"
+                f"{row.get('size')}:{row.get('price')}:{row.get('conditionId')}"
+            )
+            if ts < self._last_self_sell_trade_ts:
+                continue
+            if trade_key in self._seen_self_sell_trade_keys:
                 continue
 
             task = self.tasks.get(token_id)
             if task and task.is_running():
+                self._seen_self_sell_trade_keys.add(trade_key)
                 continue
             if token_id in self.pending_burst_topics:
+                self._seen_self_sell_trade_keys.add(trade_key)
                 continue
 
             promote = token_id in self.pending_topics
             self._enqueue_burst_topic(token_id, promote=promote)
+            self._seen_self_sell_trade_keys.add(trade_key)
+            self._seen_self_sell_tokens.add(token_id)
+            processed += 1
             print(
                 "[AGGRESSIVE][REENTRY] 检测到自有账户卖出成交，已加入burst队列: "
-                f"token={token_id} prev={prev_size:.4f} curr={curr_size:.4f}"
+                f"token={token_id} ts={ts} size={row.get('size')} price={row.get('price')}"
             )
 
-            if self.config.aggressive_first_sell_fill_only:
-                continue
-
-        self._self_position_prev_snapshot = dict(snapshot)
+        if max_seen > self._last_self_sell_trade_ts:
+            self._last_self_sell_trade_ts = max_seen
+        if len(self._seen_self_sell_trade_keys) > 5000:
+            self._seen_self_sell_trade_keys.clear()
+        if processed:
+            print(f"[AGGRESSIVE][REENTRY] 本轮新增回拉 token={processed}")
 
     def _append_exit_token_record(
         self,
@@ -2810,6 +2878,7 @@ class AutoRunManager:
         self._completed_exit_cleanup_tokens.discard(topic_id)
         self._handled_sell_signals.discard(topic_id)
         self._exit_cleanup_retry_counts.pop(topic_id, None)
+        self._seen_self_sell_tokens.discard(topic_id)
         # 检查是否是回填启动。
         # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
         detail = self.topic_details.get(topic_id) or {}
@@ -3972,6 +4041,9 @@ class AutoRunManager:
         self._shared_ws_paused_until.clear()
         self._shared_ws_wait_timeout_events.clear()
         self._shared_ws_pending_since.clear()
+        self._seen_self_sell_trade_keys.clear()
+        self._seen_self_sell_tokens.clear()
+        self._last_self_sell_trade_ts = 0
 
         self._ws_cache.clear()
         self._ws_token_ids = []
