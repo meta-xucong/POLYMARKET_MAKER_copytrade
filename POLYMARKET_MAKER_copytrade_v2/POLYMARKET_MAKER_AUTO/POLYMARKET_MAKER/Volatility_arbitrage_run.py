@@ -2329,8 +2329,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     # ========== Maker 配置（从 global_config 传递）==========
     maker_poll_sec = float(run_cfg.get("maker_poll_sec", 10.0))
     maker_position_sync_interval = float(run_cfg.get("maker_position_sync_interval", POSITION_SYNC_INTERVAL))
+    keep_sell_orders_on_timeout = bool(run_cfg.get("keep_sell_orders_on_timeout", False))
     if maker_poll_sec != 10.0 or maker_position_sync_interval != POSITION_SYNC_INTERVAL:
         print(f"[INIT] Maker 配置: poll_sec={maker_poll_sec}s, position_sync_interval={maker_position_sync_interval}s")
+    if keep_sell_orders_on_timeout:
+        print("[INIT] 已启用激进模式：时间阈值退出时保留卖单")
 
     # ========== Slot Refill (回填) 恢复状态 ==========
     resume_state = run_cfg.get("resume_state")
@@ -3995,14 +3998,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(
                 "[RELEASE] 卖出挂单长期无动作，准备退出。"
             )
-            # 防御性撤单：确保不残留卖单锁定仓位（maker_execution 层已尝试撤单，
-            # 此处作为第二道防线以防上层撤单失败或遗漏）
-            try:
-                canceled = _cancel_open_orders_for_token(client, token_id)
-                if canceled:
-                    print(f"[RELEASE] ABANDONED 退出前撤销 {canceled} 个残留挂单")
-            except Exception:
-                pass
+            if keep_sell_orders_on_timeout:
+                print("[RELEASE] 激进模式启用：ABANDONED 退出时不撤销卖单。")
+            else:
+                # 防御性撤单：确保不残留卖单锁定仓位（maker_execution 层已尝试撤单，
+                # 此处作为第二道防线以防上层撤单失败或遗漏）
+                try:
+                    canceled = _cancel_open_orders_for_token(client, token_id)
+                    if canceled:
+                        print(f"[RELEASE] ABANDONED 退出前撤销 {canceled} 个残留挂单")
+                except Exception:
+                    pass
             # 获取当前持仓和价格信息用于回填
             snap = latest.get(token_id) or {}
             status = strategy.status()

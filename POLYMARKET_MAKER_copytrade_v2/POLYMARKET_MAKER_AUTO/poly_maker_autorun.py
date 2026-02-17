@@ -88,6 +88,13 @@ DEFAULT_GLOBAL_CONFIG = {
     "ws_silence_timeout_sec": 1200.0,  # WS静默重连阈值（默认20分钟，降低低活跃误重连）
     "ws_custom_feature_enabled": True,  # 订阅 custom feature，启用 best_bid_ask/new_market 等事件
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
+    # 可选策略模式（classic/aggressive）
+    "strategy_mode": "classic",
+    "aggressive_burst_slots": 5,
+    "aggressive_enable_self_sell_reentry": False,
+    "aggressive_reentry_source": "self_account_fills_only",
+    "aggressive_first_sell_fill_only": True,
+    "aggressive_sell_fill_poll_sec": 15.0,
     # 全局总清仓（默认关闭）
     "total_liquidation": {
         "enable_total_liquidation": False,
@@ -652,6 +659,20 @@ class GlobalConfig:
         DEFAULT_GLOBAL_CONFIG["ws_custom_feature_enabled"]
     )
     exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
+    strategy_mode: str = str(DEFAULT_GLOBAL_CONFIG["strategy_mode"])
+    aggressive_burst_slots: int = int(DEFAULT_GLOBAL_CONFIG["aggressive_burst_slots"])
+    aggressive_enable_self_sell_reentry: bool = bool(
+        DEFAULT_GLOBAL_CONFIG["aggressive_enable_self_sell_reentry"]
+    )
+    aggressive_reentry_source: str = str(
+        DEFAULT_GLOBAL_CONFIG["aggressive_reentry_source"]
+    )
+    aggressive_first_sell_fill_only: bool = bool(
+        DEFAULT_GLOBAL_CONFIG["aggressive_first_sell_fill_only"]
+    )
+    aggressive_sell_fill_poll_sec: float = float(
+        DEFAULT_GLOBAL_CONFIG["aggressive_sell_fill_poll_sec"]
+    )
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
@@ -849,6 +870,56 @@ class GlobalConfig:
             exit_start_stagger_sec=float(
                 merged.get("exit_start_stagger_sec", cls.exit_start_stagger_sec)
             ),
+            strategy_mode=str(
+                scheduler.get("strategy_mode", merged.get("strategy_mode", cls.strategy_mode))
+                or "classic"
+            ).strip().lower(),
+            aggressive_burst_slots=max(
+                0,
+                int(
+                    scheduler.get(
+                        "aggressive_burst_slots",
+                        merged.get("aggressive_burst_slots", cls.aggressive_burst_slots),
+                    )
+                ),
+            ),
+            aggressive_enable_self_sell_reentry=bool(
+                scheduler.get(
+                    "aggressive_enable_self_sell_reentry",
+                    merged.get(
+                        "aggressive_enable_self_sell_reentry",
+                        cls.aggressive_enable_self_sell_reentry,
+                    ),
+                )
+            ),
+            aggressive_reentry_source=str(
+                scheduler.get(
+                    "aggressive_reentry_source",
+                    merged.get("aggressive_reentry_source", cls.aggressive_reentry_source),
+                )
+                or cls.aggressive_reentry_source
+            ).strip().lower(),
+            aggressive_first_sell_fill_only=bool(
+                scheduler.get(
+                    "aggressive_first_sell_fill_only",
+                    merged.get(
+                        "aggressive_first_sell_fill_only",
+                        cls.aggressive_first_sell_fill_only,
+                    ),
+                )
+            ),
+            aggressive_sell_fill_poll_sec=max(
+                1.0,
+                float(
+                    scheduler.get(
+                        "aggressive_sell_fill_poll_sec",
+                        merged.get(
+                            "aggressive_sell_fill_poll_sec",
+                            cls.aggressive_sell_fill_poll_sec,
+                        ),
+                    )
+                ),
+            ),
             # Slot refill (回填) 配置
             enable_slot_refill=bool(
                 scheduler.get("enable_slot_refill", merged.get("enable_slot_refill", True))
@@ -952,6 +1023,7 @@ class AutoRunManager:
         self.topic_details: Dict[str, Dict[str, Any]] = {}
         self.handled_topics: set[str] = set()
         self.pending_topics: List[str] = []
+        self.pending_burst_topics: List[str] = []
         self.pending_exit_topics: List[str] = []
         self._next_topics_refresh: float = 0.0
         self._next_status_dump: float = 0.0
@@ -985,6 +1057,8 @@ class AutoRunManager:
         self._pending_first_seen: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
+        self._last_sell_fill_poll_at: float = 0.0
+        self._self_position_prev_snapshot: Optional[Dict[str, float]] = None
         self._price_cap_stuck_since: Dict[str, float] = {}
         self._shock_stuck_since: Dict[str, float] = {}
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
@@ -1009,12 +1083,35 @@ class AutoRunManager:
         self._last_cleanup_date: Optional[str] = None  # 记录上次清理日期，避免同一天重复清理
         self._total_liquidation = TotalLiquidationManager(self.config, PROJECT_ROOT)
 
+    def _is_aggressive_mode(self) -> bool:
+        mode = (self.config.strategy_mode or "classic").strip().lower()
+        return mode == "aggressive"
+
+    def _burst_slots(self) -> int:
+        if not self._is_aggressive_mode():
+            return 0
+        return max(0, int(self.config.aggressive_burst_slots))
+
+    def _running_burst_count(self) -> int:
+        count = 0
+        for task in self.tasks.values():
+            if not task.is_running():
+                continue
+            lane = (self.topic_details.get(task.topic_id) or {}).get("schedule_lane")
+            if lane == "burst":
+                count += 1
+        return count
+
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
         self.config.ensure_dirs()
         self._load_handled_topics()
         self._restore_runtime_status()
-        print(f"[INIT] autorun start | copytrade_poll={self.config.copytrade_poll_sec}s")
+        mode = "aggressive" if self._is_aggressive_mode() else "classic"
+        print(
+            f"[INIT] autorun start | copytrade_poll={self.config.copytrade_poll_sec}s "
+            f"strategy_mode={mode} burst_slots={self._burst_slots()}"
+        )
         self._start_ws_aggregator()
         try:
             while not self.stop_event.is_set():
@@ -1034,6 +1131,14 @@ class AutoRunManager:
                     if self.config.enable_slot_refill and now >= self._next_refill_check:
                         self._schedule_refill()
                         self._next_refill_check = now + self.config.refill_check_interval_sec
+                    if (
+                        self._is_aggressive_mode()
+                        and self.config.aggressive_enable_self_sell_reentry
+                        and now - self._last_sell_fill_poll_at
+                        >= float(self.config.aggressive_sell_fill_poll_sec)
+                    ):
+                        self._poll_aggressive_self_sell_reentry()
+                        self._last_sell_fill_poll_at = now
                     if (
                         self.config.enable_pending_soft_eviction
                         and now >= self._next_pending_eviction
@@ -1107,6 +1212,7 @@ class AutoRunManager:
         # 使用 copy()+list() 先做快照，避免直接迭代共享容器导致并发迭代异常。
         task_items = list(self.tasks.copy().items())
         pending_snapshot = list(self.pending_topics)
+        burst_pending_snapshot = list(self.pending_burst_topics)
 
         # 1. 运行中的任务
         for topic_id, task in task_items:
@@ -1115,6 +1221,10 @@ class AutoRunManager:
 
         # 2. 待启动的pending tokens（提前订阅，避免启动后等待）
         for topic_id in pending_snapshot:
+            if topic_id not in token_ids:
+                token_ids.append(topic_id)
+
+        for topic_id in burst_pending_snapshot:
             if topic_id not in token_ids:
                 token_ids.append(topic_id)
 
@@ -2007,6 +2117,7 @@ class AutoRunManager:
                     if (
                         task.topic_id not in self.pending_exit_topics
                         and task.topic_id not in self.pending_topics
+                        and task.topic_id not in self.pending_burst_topics
                     ):
                         self.pending_exit_topics.append(task.topic_id)
                     print(
@@ -2126,18 +2237,38 @@ class AutoRunManager:
         return False
 
     def _schedule_pending_topics(self) -> None:
-        running = sum(1 for t in self.tasks.values() if t.is_running())
-        checks_remaining = len(self.pending_topics)
-        while (
-            self.pending_topics
-            and running < max(1, int(self.config.max_concurrent_tasks))
-        ):
-            if checks_remaining <= 0:
+        base_limit = max(1, int(self.config.max_concurrent_tasks))
+        burst_limit = self._burst_slots()
+        max_total = base_limit + burst_limit
+        checks_remaining = len(self.pending_topics) + len(self.pending_burst_topics)
+
+        while checks_remaining > 0:
+            running_total = sum(1 for t in self.tasks.values() if t.is_running())
+            running_burst = self._running_burst_count()
+            running_base = max(0, running_total - running_burst)
+            if running_total >= max_total:
                 break
+
+            use_burst = bool(
+                self.pending_burst_topics
+                and running_burst < burst_limit
+            )
+            use_base = bool(
+                self.pending_topics
+                and running_base < base_limit
+            )
+            if not use_burst and not use_base:
+                break
+
             now = time.time()
             if now < self._next_topic_start_at:
                 break
-            topic_id = self.pending_topics.pop(0)
+
+            lane = "burst" if use_burst else "base"
+            if lane == "burst":
+                topic_id = self.pending_burst_topics.pop(0)
+            else:
+                topic_id = self.pending_topics.pop(0)
             # 启动前检查市场状态，若已关闭则跳过（不重新入队）
             if self._check_market_closed_before_start(topic_id):
                 checks_remaining -= 1
@@ -2148,7 +2279,10 @@ class AutoRunManager:
 
             paused_until = self._shared_ws_paused_until.get(topic_id)
             if paused_until and now < paused_until:
-                self._enqueue_pending_topic(topic_id)
+                if lane == "burst":
+                    self._enqueue_burst_topic(topic_id)
+                else:
+                    self._enqueue_pending_topic(topic_id)
                 checks_remaining -= 1
                 continue
 
@@ -2211,7 +2345,10 @@ class AutoRunManager:
                         print(
                             f"[WS][PAUSE] topic={topic_id[:8]}... 暂停 {pause_seconds:.0f}s"
                         )
-                self._enqueue_pending_topic(topic_id)
+                if lane == "burst":
+                    self._enqueue_burst_topic(topic_id)
+                else:
+                    self._enqueue_pending_topic(topic_id)
                 checks_remaining -= 1
                 continue
             if topic_id in self._shared_ws_pending_since:
@@ -2224,6 +2361,8 @@ class AutoRunManager:
                     f" (等待了 {waited:.1f}s)"
                 )
 
+            detail = self.topic_details.setdefault(topic_id, {})
+            detail["schedule_lane"] = lane
             self._ws_starting_topics.add(topic_id)
             try:
                 started = self._start_topic_process(topic_id)
@@ -2242,13 +2381,15 @@ class AutoRunManager:
                 self._ws_starting_topics.discard(topic_id)
             if not started:
                 # 启动失败时重新入队，避免话题被遗忘
-                self._enqueue_pending_topic(topic_id)
+                if lane == "burst":
+                    self._enqueue_burst_topic(topic_id)
+                else:
+                    self._enqueue_pending_topic(topic_id)
             elif started:
                 self._shared_ws_pending_since.pop(topic_id, None)
                 self._next_topic_start_at = now + max(
                     0.0, float(self.config.topic_start_cooldown_sec)
                 )
-            running = sum(1 for t in self.tasks.values() if t.is_running())
             checks_remaining -= 1
 
     def _schedule_pending_exit_cleanup(self) -> None:
@@ -2282,10 +2423,47 @@ class AutoRunManager:
             self.pending_topics.append(topic_id)
         self._pending_first_seen.setdefault(topic_id, time.time())
 
+    def _enqueue_burst_topic(self, topic_id: str, *, promote: bool = False) -> None:
+        if not topic_id:
+            return
+        if topic_id in self.pending_topics or topic_id in self.pending_burst_topics:
+            self._remove_pending_topic(topic_id)
+        if topic_id in self.pending_burst_topics:
+            if promote:
+                try:
+                    self.pending_burst_topics.remove(topic_id)
+                except ValueError:
+                    pass
+                self.pending_burst_topics.insert(0, topic_id)
+            return
+        if promote:
+            self.pending_burst_topics.insert(0, topic_id)
+        else:
+            self.pending_burst_topics.append(topic_id)
+        self._pending_first_seen.setdefault(topic_id, time.time())
+
+    def _remove_burst_topic(self, topic_id: str) -> None:
+        if topic_id in self.pending_burst_topics:
+            try:
+                self.pending_burst_topics.remove(topic_id)
+            except ValueError:
+                pass
+        if topic_id not in self.pending_topics:
+            self._pending_first_seen.pop(topic_id, None)
+            self._shared_ws_wait_failures.pop(topic_id, None)
+            self._shared_ws_paused_until.pop(topic_id, None)
+            self._shared_ws_wait_timeout_events.pop(topic_id, None)
+            self._shared_ws_pending_since.pop(topic_id, None)
+
     def _remove_pending_topic(self, topic_id: str) -> None:
         if topic_id in self.pending_topics:
             try:
                 self.pending_topics.remove(topic_id)
+            except ValueError:
+                pass
+        if topic_id in self.pending_burst_topics:
+            try:
+                self.pending_burst_topics.remove(topic_id)
             except ValueError:
                 pass
         self._pending_first_seen.pop(topic_id, None)
@@ -2293,6 +2471,58 @@ class AutoRunManager:
         self._shared_ws_paused_until.pop(topic_id, None)
         self._shared_ws_wait_timeout_events.pop(topic_id, None)
         self._shared_ws_pending_since.pop(topic_id, None)
+
+    def _poll_aggressive_self_sell_reentry(self) -> None:
+        if self.config.aggressive_reentry_source != "self_account_fills_only":
+            return
+        if not self.config.aggressive_enable_self_sell_reentry:
+            return
+
+        if not self._position_address:
+            address, origin = _resolve_position_address_from_env()
+            self._position_address = address
+            self._position_address_origin = origin
+            if not address and not self._position_address_warned:
+                self._position_address_warned = True
+                print(f"[AGGRESSIVE][WARN] {origin}")
+        if not self._position_address:
+            return
+
+        snapshot, info = _fetch_position_snapshot_map_from_data_api(self._position_address)
+        if info != "ok":
+            print(f"[AGGRESSIVE][INFO] 自有账户持仓快照刷新失败 info={info}")
+            return
+
+        if self._self_position_prev_snapshot is None:
+            self._self_position_prev_snapshot = dict(snapshot)
+            return
+
+        all_tokens = set(self._self_position_prev_snapshot) | set(snapshot)
+        for token_id in all_tokens:
+            prev_size = float(self._self_position_prev_snapshot.get(token_id, 0.0) or 0.0)
+            curr_size = float(snapshot.get(token_id, 0.0) or 0.0)
+            if prev_size <= POSITION_CLEANUP_DUST_THRESHOLD:
+                continue
+            if curr_size >= prev_size - POSITION_CLEANUP_DUST_THRESHOLD:
+                continue
+
+            task = self.tasks.get(token_id)
+            if task and task.is_running():
+                continue
+            if token_id in self.pending_burst_topics:
+                continue
+
+            promote = token_id in self.pending_topics
+            self._enqueue_burst_topic(token_id, promote=promote)
+            print(
+                "[AGGRESSIVE][REENTRY] 检测到自有账户卖出成交，已加入burst队列: "
+                f"token={token_id} prev={prev_size:.4f} curr={curr_size:.4f}"
+            )
+
+            if self.config.aggressive_first_sell_fill_only:
+                continue
+
+        self._self_position_prev_snapshot = dict(snapshot)
 
     def _append_exit_token_record(
         self,
@@ -2326,7 +2556,7 @@ class AutoRunManager:
     def _evict_stale_pending_topics(self) -> None:
         if not self.config.enable_pending_soft_eviction:
             return
-        if not self.pending_topics:
+        if not self.pending_topics and not self.pending_burst_topics:
             return
 
         now = time.time()
@@ -2335,7 +2565,8 @@ class AutoRunManager:
             return
 
         evicted: List[str] = []
-        for topic_id in list(self.pending_topics):
+        pending_all = list(dict.fromkeys(self.pending_topics + self.pending_burst_topics))
+        for topic_id in pending_all:
             first_seen = self._pending_first_seen.get(topic_id, now)
             if now - first_seen < cutoff_sec:
                 continue
@@ -2435,6 +2666,8 @@ class AutoRunManager:
         # Maker 子进程配置（从 global_config 传递）
         merged["maker_poll_sec"] = self.config.maker_poll_sec
         merged["maker_position_sync_interval"] = self.config.maker_position_sync_interval
+        merged["strategy_mode"] = "aggressive" if self._is_aggressive_mode() else "classic"
+        merged["keep_sell_orders_on_timeout"] = bool(self._is_aggressive_mode())
 
         return merged
 
@@ -2582,7 +2815,7 @@ class AutoRunManager:
         task = self.tasks.get(token_id)
         if task and task.is_running():
             return
-        if token_id in self.pending_topics:
+        if token_id in self.pending_topics or token_id in self.pending_burst_topics:
             self._remove_pending_topic(token_id)
         if token_id in self.pending_exit_topics:
             try:
@@ -2708,6 +2941,12 @@ class AutoRunManager:
         print(f"[WARN] 未识别命令: {cmd}")
 
     def _print_status(self) -> None:
+        print(
+            f"[STATUS] mode={'aggressive' if self._is_aggressive_mode() else 'classic'} "
+            f"pending_base={len(self.pending_topics)} "
+            f"pending_burst={len(self.pending_burst_topics)} "
+            f"pending_exit={len(self.pending_exit_topics)}"
+        )
         if not self.tasks:
             print("[RUN] 当前无运行中的话题")
             return
@@ -2798,7 +3037,7 @@ class AutoRunManager:
     def _purge_inactive_tasks(self) -> None:
         """移除已停止/结束且不再需要展示的任务。
 
-        注意：如果 topic 仍在 pending_topics 或 pending_exit_topics 中等待重新调度，
+        注意：如果 topic 仍在 pending_topics / pending_burst_topics / pending_exit_topics 中等待重新调度，
         则保留 task 对象（避免丢失待重启的 token）。
         """
 
@@ -2808,7 +3047,11 @@ class AutoRunManager:
                 continue
             if task.status in {"stopped", "ended", "exited", "error"} or task.no_restart:
                 # 如果 token 仍在等待队列中，不要 purge（否则会丢失重试机会）
-                if topic_id in self.pending_topics or topic_id in self.pending_exit_topics:
+                if (
+                    topic_id in self.pending_topics
+                    or topic_id in self.pending_burst_topics
+                    or topic_id in self.pending_exit_topics
+                ):
                     continue
                 removable.append(topic_id)
 
@@ -2883,7 +3126,7 @@ class AutoRunManager:
                 print(f"[CLEANUP] 更新 copytrade_sell_signals.json 失败: {exc}")
 
         # 3. 从内存队列中移除
-        if token_id in self.pending_topics:
+        if token_id in self.pending_topics or token_id in self.pending_burst_topics:
             self._remove_pending_topic(token_id)
             print(f"[CLEANUP] 已从 pending_topics 移除 token={token_id[:20]}...")
 
@@ -2988,7 +3231,7 @@ class AutoRunManager:
 
         running = sum(1 for t in self.tasks.values() if t.is_running())
         max_slots = max(1, int(self.config.max_concurrent_tasks))
-        pending = len(self.pending_topics)
+        pending = len(self.pending_topics) + len(self.pending_burst_topics)
         has_capacity = running < max_slots
         if self._refill_debug:
             print(
@@ -3097,6 +3340,9 @@ class AutoRunManager:
             if token_id in self.pending_topics:
                 skip_stats["already_pending"] = skip_stats.get("already_pending", 0) + 1
                 continue
+            if token_id in self.pending_burst_topics:
+                skip_stats["already_pending_burst"] = skip_stats.get("already_pending_burst", 0) + 1
+                continue
             if token_id in self.pending_exit_topics:
                 skip_stats["pending_exit"] = skip_stats.get("pending_exit", 0) + 1
                 continue
@@ -3140,7 +3386,7 @@ class AutoRunManager:
                 running = sum(1 for t in self.tasks.values() if t.is_running())
                 print(
                     "[REFILL][DEBUG] slot不足，跳过回填: "
-                    f"running={running} pending={len(self.pending_topics)} "
+                    f"running={running} pending={len(self.pending_topics)+len(self.pending_burst_topics)} "
                     f"max={self.config.max_concurrent_tasks}"
                 )
             return
@@ -3155,7 +3401,7 @@ class AutoRunManager:
             running = sum(1 for t in self.tasks.values() if t.is_running())
             print(
                 "[REFILL] 无可回填token，记录="
-                f"{len(exit_records)} 运行={running} pending={len(self.pending_topics)}"
+                f"{len(exit_records)} 运行={running} pending={len(self.pending_topics)+len(self.pending_burst_topics)}"
             )
             return
 
@@ -3277,6 +3523,8 @@ class AutoRunManager:
                 added_topics: List[str] = []
                 for topic_id in new_topics:
                     if topic_id in self.pending_topics:
+                        continue
+                    if topic_id in self.pending_burst_topics:
                         continue
                     if topic_id in self.tasks and self.tasks[topic_id].is_running():
                         continue
@@ -3538,6 +3786,7 @@ class AutoRunManager:
             if (
                 token_id not in self.pending_exit_topics
                 and token_id not in self.pending_topics
+                and token_id not in self.pending_burst_topics
             ):
                 self.pending_exit_topics.append(token_id)
         self._handled_sell_signals.add(token_id)
@@ -3686,6 +3935,7 @@ class AutoRunManager:
     def _reset_all_runtime_state(self) -> None:
         """将调度器状态清零到初始空白态，并立即落盘。"""
         self.pending_topics.clear()
+        self.pending_burst_topics.clear()
         self.pending_exit_topics.clear()
         self.tasks.clear()
         self.handled_topics.clear()
@@ -3791,6 +4041,15 @@ class AutoRunManager:
                 continue
             self.pending_exit_topics.append(topic_id)
 
+        pending_burst_topics = payload.get("pending_burst_topics") or []
+        for topic_id in pending_burst_topics:
+            topic_id = str(topic_id)
+            if not topic_id:
+                continue
+            if topic_id in dead_tokens:
+                continue
+            self._enqueue_burst_topic(topic_id)
+
         handled_sell_signals = payload.get("handled_sell_signals") or []
         self._handled_sell_signals = {
             str(token_id) for token_id in handled_sell_signals if str(token_id).strip()
@@ -3816,6 +4075,7 @@ class AutoRunManager:
         # 仅保留仍在 sell 信号文件、pending 队列或 tasks 中的 token
         active_tokens = (
             set(self.pending_topics)
+            | set(self.pending_burst_topics)
             | set(self.pending_exit_topics)
             | set(self.tasks.keys())
             | self._handled_sell_signals
@@ -3830,6 +4090,7 @@ class AutoRunManager:
             "handled_topics_total": len(self.handled_topics),
             "handled_topics": sorted(self.handled_topics),
             "pending_topics": list(self.pending_topics),
+            "pending_burst_topics": list(self.pending_burst_topics),
             "pending_exit_topics": list(self.pending_exit_topics),
             "handled_sell_signals": sorted(self._handled_sell_signals),
             "completed_exit_cleanup_tokens": sorted(
