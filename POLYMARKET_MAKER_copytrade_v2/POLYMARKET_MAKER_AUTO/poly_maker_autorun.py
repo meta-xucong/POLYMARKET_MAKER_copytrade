@@ -432,6 +432,41 @@ def _extract_best_bid_ask_from_book_event(ev: Dict[str, Any]) -> tuple[Optional[
     return bid, ask
 
 
+def _detect_suspicious_quote(
+    bid: float,
+    ask: float,
+    *,
+    last_trade_price: Optional[float] = None,
+) -> Optional[str]:
+    """识别明显异常的盘口，避免污染共享 WS 缓存。"""
+    if bid <= 0 or ask <= 0:
+        return "non_positive_quote"
+    if ask < bid:
+        return "crossed_book"
+
+    mid = (bid + ask) / 2.0
+    if mid <= 0:
+        return "invalid_mid"
+
+    spread_ratio = (ask - bid) / mid
+    if spread_ratio >= 1.8:
+        return f"spread_ratio_too_wide:{spread_ratio:.3f}"
+
+    if bid <= 0.02 and ask >= 0.98:
+        return "edge_quote_0.01_0.99"
+
+    if (
+        last_trade_price is not None
+        and last_trade_price > 0
+        and spread_ratio >= 1.0
+    ):
+        last_dev = abs(last_trade_price - mid) / mid
+        if last_dev >= 0.6:
+            return f"last_mid_diverge:{last_dev:.3f}"
+
+    return None
+
+
 def _env_flag(name: str) -> bool:
     raw = os.getenv(name, "").strip().lower()
     return raw in {"1", "true", "yes", "on", "y", "debug"}
@@ -1497,21 +1532,77 @@ class AutoRunManager:
             bid = _coerce_float(pc.get("best_bid")) or 0.0
             ask = _coerce_float(pc.get("best_ask")) or 0.0
 
-            # ✅ 计算mid价格（最可靠的当前市场价格）
-            mid = (bid + ask) / 2.0 if bid and ask else (bid or ask or 0.0)
-
             # ✅ 只使用last_trade_price作为真实成交价，不使用price字段（price含义不明确）
             # price字段可能是历史价格或订单簿深度价格，不适合用作当前价格
             last = _coerce_float(pc.get("last_trade_price"))
-
-            # 如果没有last_trade_price，直接使用mid
-            if last is None or last == 0.0:
-                last = mid
 
             # 获取当前序列号并递增（用于去重）
             with self._ws_cache_lock:
                 old_data = self._ws_cache.get(token_id, {})
                 seq = old_data.get("seq", 0) + 1
+
+            suspicious_reason = _detect_suspicious_quote(
+                bid,
+                ask,
+                last_trade_price=last,
+            )
+
+            if suspicious_reason:
+                prev_bid = _coerce_float(old_data.get("best_bid")) or 0.0
+                prev_ask = _coerce_float(old_data.get("best_ask")) or 0.0
+                prev_price = _coerce_float(old_data.get("price")) or 0.0
+                if prev_bid > 0 and prev_ask > 0:
+                    bid, ask = prev_bid, prev_ask
+                    # 回退盘口时，优先沿用上一笔缓存价格，避免异常事件携带的 price 污染缓存。
+                    if prev_price > 0:
+                        last = prev_price
+                    if not hasattr(self, "_ws_quote_sanity_stats"):
+                        self._ws_quote_sanity_stats = {
+                            "fallback_used": 0,
+                            "skip_new_token": 0,
+                            "last_log_ts": 0.0,
+                        }
+                    self._ws_quote_sanity_stats["fallback_used"] += 1
+                else:
+                    # 新 token 仅收到异常盘口时，宁可跳过该条，避免污染 shock 风控输入。
+                    if not hasattr(self, "_ws_suspicious_quote_last_log"):
+                        self._ws_suspicious_quote_last_log = {}
+                    if not hasattr(self, "_ws_quote_sanity_stats"):
+                        self._ws_quote_sanity_stats = {
+                            "fallback_used": 0,
+                            "skip_new_token": 0,
+                            "last_log_ts": 0.0,
+                        }
+                    self._ws_quote_sanity_stats["skip_new_token"] += 1
+                    now_ts = time.time()
+                    last_log_ts = self._ws_suspicious_quote_last_log.get(token_id, 0.0)
+                    if now_ts - last_log_ts >= 60.0:
+                        print(
+                            "[WS][QUOTE_SANITY] 跳过异常盘口 "
+                            f"token={token_id[:8]}... reason={suspicious_reason} "
+                            f"bid={bid} ask={ask} last={last}"
+                        )
+                        self._ws_suspicious_quote_last_log[token_id] = now_ts
+                    continue
+
+                # 定期打印净化统计，便于评估脏盘口污染程度。
+                stats = getattr(self, "_ws_quote_sanity_stats", None)
+                if stats is not None:
+                    now_ts = time.time()
+                    if now_ts - float(stats.get("last_log_ts", 0.0)) >= 300.0:
+                        print(
+                            "[WS][QUOTE_SANITY] 统计: "
+                            f"fallback_used={int(stats.get('fallback_used', 0))} "
+                            f"skip_new_token={int(stats.get('skip_new_token', 0))}"
+                        )
+                        stats["last_log_ts"] = now_ts
+
+            # ✅ 计算mid价格（最可靠的当前市场价格）
+            mid = (bid + ask) / 2.0 if bid and ask else (bid or ask or 0.0)
+
+            # 如果没有last_trade_price，直接使用mid
+            if last is None or last == 0.0:
+                last = mid
 
             payload = {
                 "price": last,
