@@ -206,10 +206,14 @@ CLOB_API_HOST = "https://clob.polymarket.com"
 GAMMA_ROOT = os.getenv("POLY_GAMMA_ROOT", "https://gamma-api.polymarket.com")
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 API_MIN_ORDER_SIZE = 5.0
-# P0修复：将过期阈值从5秒放宽到60秒
-# 原因：5秒太严格，导致从主循环到买入流程之间的正常延迟就会让快照过期
-# 60秒容忍短时抖动与API延迟，降低噪声，同时保持陈旧数据检测能力
-ORDERBOOK_STALE_AFTER_SEC = 60.0
+# 共享WS缓存过期阈值（秒）：
+# - 默认 180 秒，优先降低“低活跃市场正常无更新”导致的误判；
+# - 可通过环境变量 POLY_ORDERBOOK_STALE_AFTER_SEC 覆盖。
+# 说明：该阈值用于判断缓存是否过期，不影响WS连接是否重连。
+try:
+    ORDERBOOK_STALE_AFTER_SEC = max(30.0, float(os.getenv("POLY_ORDERBOOK_STALE_AFTER_SEC", "180")))
+except (TypeError, ValueError):
+    ORDERBOOK_STALE_AFTER_SEC = 180.0
 # WS+REST 最终价格连续 None 的硬编码退出阈值（0=禁用）
 PRICE_NONE_EXIT_COUNT = 100
 POSITION_SYNC_INTERVAL = 60.0
