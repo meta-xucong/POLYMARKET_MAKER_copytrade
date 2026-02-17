@@ -16,8 +16,8 @@
         "no_trade_duration_minutes": 240.0,
         "min_free_balance": 20.0,
         "enable_low_balance_force_trigger": true,
-        "low_balance_force_hours": 6.0,
-        "require_conditions": 2,
+        "low_balance_force_hours": 9.0,
+        "require_conditions": 3,
         "balance_poll_interval_sec": 600.0,
         "startup_grace_hours": 4.0
       },
