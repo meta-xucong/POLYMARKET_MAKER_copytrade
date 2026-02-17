@@ -34,7 +34,7 @@
     "timezone": null
   },
   "shock_guard": {
-    "enabled": true,
+    "enabled": false,
     "shock_window_sec": 180,
     "shock_drop_pct": 0.1,
     "shock_velocity_pct_per_sec": null,
