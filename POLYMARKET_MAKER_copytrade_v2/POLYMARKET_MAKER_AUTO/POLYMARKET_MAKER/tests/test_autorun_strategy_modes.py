@@ -41,3 +41,15 @@ def test_aggressive_mode_uses_burst_slots_and_queue_promotion():
     manager._enqueue_burst_topic("t1", promote=True)
     assert "t1" not in manager.pending_topics
     assert manager.pending_burst_topics[0] == "t1"
+
+
+def test_classic_mode_drains_burst_queue_into_pending():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic"}})
+    manager = _build_manager(cfg)
+    manager.pending_burst_topics = ["x", "y"]
+    manager.pending_topics = ["z"]
+
+    manager._normalize_pending_queues_for_mode()
+
+    assert manager.pending_burst_topics == []
+    assert manager.pending_topics == ["z", "x", "y"]

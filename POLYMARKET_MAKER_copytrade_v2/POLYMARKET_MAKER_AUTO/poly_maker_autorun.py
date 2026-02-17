@@ -1102,11 +1102,28 @@ class AutoRunManager:
                 count += 1
         return count
 
+    def _normalize_pending_queues_for_mode(self) -> None:
+        """模式切换保护：classic 下将 burst 队列回落到普通 pending，防止 token 卡住。"""
+        if self._is_aggressive_mode():
+            return
+        if not self.pending_burst_topics:
+            return
+        moved = 0
+        for topic_id in list(self.pending_burst_topics):
+            if topic_id in self.pending_topics:
+                continue
+            self.pending_topics.append(topic_id)
+            moved += 1
+        self.pending_burst_topics.clear()
+        if moved:
+            print(f"[MODE] classic 模式已接管 {moved} 个 burst 队列 token")
+
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
         self.config.ensure_dirs()
         self._load_handled_topics()
         self._restore_runtime_status()
+        self._normalize_pending_queues_for_mode()
         mode = "aggressive" if self._is_aggressive_mode() else "classic"
         print(
             f"[INIT] autorun start | copytrade_poll={self.config.copytrade_poll_sec}s "
@@ -1117,6 +1134,7 @@ class AutoRunManager:
             while not self.stop_event.is_set():
                 try:
                     now = time.time()
+                    self._normalize_pending_queues_for_mode()
                     self._process_commands()
                     self._poll_tasks()
                     self._schedule_pending_exit_cleanup()
