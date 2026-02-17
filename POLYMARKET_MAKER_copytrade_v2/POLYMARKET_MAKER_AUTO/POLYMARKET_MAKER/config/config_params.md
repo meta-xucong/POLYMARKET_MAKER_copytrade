@@ -131,8 +131,10 @@
 | `trigger.startup_grace_hours` | 启动保护期（保护期内不记空闲槽位条件）。 | 浮点（小时） | `6` |
 | `trigger.no_trade_duration_minutes` | 长时间无成交/无行情更新阈值。 | 浮点（分钟） | `180` |
 | `trigger.min_free_balance` | 可用 USDC 余额下限阈值。 | 浮点 | `20` |
+| `trigger.enable_low_balance_force_trigger` | 是否启用“低余额持续超时即单独触发总清仓”。开启后满足持续时长会直接触发，不受 `require_conditions` 约束。 | 布尔 | `true` |
+| `trigger.low_balance_force_hours` | 低余额持续触发阈值（小时）。当可用余额持续低于 `min_free_balance` 且达到该时长时，直接触发总清仓。 | 浮点（小时） | `6` |
 | `trigger.balance_poll_interval_sec` | 余额采样间隔。 | 浮点（秒） | `120` |
-| `trigger.require_conditions` | 触发所需命中条件数（3 选 N）。 | 整数 | `2` |
+| `trigger.require_conditions` | 触发所需命中条件数（常规条件计数；不含上述“低余额强制触发”分支）。 | 整数 | `2` |
 | `liquidation.token_scope_mode` | 总清仓范围模式：`copytrade`=仅清仓 copytrade 记录 token；`all_positions`=清仓全部持仓 token。 | 枚举字符串 | `copytrade` |
 | `liquidation.position_value_threshold` | 仅清仓价值不低于该值的仓位。 | 浮点 | `3` |
 | `liquidation.spread_threshold` | 点差阈值：大于该值优先 maker，小于等于该值走 taker。 | 浮点 | `0.01` |
@@ -156,6 +158,12 @@
 ```json
 "total_liquidation": {
   "enable_total_liquidation": true,
+  "trigger": {
+    "min_free_balance": 20.0,
+    "enable_low_balance_force_trigger": true,
+    "low_balance_force_hours": 6.0,
+    "require_conditions": 2
+  },
   "liquidation": {
     "token_scope_mode": "all_positions",
     "position_value_threshold": 3.0,
