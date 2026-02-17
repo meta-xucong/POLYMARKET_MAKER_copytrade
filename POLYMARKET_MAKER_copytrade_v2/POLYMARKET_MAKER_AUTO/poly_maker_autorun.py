@@ -401,20 +401,53 @@ def _coerce_float(value: Any) -> Optional[float]:
     return None
 
 
-def _extract_top_price_from_levels(levels: Any) -> Optional[float]:
-    """从订单簿档位中提取最优价格（兼容 dict/list 结构）。"""
+def _extract_top_price_from_levels(levels: Any, side: str) -> Optional[float]:
+    """从订单簿档位中提取最优价格（兼容 dict/list 结构）。
+
+    注意：WS book 事件的档位列表不保证始终按最优价排序，且可能携带 size=0 的更新项。
+    为避免把异常档位（例如 0.99/0.999）误当作 best，我们会：
+    1) 遍历全部档位；
+    2) 忽略无效价格或显式 size<=0 的项；
+    3) bid 取最大价，ask 取最小价。
+    """
     if not isinstance(levels, list) or not levels:
         return None
-    first = levels[0]
-    if isinstance(first, dict):
-        return _coerce_float(first.get("price"))
-    if isinstance(first, (list, tuple)) and first:
-        return _coerce_float(first[0])
-    return None
+
+    side_norm = str(side).strip().lower()
+    if side_norm not in {"bid", "ask"}:
+        return None
+
+    candidates: list[float] = []
+    for level in levels:
+        price: Optional[float] = None
+        size: Optional[float] = None
+
+        if isinstance(level, dict):
+            price = _coerce_float(level.get("price"))
+            size = _coerce_float(level.get("size") or level.get("quantity") or level.get("qty"))
+        elif isinstance(level, (list, tuple)):
+            if len(level) >= 1:
+                price = _coerce_float(level[0])
+            if len(level) >= 2:
+                size = _coerce_float(level[1])
+
+        if price is None or price <= 0:
+            continue
+        if size is not None and size <= 0:
+            continue
+        candidates.append(price)
+
+    if not candidates:
+        return None
+    return max(candidates) if side_norm == "bid" else min(candidates)
 
 
 def _extract_best_bid_ask_from_book_event(ev: Dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
     """从 book 事件提取 bid/ask，兼容文档中的 buys/sells 与示例中的 bids/asks。"""
+    # 优先使用显式 best_bid/best_ask（若有），避免从未排序或增量档位中误提取。
+    bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
+    ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
+
     bid_levels = ev.get("buys")
     if not isinstance(bid_levels, list):
         bid_levels = ev.get("bids")
@@ -422,13 +455,11 @@ def _extract_best_bid_ask_from_book_event(ev: Dict[str, Any]) -> tuple[Optional[
     if not isinstance(ask_levels, list):
         ask_levels = ev.get("asks")
 
-    bid = _extract_top_price_from_levels(bid_levels)
-    ask = _extract_top_price_from_levels(ask_levels)
-
     if bid is None:
-        bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
+        bid = _extract_top_price_from_levels(bid_levels, "bid")
     if ask is None:
-        ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
+        ask = _extract_top_price_from_levels(ask_levels, "ask")
+
     return bid, ask
 
 

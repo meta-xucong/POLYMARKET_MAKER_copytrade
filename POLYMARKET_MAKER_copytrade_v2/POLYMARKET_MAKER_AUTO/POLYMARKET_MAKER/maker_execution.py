@@ -195,6 +195,52 @@ def _infer_price_decimals(value: Any, *, max_dp: int = 6) -> Optional[int]:
 
 
 def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
+    side = str(side).strip().lower()
+    if side not in {"bid", "ask"}:
+        return None
+
+    def _choose(samples: Iterable[PriceSample]) -> Optional[PriceSample]:
+        valid = [s for s in samples if s is not None and s.price > 0]
+        if not valid:
+            return None
+        return max(valid, key=lambda x: x.price) if side == "bid" else min(valid, key=lambda x: x.price)
+
+    def _level_price(entry: Any) -> Optional[PriceSample]:
+        if isinstance(entry, Mapping):
+            raw = entry.get("price")
+            candidate = _coerce_float(raw)
+            if candidate is None or candidate <= 0:
+                return None
+            size = _coerce_float(entry.get("size") or entry.get("quantity") or entry.get("qty"))
+            if size is not None and size <= 0:
+                return None
+            return PriceSample(float(candidate), _infer_price_decimals(raw))
+
+        if isinstance(entry, (list, tuple)) and entry:
+            raw = entry[0]
+            candidate = _coerce_float(raw)
+            if candidate is None or candidate <= 0:
+                return None
+            if len(entry) > 1:
+                size = _coerce_float(entry[1])
+                if size is not None and size <= 0:
+                    return None
+            return PriceSample(float(candidate), _infer_price_decimals(raw))
+
+        if hasattr(entry, "price"):
+            raw = getattr(entry, "price", None)
+            candidate = _coerce_float(raw)
+            if candidate is None or candidate <= 0:
+                return None
+            size_raw = getattr(entry, "size", None)
+            if size_raw is not None:
+                size = _coerce_float(size_raw)
+                if size is not None and size <= 0:
+                    return None
+            return PriceSample(float(candidate), _infer_price_decimals(raw))
+
+        return None
+
     numeric = _coerce_float(payload)
     if numeric is not None:
         decimals = _infer_price_decimals(payload)
@@ -236,20 +282,18 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
             if key in payload:
                 ladder = payload[key]
                 if isinstance(ladder, Iterable) and not isinstance(ladder, (str, bytes, bytearray)):
-                    for entry in ladder:
-                        if isinstance(entry, Mapping) and "price" in entry:
-                            decimals = _infer_price_decimals(entry.get("price"))
-                            candidate = _coerce_float(entry.get("price"))
-                            if candidate is not None:
-                                return PriceSample(float(candidate), decimals)
-                        extracted = _extract_best_price(entry, side)
-                        if extracted is not None:
-                            return extracted
+                    samples = [_level_price(entry) for entry in ladder]
+                    extracted = _choose(samples)
+                    if extracted is not None:
+                        return extracted
 
-        for value in payload.values():
-            extracted = _extract_best_price(value, side)
-            if extracted is not None:
-                return extracted
+        # 仅对白名单容器做受控递归，避免误命中无关字段数值。
+        nested_keys = ("data", "book", "orderbook", "market", "result")
+        for key in nested_keys:
+            if key in payload:
+                extracted = _extract_best_price(payload[key], side)
+                if extracted is not None:
+                    return extracted
         return None
 
     # 兼容 py_clob_client 的 dataclass/对象返回（例如 OrderBookSummary / OrderSummary）。
@@ -264,27 +308,18 @@ def _extract_best_price(payload: Any, side: str) -> Optional[PriceSample]:
             if extracted is not None:
                 return extracted
 
-        # 对象属性兜底：直接从 bids/asks 列表读取第一档价格
+        # 对象属性兜底：从 bids/asks 全量计算真实最优价
         ladder_attr = "bids" if side == "bid" else "asks"
         ladder = getattr(payload, ladder_attr, None)
         if isinstance(ladder, Iterable) and not isinstance(ladder, (str, bytes, bytearray)):
-            for entry in ladder:
-                if hasattr(entry, "price"):
-                    candidate_raw = getattr(entry, "price", None)
-                    candidate = _coerce_float(candidate_raw)
-                    if candidate is not None:
-                        decimals = _infer_price_decimals(candidate_raw)
-                        return PriceSample(float(candidate), decimals)
-                extracted = _extract_best_price(entry, side)
-                if extracted is not None:
-                    return extracted
-
-    if isinstance(payload, Iterable) and not isinstance(payload, (str, bytes, bytearray)):
-        for item in payload:
-            extracted = _extract_best_price(item, side)
+            samples = [_level_price(entry) for entry in ladder]
+            extracted = _choose(samples)
             if extracted is not None:
                 return extracted
-        return None
+
+    if isinstance(payload, Iterable) and not isinstance(payload, (str, bytes, bytearray)):
+        samples = [_level_price(item) for item in payload]
+        return _choose(samples)
 
     return None
 
