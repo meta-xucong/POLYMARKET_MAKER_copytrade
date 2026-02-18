@@ -117,6 +117,8 @@
 | `enable_pending_soft_eviction` | 是否启用 pending 软淘汰。 | 布尔 | 建议开启。 |
 | `pending_soft_eviction_minutes` | pending 超时淘汰阈值。 | 浮点（分钟） | `30~120`。 |
 | `pending_soft_eviction_check_interval_sec` | pending 淘汰检查间隔。 | 浮点（秒） | `60~600`。 |
+| `buy_pause_min_free_balance` | 买入硬性可用资金下限 M（USDC）。`<=0` 关闭此功能。余额低于 M 时不再启动新买入任务，只保留卖出路径。 | 浮点 | 建议与风控口径一致，如 `20`。 |
+| `buy_pause_balance_poll_interval_sec` | 低余额买入门禁的余额轮询间隔。 | 浮点（秒） | `30~300`。 |
 
 ### 2.2 `scheduler` aggressive 模式参数
 
