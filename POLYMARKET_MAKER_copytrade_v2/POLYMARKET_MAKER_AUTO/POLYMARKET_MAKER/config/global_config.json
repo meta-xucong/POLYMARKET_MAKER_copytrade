@@ -41,7 +41,9 @@
       }
     },
     "price_cap_refill_stuck_minutes": 120.0,
-    "shock_refill_stuck_minutes": 45.0
+    "shock_refill_stuck_minutes": 45.0,
+    "buy_pause_min_free_balance": 20.0,
+    "buy_pause_balance_poll_interval_sec": 120.0
   },
   "maker": {
     "poll_sec": 15.0,
