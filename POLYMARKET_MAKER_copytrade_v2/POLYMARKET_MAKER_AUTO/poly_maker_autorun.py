@@ -73,6 +73,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "enable_pending_soft_eviction": True,
     "pending_soft_eviction_minutes": 45.0,
     "pending_soft_eviction_check_interval_sec": 300.0,
+    # 低余额买入暂停（M 阈值）：余额低于阈值时仅保留卖出路径，停止启动新买入任务
+    "buy_pause_min_free_balance": 0.0,
+    "buy_pause_balance_poll_interval_sec": 120.0,
     # 卡顿剔除（命中后会终止子进程并立即回填）
     "price_cap_refill_stuck_minutes": 120.0,
     "shock_refill_stuck_minutes": 45.0,
@@ -727,6 +730,12 @@ class GlobalConfig:
     pending_soft_eviction_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
         "pending_soft_eviction_check_interval_sec"
     ]
+    buy_pause_min_free_balance: float = DEFAULT_GLOBAL_CONFIG[
+        "buy_pause_min_free_balance"
+    ]
+    buy_pause_balance_poll_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "buy_pause_balance_poll_interval_sec"
+    ]
     price_cap_refill_stuck_minutes: float = DEFAULT_GLOBAL_CONFIG[
         "price_cap_refill_stuck_minutes"
     ]
@@ -991,6 +1000,24 @@ class GlobalConfig:
                     merged.get("pending_soft_eviction_check_interval_sec", 300.0),
                 )
             ),
+            buy_pause_min_free_balance=max(
+                0.0,
+                float(
+                    scheduler.get(
+                        "buy_pause_min_free_balance",
+                        merged.get("buy_pause_min_free_balance", 0.0),
+                    )
+                ),
+            ),
+            buy_pause_balance_poll_interval_sec=max(
+                1.0,
+                float(
+                    scheduler.get(
+                        "buy_pause_balance_poll_interval_sec",
+                        merged.get("buy_pause_balance_poll_interval_sec", 120.0),
+                    )
+                ),
+            ),
             price_cap_refill_stuck_minutes=float(
                 scheduler.get(
                     "price_cap_refill_stuck_minutes",
@@ -1123,7 +1150,68 @@ class AutoRunManager:
         self._log_cleanup_interval_sec: float = 3600.0  # 每小时检查一次
         self._log_retention_days: int = 7  # 保留7天
         self._last_cleanup_date: Optional[str] = None  # 记录上次清理日期，避免同一天重复清理
+        self._buy_paused_due_to_balance: bool = False
+        self._buy_pause_last_balance: Optional[float] = None
+        self._buy_pause_deferred_tokens: set[str] = set()
         self._total_liquidation = TotalLiquidationManager(self.config, PROJECT_ROOT)
+
+    def _is_buy_paused_by_balance(self) -> bool:
+        min_balance = float(getattr(self.config, "buy_pause_min_free_balance", 0.0) or 0.0)
+        if min_balance <= 0:
+            if self._buy_paused_due_to_balance:
+                print("[BUY_GATE] 低余额买入暂停已关闭（buy_pause_min_free_balance<=0），恢复正常调度")
+            self._buy_paused_due_to_balance = False
+            return False
+
+        balance = self._total_liquidation._query_free_balance_usdc(
+            self,
+            ignore_enabled=True,
+            poll_interval_sec=float(
+                getattr(self.config, "buy_pause_balance_poll_interval_sec", 120.0) or 120.0
+            ),
+        )
+        if balance is None:
+            if self._buy_pause_last_balance is None:
+                # 首次无法获取余额时不强制暂停，避免误伤；后续沿用上一次状态
+                return self._buy_paused_due_to_balance
+            balance = self._buy_pause_last_balance
+
+        self._buy_pause_last_balance = float(balance)
+        paused = float(balance) < min_balance
+        if paused != self._buy_paused_due_to_balance:
+            state = "暂停买入" if paused else "恢复买入"
+            print(
+                "[BUY_GATE] 余额门禁状态切换: "
+                f"{state} | free_balance={float(balance):.4f} M={min_balance:.4f}"
+            )
+        self._buy_paused_due_to_balance = paused
+        return paused
+
+    def _defer_pending_topics_due_to_low_balance(self) -> None:
+        to_defer = list(dict.fromkeys(self.pending_topics + self.pending_burst_topics))
+        if not to_defer:
+            return
+        self.pending_topics.clear()
+        self.pending_burst_topics.clear()
+        for token_id in to_defer:
+            self._pending_first_seen.pop(token_id, None)
+            self._shared_ws_wait_failures.pop(token_id, None)
+            self._shared_ws_paused_until.pop(token_id, None)
+            self._shared_ws_wait_timeout_events.pop(token_id, None)
+            self._shared_ws_pending_since.pop(token_id, None)
+            if token_id in self._buy_pause_deferred_tokens:
+                continue
+            self._buy_pause_deferred_tokens.add(token_id)
+            self._append_exit_token_record(
+                token_id,
+                "LOW_BALANCE_PAUSE",
+                exit_data={
+                    "has_position": False,
+                    "deferred_by_low_balance": True,
+                },
+                refillable=True,
+            )
+        print(f"[BUY_GATE] 低余额暂停中：已将 {len(to_defer)} 个待启动 token 转入回填队列")
 
     def _is_aggressive_mode(self) -> bool:
         mode = (self.config.strategy_mode or "classic").strip().lower()
@@ -2297,6 +2385,10 @@ class AutoRunManager:
         return False
 
     def _schedule_pending_topics(self) -> None:
+        if self._is_buy_paused_by_balance():
+            self._defer_pending_topics_due_to_low_balance()
+            return
+
         base_limit = max(1, int(self.config.max_concurrent_tasks))
         burst_limit = self._burst_slots()
         max_total = base_limit + burst_limit
@@ -2446,6 +2538,7 @@ class AutoRunManager:
                 else:
                     self._enqueue_pending_topic(topic_id)
             elif started:
+                self._buy_pause_deferred_tokens.discard(topic_id)
                 self._shared_ws_pending_since.pop(topic_id, None)
                 self._next_topic_start_at = now + max(
                     0.0, float(self.config.topic_start_cooldown_sec)
@@ -3400,8 +3493,17 @@ class AutoRunManager:
                 skip_stats["not_refillable"] = skip_stats.get("not_refillable", 0) + 1
                 continue
 
+            # 低余额暂停期间产生的 token：暂停状态下不参与回填；恢复后可立即回填
+            if exit_reason == "LOW_BALANCE_PAUSE":
+                if self._buy_paused_due_to_balance:
+                    skip_stats["low_balance_paused"] = skip_stats.get("low_balance_paused", 0) + 1
+                    continue
+                effective_cooldown_seconds = 0.0
+            else:
+                effective_cooldown_seconds = cooldown_seconds
+
             # 检查冷却时间（exit_ts 到现在的时间间隔）
-            if exit_ts > 0 and (now - exit_ts) < cooldown_seconds:
+            if exit_ts > 0 and (now - exit_ts) < effective_cooldown_seconds:
                 skip_stats["cooldown"] = skip_stats.get("cooldown", 0) + 1
                 continue
 
@@ -3412,7 +3514,7 @@ class AutoRunManager:
             effective_max_retries = max_retries
             if exit_reason == "NO_DATA_TIMEOUT":
                 effective_max_retries = 2
-            elif exit_reason == "SHARED_WS_UNAVAILABLE":
+            elif exit_reason in {"SHARED_WS_UNAVAILABLE", "LOW_BALANCE_PAUSE"}:
                 effective_max_retries = 10**9
             if retry_count >= effective_max_retries:
                 skip_stats["max_retries"] = skip_stats.get("max_retries", 0) + 1
@@ -3608,6 +3710,7 @@ class AutoRunManager:
                     f"[INCR] 新话题 {len(new_topics)} 个，将更新历史记录 preview={preview}"
                 )
                 added_topics: List[str] = []
+                defer_new_topics = self._is_buy_paused_by_balance()
                 for topic_id in new_topics:
                     if topic_id in self.pending_topics:
                         continue
@@ -3615,8 +3718,25 @@ class AutoRunManager:
                         continue
                     if topic_id in self.tasks and self.tasks[topic_id].is_running():
                         continue
-                    self._enqueue_pending_topic(topic_id)
+                    if defer_new_topics:
+                        if topic_id not in self._buy_pause_deferred_tokens:
+                            self._buy_pause_deferred_tokens.add(topic_id)
+                            self._append_exit_token_record(
+                                topic_id,
+                                "LOW_BALANCE_PAUSE",
+                                exit_data={
+                                    "has_position": False,
+                                    "deferred_by_low_balance": True,
+                                },
+                                refillable=True,
+                            )
+                    else:
+                        self._enqueue_pending_topic(topic_id)
                     added_topics.append(topic_id)
+                if defer_new_topics and added_topics:
+                    print(
+                        f"[BUY_GATE] 低余额暂停中：新增 token {len(added_topics)} 个已进入回填队列，待余额恢复后再回填"
+                    )
                 # 立即标记为已处理，防止下次轮询时重复检测到同一 token
                 if added_topics:
                     self._update_handled_topics(added_topics)

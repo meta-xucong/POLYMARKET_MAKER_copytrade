@@ -53,3 +53,68 @@ def test_classic_mode_drains_burst_queue_into_pending():
 
     assert manager.pending_burst_topics == []
     assert manager.pending_topics == ["z", "x", "y"]
+
+
+def test_schedule_pending_topics_pauses_and_defers_when_low_balance():
+    cfg = GlobalConfig.from_dict({"scheduler": {"buy_pause_min_free_balance": 20}})
+    manager = _build_manager(cfg)
+    manager.pending_topics = ["t1"]
+    manager.pending_burst_topics = ["t2"]
+
+    captured = []
+    manager._is_buy_paused_by_balance = lambda: True  # type: ignore[assignment]
+    manager._append_exit_token_record = lambda token_id, reason, **kwargs: captured.append((token_id, reason, kwargs))  # type: ignore[assignment]
+
+    manager._schedule_pending_topics()
+
+    assert manager.pending_topics == []
+    assert manager.pending_burst_topics == []
+    assert manager._buy_pause_deferred_tokens == {"t1", "t2"}
+    assert len(captured) == 2
+    assert all(reason == "LOW_BALANCE_PAUSE" for _, reason, _ in captured)
+
+
+def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
+    cfg = GlobalConfig.from_dict({"scheduler": {"buy_pause_min_free_balance": 20}})
+    manager = _build_manager(cfg)
+
+    manager._is_buy_paused_by_balance = lambda: True  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "a", "token_id": "a"},
+        {"topic_id": "b", "token_id": "b"},
+    ]
+    manager._load_copytrade_sell_signals = lambda: set()  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    captured = []
+    manager._append_exit_token_record = lambda token_id, reason, **kwargs: captured.append((token_id, reason, kwargs))  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert manager.pending_topics == []
+    assert manager.pending_burst_topics == []
+    assert manager._buy_pause_deferred_tokens == {"a", "b"}
+    assert {token_id for token_id, _, _ in captured} == {"a", "b"}
+    assert manager.handled_topics.issuperset({"a", "b"})
+
+
+def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_resume():
+    cfg = GlobalConfig.from_dict({"scheduler": {"buy_pause_min_free_balance": 20}})
+    manager = _build_manager(cfg)
+    record = {
+        "token_id": "x",
+        "exit_reason": "LOW_BALANCE_PAUSE",
+        "exit_ts": 1.0,
+        "exit_data": {"has_position": False},
+        "refillable": True,
+    }
+
+    manager._buy_paused_due_to_balance = True
+    blocked = manager._filter_refillable_tokens([record])
+    assert blocked == []
+
+    manager._buy_paused_due_to_balance = False
+    released = manager._filter_refillable_tokens([record])
+    assert len(released) == 1
+    assert released[0]["token_id"] == "x"
