@@ -118,3 +118,88 @@ def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_
     released = manager._filter_refillable_tokens([record])
     assert len(released) == 1
     assert released[0]["token_id"] == "x"
+
+
+def test_fetch_recent_trades_retries_after_timeout():
+    import poly_maker_autorun as autorun
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [{"side": "SELL", "asset": "t1"}]
+
+    calls = {"n": 0}
+
+    class _TimeoutExc(Exception):
+        pass
+
+    old_requests = autorun.requests
+    old_attempts = autorun.DATA_API_TRADE_RETRY_ATTEMPTS
+    old_backoff = autorun.DATA_API_RETRY_BACKOFF_SEC
+    old_sleep = autorun.time.sleep
+    try:
+        def _fake_get(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _TimeoutExc("timeout")
+            return _Resp()
+
+        autorun.requests = types.SimpleNamespace(
+            get=_fake_get,
+            Timeout=_TimeoutExc,
+            RequestException=Exception,
+        )
+        autorun.DATA_API_TRADE_RETRY_ATTEMPTS = 2
+        autorun.DATA_API_RETRY_BACKOFF_SEC = (0.0,)
+        autorun.time.sleep = lambda *_args, **_kwargs: None
+
+        rows, info = autorun._fetch_recent_trades_from_data_api("0xabc", limit=10)
+        assert info == "ok"
+        assert len(rows) == 1
+        assert calls["n"] == 2
+    finally:
+        autorun.requests = old_requests
+        autorun.DATA_API_TRADE_RETRY_ATTEMPTS = old_attempts
+        autorun.DATA_API_RETRY_BACKOFF_SEC = old_backoff
+        autorun.time.sleep = old_sleep
+
+
+def test_fetch_recent_trades_returns_last_error_after_retries():
+    import poly_maker_autorun as autorun
+
+    calls = {"n": 0}
+
+    class _ReqExc(Exception):
+        pass
+
+    old_requests = autorun.requests
+    old_attempts = autorun.DATA_API_TRADE_RETRY_ATTEMPTS
+    old_backoff = autorun.DATA_API_RETRY_BACKOFF_SEC
+    old_sleep = autorun.time.sleep
+    try:
+        def _fake_get(*args, **kwargs):
+            calls["n"] += 1
+            raise _ReqExc("boom")
+
+        autorun.requests = types.SimpleNamespace(
+            get=_fake_get,
+            Timeout=Exception,
+            RequestException=_ReqExc,
+        )
+        autorun.DATA_API_TRADE_RETRY_ATTEMPTS = 3
+        autorun.DATA_API_RETRY_BACKOFF_SEC = (0.0,)
+        autorun.time.sleep = lambda *_args, **_kwargs: None
+
+        rows, info = autorun._fetch_recent_trades_from_data_api("0xabc", limit=10)
+        assert rows == []
+        assert "attempt=3/3" in info
+        assert calls["n"] == 3
+    finally:
+        autorun.requests = old_requests
+        autorun.DATA_API_TRADE_RETRY_ATTEMPTS = old_attempts
+        autorun.DATA_API_RETRY_BACKOFF_SEC = old_backoff
+        autorun.time.sleep = old_sleep

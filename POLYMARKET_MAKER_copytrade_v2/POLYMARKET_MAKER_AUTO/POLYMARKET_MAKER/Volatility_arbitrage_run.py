@@ -1667,6 +1667,17 @@ def _is_fak_no_match_error(exc: Exception) -> bool:
     return "no orders found to match" in text and "fak" in text
 
 
+def _is_balance_or_allowance_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    keywords = (
+        "not enough balance",
+        "insufficient balance",
+        "allowance",
+        "insufficient funds",
+    )
+    return any(k in text for k in keywords)
+
+
 def _build_exit_price_ladder(base_price: float, min_price: float) -> List[float]:
     """构建清仓 IOC 的价格阶梯，避免一直卡在同一价格。"""
     base = max(float(base_price or 0.0), float(min_price))
@@ -2386,6 +2397,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         MIN_PRICE = 0.01      # 最低清仓价格
 
         iteration = 0
+        no_match_streak = 0
         while iteration < MAX_ITERATIONS:
             iteration += 1
 
@@ -2428,17 +2440,54 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     min_price=MIN_PRICE,
                     context="exit-only",
                 )
+                no_match_streak = 0
             except Exception as exc:
                 if _is_fak_no_match_error(exc):
+                    no_match_streak += 1
                     print(
                         "[EXIT][WARN] IOC 清仓未成交：当前无可匹配买单，"
                         "等待下一轮重试"
                     )
+                elif _is_balance_or_allowance_error(exc):
+                    # 避免 data-api 刷新延迟导致的反复无效下单：立即强刷持仓再判定
+                    print(f"[EXIT][SYNC] 检测到余额/授权异常，触发快速持仓复检: {exc}")
+                    sync_done = False
+                    for sync_try in range(1, 4):
+                        time.sleep(1.0)
+                        refreshed_snapshot, _ = _fetch_position_snapshot_with_cache(
+                            client=client,
+                            token_id=token_id,
+                            cache=None,
+                            cache_ts=0.0,
+                            log_errors=True,
+                            force=True,
+                        )
+                        refreshed_pos = refreshed_snapshot[1] if refreshed_snapshot else None
+                        if refreshed_pos is None or refreshed_pos <= DUST_THRESHOLD:
+                            print(
+                                f"[EXIT] 快速复检确认已接近清仓，剩余持仓={refreshed_pos or 0:.4f}"
+                            )
+                            sync_done = True
+                            break
+                        if refreshed_pos < remaining_pos:
+                            remaining_pos = refreshed_pos
+                            print(
+                                f"[EXIT][SYNC] 复检到仓位收敛，更新待清仓数量={remaining_pos:.4f}"
+                            )
+                            sync_done = True
+                            break
+                        if sync_try == 3:
+                            print("[EXIT][SYNC] 快速复检后持仓未收敛，进入下一轮常规重试")
+                    if sync_done and (remaining_pos is None or remaining_pos <= DUST_THRESHOLD):
+                        break
                 else:
                     print(f"[EXIT] IOC 清仓卖单失败: {exc}")
 
-            # 5. 等待一段时间后再次检查
-            time.sleep(RETRY_INTERVAL_SEC)
+            # 5. 等待一段时间后再次检查（无流动性时递增退避，降低无效请求）
+            sleep_sec = RETRY_INTERVAL_SEC
+            if no_match_streak > 0:
+                sleep_sec = min(20.0, RETRY_INTERVAL_SEC + min(no_match_streak, 5) * 2.0)
+            time.sleep(sleep_sec)
 
         # 最终状态检查
         if iteration >= MAX_ITERATIONS:
@@ -3541,6 +3590,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         MIN_PRICE = 0.01      # 最低清仓价格
 
         iteration = 0
+        no_match_streak = 0
         while iteration < MAX_ITERATIONS:
             iteration += 1
 
@@ -3589,17 +3639,53 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     min_price=MIN_PRICE,
                     context="force-exit",
                 )
+                no_match_streak = 0
             except Exception as exc:
                 if _is_fak_no_match_error(exc):
+                    no_match_streak += 1
                     print(
                         "[EXIT][WARN] IOC 清仓未成交：当前无可匹配买单，"
                         "等待下一轮重试"
                     )
+                elif _is_balance_or_allowance_error(exc):
+                    print(f"[EXIT][SYNC] 检测到余额/授权异常，触发快速持仓复检: {exc}")
+                    sync_done = False
+                    for sync_try in range(1, 4):
+                        time.sleep(1.0)
+                        refreshed_snapshot, _ = _fetch_position_snapshot_with_cache(
+                            client=client,
+                            token_id=token_id,
+                            cache=None,
+                            cache_ts=0.0,
+                            log_errors=True,
+                            force=True,
+                        )
+                        refreshed_pos = refreshed_snapshot[1] if refreshed_snapshot else None
+                        if refreshed_pos is None or refreshed_pos <= DUST_THRESHOLD:
+                            print(
+                                f"[EXIT] 快速复检确认已接近清仓，剩余持仓={refreshed_pos or 0:.4f}"
+                            )
+                            sync_done = True
+                            break
+                        if refreshed_pos < remaining_pos:
+                            remaining_pos = refreshed_pos
+                            print(
+                                f"[EXIT][SYNC] 复检到仓位收敛，更新待清仓数量={remaining_pos:.4f}"
+                            )
+                            sync_done = True
+                            break
+                        if sync_try == 3:
+                            print("[EXIT][SYNC] 快速复检后持仓未收敛，进入下一轮常规重试")
+                    if sync_done and (remaining_pos is None or remaining_pos <= DUST_THRESHOLD):
+                        break
                 else:
                     print(f"[EXIT] IOC 清仓卖单失败: {exc}")
 
-            # 5. 等待一段时间后再次检查
-            time.sleep(RETRY_INTERVAL_SEC)
+            # 5. 等待一段时间后再次检查（无流动性时递增退避，降低无效请求）
+            sleep_sec = RETRY_INTERVAL_SEC
+            if no_match_streak > 0:
+                sleep_sec = min(20.0, RETRY_INTERVAL_SEC + min(no_match_streak, 5) * 2.0)
+            time.sleep(sleep_sec)
 
         # 最终状态检查
         if iteration >= MAX_ITERATIONS:

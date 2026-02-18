@@ -141,6 +141,9 @@ POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 10.0
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
 DATA_API_RATE_LIMIT_SEC = 1.0
+DATA_API_TIMEOUT_SEC = 10.0
+DATA_API_TRADE_RETRY_ATTEMPTS = 3
+DATA_API_RETRY_BACKOFF_SEC = (1.0, 2.0, 4.0)
 _data_api_last_request_ts = 0.0
 _data_api_request_lock = threading.Lock()
 
@@ -390,32 +393,45 @@ def _fetch_recent_trades_from_data_api(
         "user": address,
         "limit": max(1, min(int(limit), 500)),
     }
-    try:
-        with _data_api_request_lock:
-            global _data_api_last_request_ts
-            now = time.time()
-            wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
-            if wait_sec > 0:
-                time.sleep(wait_sec)
-            _data_api_last_request_ts = time.time()
-        resp = requests.get(url, params=params, timeout=10)
-        if resp.status_code == 404:
-            return [], "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
-        resp.raise_for_status()
-        payload = resp.json()
-    except requests.RequestException as exc:
-        return [], f"数据接口请求失败：{exc}"
-    except ValueError:
-        return [], "数据接口响应解析失败"
 
-    if not isinstance(payload, list):
-        return [], "数据接口返回格式异常：/trades 应返回列表。"
-    out: List[Dict[str, Any]] = []
-    for row in payload:
-        if not isinstance(row, dict):
-            continue
-        out.append(row)
-    return out, "ok"
+    last_err = ""
+    attempts = max(1, int(DATA_API_TRADE_RETRY_ATTEMPTS))
+    for attempt in range(1, attempts + 1):
+        try:
+            with _data_api_request_lock:
+                global _data_api_last_request_ts
+                now = time.time()
+                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
+                if wait_sec > 0:
+                    time.sleep(wait_sec)
+                _data_api_last_request_ts = time.time()
+            resp = requests.get(url, params=params, timeout=DATA_API_TIMEOUT_SEC)
+            if resp.status_code == 404:
+                return [], "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
+            resp.raise_for_status()
+            payload = resp.json()
+        except requests.Timeout as exc:
+            last_err = f"数据接口请求超时(attempt={attempt}/{attempts})：{exc}"
+        except requests.RequestException as exc:
+            last_err = f"数据接口请求失败(attempt={attempt}/{attempts})：{exc}"
+        except ValueError:
+            last_err = f"数据接口响应解析失败(attempt={attempt}/{attempts})"
+        else:
+            if not isinstance(payload, list):
+                return [], "数据接口返回格式异常：/trades 应返回列表。"
+            out: List[Dict[str, Any]] = []
+            for row in payload:
+                if not isinstance(row, dict):
+                    continue
+                out.append(row)
+            return out, "ok"
+
+        if attempt < attempts:
+            idx = min(attempt - 1, len(DATA_API_RETRY_BACKOFF_SEC) - 1)
+            backoff = max(0.1, float(DATA_API_RETRY_BACKOFF_SEC[idx]))
+            time.sleep(backoff)
+
+    return [], (last_err or "数据接口请求失败")
 
 
 def _topic_id_from_entry(entry: Any) -> str:
