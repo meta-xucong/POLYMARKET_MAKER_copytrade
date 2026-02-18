@@ -535,8 +535,15 @@ class TotalLiquidationManager:
             self._next_client_retry_at = now + 60.0
             return None
 
-    def _query_free_balance_usdc(self, autorun: Any) -> Optional[float]:
-        if not self.cfg.enabled:
+    def _query_free_balance_usdc(
+        self,
+        autorun: Any,
+        *,
+        ignore_enabled: bool = False,
+        force: bool = False,
+        poll_interval_sec: Optional[float] = None,
+    ) -> Optional[float]:
+        if not self.cfg.enabled and not ignore_enabled:
             return None
         override = os.getenv("POLY_FREE_BALANCE_OVERRIDE")
         if override is not None:
@@ -546,10 +553,16 @@ class TotalLiquidationManager:
                 return None
 
         now = time.time()
-        if now < self._next_balance_probe_at:
+        interval = (
+            self.cfg.balance_poll_interval_sec
+            if poll_interval_sec is None
+            else max(1.0, float(poll_interval_sec))
+        )
+
+        if (not force) and now < self._next_balance_probe_at:
             return self._cached_free_balance
 
-        self._next_balance_probe_at = now + self.cfg.balance_poll_interval_sec
+        self._next_balance_probe_at = now + interval
         self._last_balance_probe_error = None
 
         client = self._get_cached_client()
