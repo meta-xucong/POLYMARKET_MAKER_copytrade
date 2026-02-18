@@ -315,6 +315,63 @@ def test_balance_probe_is_rate_limited():
         assert fake.calls == 1
 
 
+def test_balance_query_can_bypass_enabled_flag_for_buy_gate():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=False)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        class _FakeClient:
+            def get_balance_allowance(self, params):
+                return {"balance": "25000000"}
+
+        mgr._cached_client = _FakeClient()
+        autorun = _Autorun(cfg, running_tasks=0)
+
+        old_mod = _install_fake_balance_types_module()
+        try:
+            disabled_value = mgr._query_free_balance_usdc(autorun)
+            bypass_value = mgr._query_free_balance_usdc(autorun, ignore_enabled=True, force=True)
+        finally:
+            _restore_fake_balance_types_module(old_mod)
+
+        assert disabled_value is None
+        assert bypass_value == 25.0
+
+
+def test_balance_query_force_reprobe_ignores_rate_limit_cache():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        cfg.total_liquidation["trigger"]["balance_poll_interval_sec"] = 9999
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        class _FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def get_balance_allowance(self, params):
+                self.calls += 1
+                return {"balance": "12000000" if self.calls == 1 else "8000000"}
+
+        fake = _FakeClient()
+        mgr._cached_client = fake
+        autorun = _Autorun(cfg, running_tasks=0)
+
+        old_mod = _install_fake_balance_types_module()
+        try:
+            v1 = mgr._query_free_balance_usdc(autorun)
+            v2 = mgr._query_free_balance_usdc(autorun, force=True)
+        finally:
+            _restore_fake_balance_types_module(old_mod)
+
+        assert v1 == 12.0
+        assert v2 == 8.0
+        assert fake.calls == 2
+
+
 def test_startup_grace_blocks_idle_trigger():
     with tempfile.TemporaryDirectory() as td:
         cfg = _build_cfg(Path(td), enable=True)
