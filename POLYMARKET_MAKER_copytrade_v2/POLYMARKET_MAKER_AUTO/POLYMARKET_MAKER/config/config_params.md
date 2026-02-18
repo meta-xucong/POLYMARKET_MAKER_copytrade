@@ -118,7 +118,34 @@
 | `pending_soft_eviction_minutes` | pending 超时淘汰阈值。 | 浮点（分钟） | `30~120`。 |
 | `pending_soft_eviction_check_interval_sec` | pending 淘汰检查间隔。 | 浮点（秒） | `60~600`。 |
 
-### 2.2 `scheduler.total_liquidation` 总清仓参数
+### 2.2 `scheduler` aggressive 模式参数
+
+> `strategy_mode=aggressive` 是“进入激进模式主流程”的总开关；
+> `aggressive_enable_self_sell_reentry` 是“是否启用自账户卖出成交回补（reentry）”子开关，二者不是重复项。
+
+| 字段 | 含义 | 类型/格式 | 默认 | 建议 |
+| --- | --- | --- | --- | --- |
+| `strategy_mode` | 调度策略模式。`classic`=仅基础队列；`aggressive`=启用激进调度能力。 | 枚举字符串 | `classic` | 需要激进调度时设为 `aggressive`。 |
+| `aggressive_burst_slots` | 激进模式下额外突发槽位数（在 `max_concurrent_tasks` 之外增加）。 | 整数 | `5` | 建议 `1~8`，过大可能放大资源竞争。 |
+| `aggressive_enable_self_sell_reentry` | 是否开启“自账户 SELL 成交后将 token 重新加入 burst 队列”的能力。 | 布尔 | `false` | 需要发挥 aggressive 回补能力时设为 `true`。 |
+| `aggressive_reentry_source` | reentry 数据源。当前支持 `self_account_fills_only`。 | 枚举字符串 | `self_account_fills_only` | 保持默认即可。 |
+| `aggressive_first_sell_fill_only` | 同一 token 仅处理首笔 SELL 成交回补，避免重复触发。 | 布尔 | `true` | 建议保持 `true`。 |
+| `aggressive_sell_fill_poll_sec` | 查询自账户 SELL 成交的轮询周期。 | 浮点（秒） | `15.0` | 常用 `10~30` 秒。 |
+
+aggressive 典型配置（示例）：
+
+```json
+"scheduler": {
+  "strategy_mode": "aggressive",
+  "aggressive_burst_slots": 5,
+  "aggressive_enable_self_sell_reentry": true,
+  "aggressive_reentry_source": "self_account_fills_only",
+  "aggressive_first_sell_fill_only": true,
+  "aggressive_sell_fill_poll_sec": 15.0
+}
+```
+
+### 2.3 `scheduler.total_liquidation` 总清仓参数
 
 > 当活跃度长期偏低时触发“全局清仓 +（可选）硬重置 + 重启”。默认关闭。
 
@@ -174,20 +201,20 @@
 }
 ```
 
-### 2.3 `maker` 子进程参数
+### 2.4 `maker` 子进程参数
 
 | 字段 | 含义 | 类型/格式 |
 | --- | --- | --- |
 | `poll_sec` | maker 卖单跟踪轮询间隔。 | 浮点（秒） |
 | `position_sync_interval` | 仓位同步间隔。 | 浮点（秒） |
 
-### 2.4 `debug` 调试参数
+### 2.5 `debug` 调试参数
 
 | 字段 | 含义 | 类型/格式 |
 | --- | --- | --- |
 | `ws_debug_raw` | 是否输出原始 WS 调试信息。 | 布尔 |
 
-### 2.5 `paths` 路径参数（可选）
+### 2.6 `paths` 路径参数（可选）
 
 | 字段 | 含义 | 类型/格式 |
 | --- | --- | --- |
