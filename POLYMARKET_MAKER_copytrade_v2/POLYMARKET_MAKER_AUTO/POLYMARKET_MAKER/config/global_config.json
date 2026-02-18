@@ -23,7 +23,7 @@
         "min_free_balance": 20.0,
         "enable_low_balance_force_trigger": true,
         "low_balance_force_hours": 6.0,
-        "require_conditions": 2,
+        "require_conditions": 3,
         "balance_poll_interval_sec": 600.0,
         "startup_grace_hours": 4.0
       },
@@ -42,7 +42,7 @@
     },
     "price_cap_refill_stuck_minutes": 120.0,
     "shock_refill_stuck_minutes": 45.0,
-    "buy_pause_min_free_balance": 20.0,
+    "buy_pause_min_free_balance": 120.0,
     "buy_pause_balance_poll_interval_sec": 120.0
   },
   "maker": {
