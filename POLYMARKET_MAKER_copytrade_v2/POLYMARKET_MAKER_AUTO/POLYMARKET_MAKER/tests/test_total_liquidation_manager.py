@@ -430,11 +430,44 @@ def test_trade_activity_is_based_on_order_behavior_not_ws_updates():
         _, reasons = mgr.should_trigger(metrics)
         assert any("no_trade_for=" in r for r in reasons)
 
-        # 出现真实成交行为后，no_trade 应清零
-        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单状态 -> price=0.33 filled=1.0000 remaining=4.0000 status=LIVE"
+        # 仅挂单行为不应清零 no_trade（规则以真实成交为准）
+        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单 -> price=0.33 qty=5"
+        autorun.tasks["0"].last_log_excerpt_ts = 102.0
         metrics2 = mgr.update_metrics(autorun)
         _, reasons2 = mgr.should_trigger(metrics2)
-        assert all("no_trade_for=" not in r for r in reasons2)
+        assert any("no_trade_for=" in r for r in reasons2)
+
+        # 出现真实成交行为后，no_trade 应清零
+        autorun.tasks["0"].log_excerpt = "[MAKER][BUY] 挂单状态 -> price=0.33 filled=1.0000 remaining=4.0000 status=LIVE"
+        autorun.tasks["0"].last_log_excerpt_ts = 103.0
+        metrics3 = mgr.update_metrics(autorun)
+        _, reasons3 = mgr.should_trigger(metrics3)
+        assert all("no_trade_for=" not in r for r in reasons3)
+
+
+
+def test_fill_activity_detects_non_last_log_line():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        mgr.cfg.startup_grace_hours = 0
+        mgr.cfg.no_trade_duration_minutes = 1
+
+        autorun = _Autorun(cfg, running_tasks=1, log_excerpt="[DIAG] no-op")
+        mgr._last_fill_activity_ts = time.time() - 120
+
+        # 成交行不在最后一行，之前实现会漏记
+        autorun.tasks["0"].log_excerpt = (
+            "[MAKER][BUY] 挂单状态 -> price=0.33 filled=1.0000 remaining=4.0000 status=LIVE\n"
+            "[DIAG] heartbeat"
+        )
+        autorun.tasks["0"].last_log_excerpt_ts = 104.0
+
+        metrics = mgr.update_metrics(autorun)
+        _, reasons = mgr.should_trigger(metrics)
+        assert all("no_trade_for=" not in r for r in reasons)
 
 
 def test_liquidation_scope_only_copytrade_tokens():
