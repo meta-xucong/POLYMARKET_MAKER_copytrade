@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -97,6 +98,9 @@ class TotalLiquidationManager:
         self._last_balance_probe_error: Optional[str] = None
         self._last_positions_fetch_error: Optional[str] = None
         self._task_activity_markers: Dict[str, str] = {}
+        self._task_fill_markers: Dict[str, str] = {}
+        self._last_api_trade_probe_error: Optional[str] = None
+        self._next_trade_probe_at: float = 0.0
 
     _TRADE_ACTIVITY_HINTS = (
         "[maker][buy] 挂单",
@@ -142,6 +146,10 @@ class TotalLiquidationManager:
             self._idle_since = None
 
         latest_trade_activity, latest_fill_activity = self._collect_trade_activity_ts(autorun)
+        api_fill_activity = self._query_recent_fill_activity_ts(autorun)
+        if api_fill_activity > 0:
+            latest_fill_activity = max(latest_fill_activity, api_fill_activity)
+
         if latest_trade_activity > 0:
             self._last_trade_activity_ts = max(self._last_trade_activity_ts, latest_trade_activity)
         if latest_fill_activity > 0:
@@ -168,6 +176,8 @@ class TotalLiquidationManager:
         )
         if self._last_balance_probe_error:
             print(f"[GLB_LIQ][WARN] 余额查询失败，沿用缓存: {self._last_balance_probe_error}")
+        if self._last_api_trade_probe_error:
+            print(f"[GLB_LIQ][WARN] 成交查询失败，沿用日志判定: {self._last_api_trade_probe_error}")
 
         return {
             "running": running,
@@ -242,25 +252,36 @@ class TotalLiquidationManager:
             if not excerpt:
                 continue
 
-            last_line = (excerpt.strip().splitlines() or [""])[-1].strip()
-            if not last_line:
+            lines = [ln.strip() for ln in excerpt.strip().splitlines() if ln.strip()]
+            if not lines:
                 continue
 
+            last_line = lines[-1]
             excerpt_ts = float(getattr(task, "last_log_excerpt_ts", 0.0) or 0.0)
             marker = f"{last_line}|{excerpt_ts:.3f}"
-            if self._task_activity_markers.get(str(topic_id)) == marker:
-                continue
-            self._task_activity_markers[str(topic_id)] = marker
+            if self._task_activity_markers.get(str(topic_id)) != marker:
+                self._task_activity_markers[str(topic_id)] = marker
+                normalized_last = last_line.lower()
+                if any(hint in normalized_last for hint in self._TRADE_ACTIVITY_HINTS):
+                    latest_trade = max(latest_trade, time.time())
 
-            normalized = last_line.lower()
-            if any(hint in normalized for hint in self._TRADE_ACTIVITY_HINTS):
-                latest_trade = max(latest_trade, time.time())
-            if self._line_has_real_fill_activity(normalized):
-                latest_fill = max(latest_fill, time.time())
+            # 成交识别不只看最后一行：日志刷新的末行可能是状态行，导致漏记实际成交。
+            fill_line = ""
+            for ln in reversed(lines):
+                normalized_ln = ln.lower()
+                if self._line_has_real_fill_activity(normalized_ln):
+                    fill_line = normalized_ln
+                    break
+            if fill_line:
+                fill_marker = fill_line
+                if self._task_fill_markers.get(str(topic_id)) != fill_marker:
+                    self._task_fill_markers[str(topic_id)] = fill_marker
+                    latest_fill = max(latest_fill, time.time())
 
         stale = [tid for tid in self._task_activity_markers.keys() if tid not in active_ids]
         for tid in stale:
             self._task_activity_markers.pop(tid, None)
+            self._task_fill_markers.pop(tid, None)
 
         return latest_trade, latest_fill
 
@@ -599,6 +620,99 @@ class TotalLiquidationManager:
             self._last_balance_probe_error = str(exc)
 
         return self._cached_free_balance
+
+    @staticmethod
+    def _parse_trade_timestamp(raw: Any) -> float:
+        if raw is None:
+            return 0.0
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            ts = float(raw)
+            if ts > 1e12:
+                ts /= 1000.0
+            return ts if ts > 0 else 0.0
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return 0.0
+            try:
+                return TotalLiquidationManager._parse_trade_timestamp(float(text))
+            except ValueError:
+                pass
+            try:
+                norm = text.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(norm)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return max(0.0, dt.timestamp())
+            except ValueError:
+                return 0.0
+        return 0.0
+
+    def _query_recent_fill_activity_ts(self, autorun: Any) -> float:
+        if not self.cfg.enabled:
+            return 0.0
+
+        now = time.time()
+        poll_interval = max(10.0, float(getattr(self.cfg, "balance_poll_interval_sec", 120.0)))
+        if now < self._next_trade_probe_at:
+            return 0.0
+        self._next_trade_probe_at = now + poll_interval
+        self._last_api_trade_probe_error = None
+
+        address = None
+        if getattr(autorun, "_position_address", None):
+            address = str(getattr(autorun, "_position_address") or "").strip()
+        if not address:
+            address = self._resolve_wallet()
+        if not address:
+            self._last_api_trade_probe_error = "wallet address missing"
+            return 0.0
+
+        url = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com").rstrip("/") + "/trades"
+        params = {"user": address, "limit": 200}
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "POLYMARKET_MAKER_AUTO/1.0 (+data-api-trades)",
+        }
+
+        latest_ts = 0.0
+        for attempt in range(3):
+            try:
+                query = urllib.parse.urlencode(params)
+                req = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+
+                if isinstance(payload, list):
+                    items = payload
+                elif isinstance(payload, dict):
+                    items = payload.get("data")
+                else:
+                    self._last_api_trade_probe_error = "trades response schema invalid"
+                    return 0.0
+
+                if not isinstance(items, list):
+                    self._last_api_trade_probe_error = "trades response schema invalid"
+                    return 0.0
+
+                for row in items:
+                    if not isinstance(row, dict):
+                        continue
+                    ts = self._parse_trade_timestamp(row.get("timestamp"))
+                    if ts <= 0:
+                        ts = self._parse_trade_timestamp(row.get("time"))
+                    if ts <= 0:
+                        ts = self._parse_trade_timestamp(row.get("created_at"))
+                    if ts > latest_ts:
+                        latest_ts = ts
+                return latest_ts
+            except Exception as exc:
+                self._last_api_trade_probe_error = str(exc)
+                if attempt < 2:
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+
+        return 0.0
 
     def _resolve_wallet(self) -> Optional[str]:
         for key in ("POLY_DATA_ADDRESS", "POLY_FUNDER"):
