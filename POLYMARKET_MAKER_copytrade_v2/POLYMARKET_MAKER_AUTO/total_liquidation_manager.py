@@ -97,6 +97,7 @@ class TotalLiquidationManager:
         self._last_balance_probe_error: Optional[str] = None
         self._last_positions_fetch_error: Optional[str] = None
         self._task_activity_markers: Dict[str, str] = {}
+        self._task_fill_markers: Dict[str, str] = {}
 
     _TRADE_ACTIVITY_HINTS = (
         "[maker][buy] 挂单",
@@ -242,25 +243,36 @@ class TotalLiquidationManager:
             if not excerpt:
                 continue
 
-            last_line = (excerpt.strip().splitlines() or [""])[-1].strip()
-            if not last_line:
+            lines = [ln.strip() for ln in excerpt.strip().splitlines() if ln.strip()]
+            if not lines:
                 continue
 
+            last_line = lines[-1]
             excerpt_ts = float(getattr(task, "last_log_excerpt_ts", 0.0) or 0.0)
             marker = f"{last_line}|{excerpt_ts:.3f}"
-            if self._task_activity_markers.get(str(topic_id)) == marker:
-                continue
-            self._task_activity_markers[str(topic_id)] = marker
+            if self._task_activity_markers.get(str(topic_id)) != marker:
+                self._task_activity_markers[str(topic_id)] = marker
+                normalized_last = last_line.lower()
+                if any(hint in normalized_last for hint in self._TRADE_ACTIVITY_HINTS):
+                    latest_trade = max(latest_trade, time.time())
 
-            normalized = last_line.lower()
-            if any(hint in normalized for hint in self._TRADE_ACTIVITY_HINTS):
-                latest_trade = max(latest_trade, time.time())
-            if self._line_has_real_fill_activity(normalized):
-                latest_fill = max(latest_fill, time.time())
+            # 成交识别不只看最后一行：日志刷新的末行可能是状态行，导致漏记实际成交。
+            fill_line = ""
+            for ln in reversed(lines):
+                normalized_ln = ln.lower()
+                if self._line_has_real_fill_activity(normalized_ln):
+                    fill_line = normalized_ln
+                    break
+            if fill_line:
+                fill_marker = fill_line
+                if self._task_fill_markers.get(str(topic_id)) != fill_marker:
+                    self._task_fill_markers[str(topic_id)] = fill_marker
+                    latest_fill = max(latest_fill, time.time())
 
         stale = [tid for tid in self._task_activity_markers.keys() if tid not in active_ids]
         for tid in stale:
             self._task_activity_markers.pop(tid, None)
+            self._task_fill_markers.pop(tid, None)
 
         return latest_trade, latest_fill
 
