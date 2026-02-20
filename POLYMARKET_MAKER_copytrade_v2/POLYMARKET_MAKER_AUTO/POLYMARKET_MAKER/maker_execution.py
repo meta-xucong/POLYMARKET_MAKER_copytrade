@@ -668,6 +668,20 @@ def _open_buy_order_ids_for_token(client: Any, token_id: str) -> List[str]:
     return order_ids
 
 
+def _open_sell_order_ids_for_token(client: Any, token_id: str) -> List[str]:
+    open_orders = _fetch_open_orders_norm(client)
+    order_ids: List[str] = []
+    for order in open_orders:
+        if str(order.get("token_id")) != str(token_id):
+            continue
+        if str(order.get("side", "")).upper() != "SELL":
+            continue
+        order_id = order.get("order_id")
+        if order_id:
+            order_ids.append(str(order_id))
+    return order_ids
+
+
 def _cancel_open_orders_for_token(client: Any, token_id: str) -> int:
     """Cancel all open orders (BUY/SELL) for the target token.
 
@@ -1677,6 +1691,23 @@ def maker_sell_follow_ask_with_floor_wait(
             price_invalid_since = None
 
         if active_order is None:
+            open_sell_orders = _open_sell_order_ids_for_token(client, token_id)
+            if open_sell_orders:
+                canceled = 0
+                for order_id in open_sell_orders:
+                    if _cancel_order(client, order_id):
+                        canceled += 1
+                if canceled:
+                    print(
+                        f"[MAKER][SELL] 检测到遗留 SELL 挂单，已撤销数量={canceled}，等待撮合层更新..."
+                    )
+                else:
+                    print(
+                        "[MAKER][SELL] 检测到遗留 SELL 挂单，但撤销失败，等待重试..."
+                    )
+                sleep_fn(poll_sec)
+                continue
+
             px_candidate = max(_round_down_to_dp(ask, price_dp), floor_float)
             if next_price_override is not None:
                 px_candidate = max(

@@ -2336,6 +2336,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         "last_error": "",
     }
     exit_only = bool(run_cfg.get("exit_only", False))
+    stale_awaiting_sell_seconds = max(
+        float(run_cfg.get("stale_awaiting_sell_seconds", 900.0) or 900.0),
+        30.0,
+    )
+    awaiting_sell_since: Optional[float] = None
 
     # ========== Maker 配置（从 global_config 传递）==========
     maker_poll_sec = float(run_cfg.get("maker_poll_sec", 10.0))
@@ -4553,6 +4558,26 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         strategy.stop("countdown sell-only cleared position")
                         stop_event.set()
                         break
+
+                # 兜底恢复：awaiting=SELL 长时间未落地时，自动解除阻塞，
+                # 允许策略重新发出 SELL 信号，避免子进程长期“有数据但无交易动作”空转。
+                status_for_watchdog = strategy.status()
+                awaiting_for_watchdog = status_for_watchdog.get("awaiting")
+                awaiting_watchdog_val = getattr(
+                    awaiting_for_watchdog, "value", awaiting_for_watchdog
+                )
+                if awaiting_watchdog_val == ActionType.SELL:
+                    if awaiting_sell_since is None:
+                        awaiting_sell_since = now
+                    elif (now - awaiting_sell_since) >= stale_awaiting_sell_seconds:
+                        print(
+                            "[WATCHDOG][AWAITING] awaiting=SELL 持续 "
+                            f"{now - awaiting_sell_since:.1f}s，自动清理并允许重发 SELL。"
+                        )
+                        strategy.on_reject("auto-clear stale awaiting SELL")
+                        awaiting_sell_since = None
+                else:
+                    awaiting_sell_since = None
 
                 # ✅ 增加：主循环心跳检测，避免卡死时无输出
                 if not hasattr(loop_started, '__name__'):  # 确保loop_started是时间戳而不是函数
