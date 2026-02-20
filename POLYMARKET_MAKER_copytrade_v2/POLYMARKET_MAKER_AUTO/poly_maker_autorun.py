@@ -90,6 +90,10 @@ DEFAULT_GLOBAL_CONFIG = {
     "ws_cache_flush_min_interval_sec": 0.5,  # 限制脏缓存刷盘频率，避免高负载
     "ws_silence_timeout_sec": 1200.0,  # WS静默重连阈值（默认20分钟，降低低活跃误重连）
     "ws_custom_feature_enabled": True,  # 订阅 custom feature，启用 best_bid_ask/new_market 等事件
+    "ws_subscribe_chunk_size": 30,  # WS订阅分片大小（避免单包过大）
+    "ws_subscribe_chunk_interval_ms": 150.0,  # WS分片发送间隔（毫秒）
+    "ws_ready_use_confirmed": True,  # 允许以 WS confirmed 状态作为 ready 信号
+    "ws_ready_confirm_grace_sec": 2.0,  # confirmed-ready 过渡窗口（秒）
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 可选策略模式（classic/aggressive）
     "strategy_mode": "classic",
@@ -136,6 +140,7 @@ SHARED_WS_WAIT_ESCALATION_WINDOW_SEC = 240.0
 SHARED_WS_WAIT_ESCALATION_MIN_FAILURES = 2
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
+CLOB_API_ROOT = os.getenv("POLY_CLOB_API_ROOT", "https://clob.polymarket.com")
 POSITION_CHECK_CACHE_TTL_SEC = 300.0
 POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 10.0
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
@@ -146,6 +151,8 @@ DATA_API_TRADE_RETRY_ATTEMPTS = 3
 DATA_API_RETRY_BACKOFF_SEC = (1.0, 2.0, 4.0)
 _data_api_last_request_ts = 0.0
 _data_api_request_lock = threading.Lock()
+CLOB_BOOK_PROBE_TIMEOUT_SEC = 5.0
+CLOB_BOOK_PROBE_CACHE_TTL_SEC = 300.0
 
 
 class _TeeStream:
@@ -731,6 +738,14 @@ class GlobalConfig:
     ws_custom_feature_enabled: bool = bool(
         DEFAULT_GLOBAL_CONFIG["ws_custom_feature_enabled"]
     )
+    ws_subscribe_chunk_size: int = int(DEFAULT_GLOBAL_CONFIG["ws_subscribe_chunk_size"])
+    ws_subscribe_chunk_interval_ms: float = float(
+        DEFAULT_GLOBAL_CONFIG["ws_subscribe_chunk_interval_ms"]
+    )
+    ws_ready_use_confirmed: bool = bool(DEFAULT_GLOBAL_CONFIG["ws_ready_use_confirmed"])
+    ws_ready_confirm_grace_sec: float = float(
+        DEFAULT_GLOBAL_CONFIG["ws_ready_confirm_grace_sec"]
+    )
     exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
     strategy_mode: str = str(DEFAULT_GLOBAL_CONFIG["strategy_mode"])
     aggressive_burst_slots: int = int(DEFAULT_GLOBAL_CONFIG["aggressive_burst_slots"])
@@ -946,6 +961,51 @@ class GlobalConfig:
                     cls.ws_custom_feature_enabled,
                 )
             ),
+            ws_subscribe_chunk_size=max(
+                1,
+                int(
+                    scheduler.get(
+                        "ws_subscribe_chunk_size",
+                        merged.get(
+                            "ws_subscribe_chunk_size",
+                            cls.ws_subscribe_chunk_size,
+                        ),
+                    )
+                ),
+            ),
+            ws_subscribe_chunk_interval_ms=max(
+                0.0,
+                float(
+                    scheduler.get(
+                        "ws_subscribe_chunk_interval_ms",
+                        merged.get(
+                            "ws_subscribe_chunk_interval_ms",
+                            cls.ws_subscribe_chunk_interval_ms,
+                        ),
+                    )
+                ),
+            ),
+            ws_ready_use_confirmed=bool(
+                scheduler.get(
+                    "ws_ready_use_confirmed",
+                    merged.get(
+                        "ws_ready_use_confirmed",
+                        cls.ws_ready_use_confirmed,
+                    ),
+                )
+            ),
+            ws_ready_confirm_grace_sec=max(
+                0.0,
+                float(
+                    scheduler.get(
+                        "ws_ready_confirm_grace_sec",
+                        merged.get(
+                            "ws_ready_confirm_grace_sec",
+                            cls.ws_ready_confirm_grace_sec,
+                        ),
+                    )
+                ),
+            ),
             exit_start_stagger_sec=float(
                 merged.get("exit_start_stagger_sec", cls.exit_start_stagger_sec)
             ),
@@ -1153,6 +1213,7 @@ class AutoRunManager:
         self._ws_starting_topics: set[str] = set()  # 启动窗口内保留订阅，避免刚订阅即取消
         self._pending_first_seen: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
+        self._clob_book_probe_cache: Dict[str, Dict[str, Any]] = {}
         self._next_pending_eviction: float = 0.0
         self._last_sell_fill_poll_at: float = 0.0
         self._process_started_at: float = time.time()
@@ -1601,6 +1662,8 @@ class AutoRunManager:
                 label="autorun-aggregator",
                 silence_timeout_sec=self.config.ws_silence_timeout_sec,
                 custom_feature_enabled=self.config.ws_custom_feature_enabled,
+                subscribe_chunk_size=self.config.ws_subscribe_chunk_size,
+                subscribe_chunk_interval_sec=self.config.ws_subscribe_chunk_interval_ms / 1000.0,
             )
             self._ws_client.start()
 
@@ -1690,18 +1753,29 @@ class AutoRunManager:
             return
 
         token_id = str(asset_id)
+        if token_id not in self._ws_token_ids:
+            return
 
         # 仅更新缓存中的时间戳，保留其他字段
         with self._ws_cache_lock:
-            if token_id in self._ws_cache:
-                # token已存在，仅更新时间戳
-                self._ws_cache[token_id]["updated_at"] = time.time()
-                self._ws_cache_dirty = True
+            now = time.time()
+            cache = self._ws_cache.get(token_id)
+            if cache is None:
+                cache = {
+                    "seq": 1,
+                    "updated_at": now,
+                    "source": "last_trade_price_bootstrap",
+                }
+                self._ws_cache[token_id] = cache
+            else:
+                cache["updated_at"] = now
+                cache["seq"] = int(cache.get("seq", 0)) + 1
+            self._ws_cache_dirty = True
 
-                # 可选：更新last_trade_price字段
-                trade_price = _coerce_float(ev.get("price") or ev.get("last_trade_price"))
-                if trade_price is not None and trade_price > 0:
-                    self._ws_cache[token_id]["price"] = trade_price
+            # 可选：更新last_trade_price字段
+            trade_price = _coerce_float(ev.get("price") or ev.get("last_trade_price"))
+            if trade_price is not None and trade_price > 0:
+                cache["price"] = trade_price
 
     def _on_ws_event(self, ev: Dict[str, Any]) -> None:
         # 统计事件接收和过滤情况
@@ -2415,6 +2489,47 @@ class AutoRunManager:
 
         return False
 
+    def _is_ws_confirmed(self, token_id: str) -> bool:
+        with self._ws_client_lock:
+            client = self._ws_client
+        if client is None:
+            return False
+        checker = getattr(client, "is_token_confirmed", None)
+        if callable(checker):
+            try:
+                return bool(checker(token_id))
+            except Exception:
+                return False
+        return False
+
+    def _probe_clob_book_available(self, token_id: str) -> tuple[bool, str]:
+        if not token_id:
+            return False, "empty_token"
+        now = time.time()
+        cached = self._clob_book_probe_cache.get(token_id)
+        if cached and (now - float(cached.get("ts", 0.0))) <= CLOB_BOOK_PROBE_CACHE_TTL_SEC:
+            return bool(cached.get("ok", False)), str(cached.get("reason", "cache"))
+
+        url = f"{CLOB_API_ROOT}/book"
+        try:
+            resp = requests.get(
+                url,
+                params={"token_id": token_id},
+                timeout=CLOB_BOOK_PROBE_TIMEOUT_SEC,
+            )
+            ok = resp.status_code == 200
+            reason = f"status={resp.status_code}"
+        except requests.RequestException as exc:
+            ok = False
+            reason = f"request_error:{exc.__class__.__name__}"
+
+        self._clob_book_probe_cache[token_id] = {
+            "ts": now,
+            "ok": ok,
+            "reason": reason,
+        }
+        return ok, reason
+
     def _schedule_pending_topics(self) -> None:
         if self._is_buy_paused_by_balance():
             self._defer_pending_topics_due_to_low_balance()
@@ -2472,68 +2587,94 @@ class AutoRunManager:
             with self._ws_cache_lock:
                 cached = self._ws_cache.get(topic_id)
             if not cached:
-                pending_since = self._shared_ws_pending_since.setdefault(topic_id, now)
-                waited = now - pending_since
-                max_wait = max(1.0, float(self.config.shared_ws_max_pending_wait_sec))
-                if waited >= max_wait:
-                    failures = self._shared_ws_wait_failures.get(topic_id, 0) + 1
-                    self._shared_ws_wait_failures[topic_id] = failures
-                    self._shared_ws_pending_since[topic_id] = now
-                    max_failures = max(
-                        1, int(self.config.shared_ws_wait_failures_before_pause)
-                    )
-                    print(
-                        f"[WS][WAIT] topic={topic_id[:8]}... 等待WS缓存"
-                        f" {max_wait:.0f}s超时 ({failures}/{max_failures})"
-                    )
-
-                    escalation_window = max(
-                        max_wait,
-                        float(
-                            getattr(
-                                self.config,
-                                "shared_ws_wait_escalation_window_sec",
-                                SHARED_WS_WAIT_ESCALATION_WINDOW_SEC,
-                            )
-                        ),
-                    )
-                    min_escalation_failures = max(
-                        1,
-                        int(
-                            getattr(
-                                self.config,
-                                "shared_ws_wait_escalation_min_failures",
-                                SHARED_WS_WAIT_ESCALATION_MIN_FAILURES,
-                            )
-                        ),
-                    )
-                    timeout_events = self._shared_ws_wait_timeout_events.get(topic_id, [])
-                    timeout_events = [
-                        ts for ts in timeout_events if (now - ts) <= escalation_window
-                    ]
-                    timeout_events.append(now)
-                    self._shared_ws_wait_timeout_events[topic_id] = timeout_events
-
-                    should_pause = (
-                        failures >= max_failures
-                        and len(timeout_events) >= min_escalation_failures
-                    )
-                    if should_pause:
-                        pause_seconds = max(
-                            60.0, float(self.config.shared_ws_wait_pause_minutes) * 60.0
-                        )
-                        self._shared_ws_paused_until[topic_id] = now + pause_seconds
+                if self.config.ws_ready_use_confirmed and self._is_ws_confirmed(topic_id):
+                    grace_sec = max(0.0, float(self.config.ws_ready_confirm_grace_sec))
+                    pending_since = self._shared_ws_pending_since.setdefault(topic_id, now)
+                    waited = now - pending_since
+                    if waited >= grace_sec:
+                        with self._ws_cache_lock:
+                            prev = self._ws_cache.get(topic_id) or {}
+                            seq = int(prev.get("seq", 0)) + 1
+                            self._ws_cache[topic_id] = {
+                                **prev,
+                                "seq": seq,
+                                "updated_at": now,
+                                "source": "ws_confirmed_bootstrap",
+                            }
+                            self._ws_cache_dirty = True
+                        cached = self._ws_cache.get(topic_id)
                         self._shared_ws_wait_failures[topic_id] = 0
+                        self._shared_ws_paused_until.pop(topic_id, None)
                         self._shared_ws_wait_timeout_events[topic_id] = []
                         print(
-                            f"[WS][PAUSE] topic={topic_id[:8]}... 暂停 {pause_seconds:.0f}s"
+                            f"[WS][READY] topic={topic_id[:8]}... confirmed已就绪"
+                            f" (等待了 {waited:.1f}s, source=confirmed)"
                         )
-                if lane == "burst":
-                    self._enqueue_burst_topic(topic_id)
+                if cached:
+                    pass
                 else:
-                    self._enqueue_pending_topic(topic_id)
-                checks_remaining -= 1
-                continue
+                    pending_since = self._shared_ws_pending_since.setdefault(topic_id, now)
+                    waited = now - pending_since
+                    max_wait = max(1.0, float(self.config.shared_ws_max_pending_wait_sec))
+                    if waited >= max_wait:
+                        failures = self._shared_ws_wait_failures.get(topic_id, 0) + 1
+                        self._shared_ws_wait_failures[topic_id] = failures
+                        self._shared_ws_pending_since[topic_id] = now
+                        max_failures = max(
+                            1, int(self.config.shared_ws_wait_failures_before_pause)
+                        )
+                        print(
+                            f"[WS][WAIT] topic={topic_id[:8]}... 等待WS缓存"
+                            f" {max_wait:.0f}s超时 ({failures}/{max_failures})"
+                        )
+
+                        escalation_window = max(
+                            max_wait,
+                            float(
+                                getattr(
+                                    self.config,
+                                    "shared_ws_wait_escalation_window_sec",
+                                    SHARED_WS_WAIT_ESCALATION_WINDOW_SEC,
+                                )
+                            ),
+                        )
+                        min_escalation_failures = max(
+                            1,
+                            int(
+                                getattr(
+                                    self.config,
+                                    "shared_ws_wait_escalation_min_failures",
+                                    SHARED_WS_WAIT_ESCALATION_MIN_FAILURES,
+                                )
+                            ),
+                        )
+                        timeout_events = self._shared_ws_wait_timeout_events.get(topic_id, [])
+                        timeout_events = [
+                            ts for ts in timeout_events if (now - ts) <= escalation_window
+                        ]
+                        timeout_events.append(now)
+                        self._shared_ws_wait_timeout_events[topic_id] = timeout_events
+
+                        should_pause = (
+                            failures >= max_failures
+                            and len(timeout_events) >= min_escalation_failures
+                        )
+                        if should_pause:
+                            pause_seconds = max(
+                                60.0, float(self.config.shared_ws_wait_pause_minutes) * 60.0
+                            )
+                            self._shared_ws_paused_until[topic_id] = now + pause_seconds
+                            self._shared_ws_wait_failures[topic_id] = 0
+                            self._shared_ws_wait_timeout_events[topic_id] = []
+                            print(
+                                f"[WS][PAUSE] topic={topic_id[:8]}... 暂停 {pause_seconds:.0f}s"
+                            )
+                    if lane == "burst":
+                        self._enqueue_burst_topic(topic_id)
+                    else:
+                        self._enqueue_pending_topic(topic_id)
+                    checks_remaining -= 1
+                    continue
             if topic_id in self._shared_ws_pending_since:
                 waited = now - self._shared_ws_pending_since.pop(topic_id)
                 self._shared_ws_wait_failures[topic_id] = 0
@@ -2790,9 +2931,24 @@ class AutoRunManager:
             else:
                 cache_age = None
 
+            # 多信号一致性判定，避免将“事件驱动无更新”误判为不可交易。
+            # 至少同时满足：
+            # 1) WS 未确认；
+            # 2) CLOB /book 探针不可用；
+            # 才会进入 NO_DATA_TIMEOUT 软淘汰。
+            ws_confirmed = self._is_ws_confirmed(topic_id)
+            if ws_confirmed:
+                continue
+
+            book_available, book_reason = self._probe_clob_book_available(topic_id)
+            if book_available:
+                continue
+
             exit_data = {
                 "pending_age_sec": round(now - first_seen, 1),
                 "cache_age_sec": round(cache_age, 1) if cache_age is not None else None,
+                "ws_confirmed": ws_confirmed,
+                "book_probe_reason": book_reason,
             }
             self._remove_pending_topic(topic_id)
             # NO_DATA_TIMEOUT 允许回填，但在 _filter_refillable_tokens 中有更严格的次数限制
@@ -4191,6 +4347,7 @@ class AutoRunManager:
         self._shared_ws_wait_failures.clear()
         self._shared_ws_paused_until.clear()
         self._shared_ws_wait_timeout_events.clear()
+        self._clob_book_probe_cache.clear()
         self._shared_ws_pending_since.clear()
         self._seen_self_sell_trade_keys.clear()
         self._seen_self_sell_tokens.clear()

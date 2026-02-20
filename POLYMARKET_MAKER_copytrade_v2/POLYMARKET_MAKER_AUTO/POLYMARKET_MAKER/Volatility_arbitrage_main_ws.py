@@ -87,6 +87,8 @@ class WSAggregatorClient:
         enable_text_ping: bool = False,
         silence_timeout_sec: float = 1200.0,
         custom_feature_enabled: bool = True,
+        subscribe_chunk_size: int = 30,
+        subscribe_chunk_interval_sec: float = 0.15,
     ):
         self._on_event = on_event
         self._on_state = on_state
@@ -124,12 +126,19 @@ class WSAggregatorClient:
         self._ping_timeout = max(1.0, float(ping_timeout_sec))
         self._enable_text_ping = bool(enable_text_ping)
         self._custom_feature_enabled = bool(custom_feature_enabled)
+        self._subscribe_chunk_size = max(1, int(subscribe_chunk_size))
+        self._subscribe_chunk_interval_sec = max(0.0, float(subscribe_chunk_interval_sec))
 
         # 统计
         self._last_event_ts = 0.0
         self._connect_count = 0
         self._subscribe_count = 0
         self._unsubscribe_count = 0
+
+    def _chunked(self, values: List[str], chunk_size: int) -> List[List[str]]:
+        if chunk_size <= 0:
+            chunk_size = 1
+        return [values[idx: idx + chunk_size] for idx in range(0, len(values), chunk_size)]
 
     def start(self) -> None:
         """启动WS连接线程"""
@@ -245,6 +254,13 @@ class WSAggregatorClient:
         with self._lock:
             return list(self._subscribed_ids)
 
+    def is_token_confirmed(self, token_id: str) -> bool:
+        """检查指定 token 是否已收到过 WS 事件确认。"""
+        if not token_id:
+            return False
+        with self._lock:
+            return token_id in self._confirmed_ids
+
     def get_pending_count(self) -> Dict[str, int]:
         """获取待处理的订阅/取消订阅数量"""
         with self._lock:
@@ -322,21 +338,27 @@ class WSAggregatorClient:
             if not initial_assets and self._subscribed_ids:
                 initial_assets = list(self._subscribed_ids)
 
+        initial_chunks = self._chunked(initial_assets, self._subscribe_chunk_size)
+        first_chunk = initial_chunks[0] if initial_chunks else []
+        remain_chunks = initial_chunks[1:] if len(initial_chunks) > 1 else []
+
         initial_msg = {
             "type": CHANNEL,
-            "assets_ids": initial_assets,
+            "assets_ids": first_chunk,
             "custom_feature_enabled": self._custom_feature_enabled,
         }
         if self._auth:
             initial_msg["auth"] = self._auth
         try:
             ws.send(json.dumps(initial_msg))
-            if initial_assets:
+            if first_chunk:
                 with self._lock:
-                    self._subscribed_ids.update(initial_assets)
+                    self._subscribed_ids.update(first_chunk)
                     # 初始握手已携带这些 token，避免 flush 线程重复发送 subscribe
-                    for tid in initial_assets:
+                    for tid in first_chunk:
                         self._pending_subscribe.discard(tid)
+                    for chunk in remain_chunks:
+                        self._pending_subscribe.update(chunk)
         except Exception as e:
             if self._verbose:
                 print(f"[{_now()}][WS][AGGREGATOR][ERROR] 发送握手消息失败: {e}")
@@ -403,25 +425,38 @@ class WSAggregatorClient:
                 self._pending_unsubscribe.clear()
 
         if unsubscribe_batch:
-            msg = {"operation": "unsubscribe", "assets_ids": unsubscribe_batch}
-            msg["custom_feature_enabled"] = self._custom_feature_enabled
-            if self._auth:
-                msg["auth"] = self._auth
-            try:
-                ws.send(json.dumps(msg))
-                self._unsubscribe_count += len(unsubscribe_batch)
-                with self._lock:
-                    for tid in unsubscribe_batch:
-                        self._subscribed_ids.discard(tid)
-                        self._confirmed_ids.discard(tid)
-                if self._verbose:
-                    print(f"[{_now()}][WS][AGGREGATOR] ✗ 取消订阅 {len(unsubscribe_batch)} 个token")
-            except Exception as e:
-                # 发送失败，放回队列
-                with self._lock:
-                    self._pending_unsubscribe.update(unsubscribe_batch)
-                if self._verbose:
-                    print(f"[{_now()}][WS][AGGREGATOR][ERROR] 取消订阅失败: {e}")
+            chunks = self._chunked(unsubscribe_batch, self._subscribe_chunk_size)
+            sent = 0
+            for chunk_idx, chunk in enumerate(chunks, start=1):
+                msg = {"operation": "unsubscribe", "assets_ids": chunk}
+                msg["custom_feature_enabled"] = self._custom_feature_enabled
+                if self._auth:
+                    msg["auth"] = self._auth
+                try:
+                    ws.send(json.dumps(msg))
+                    sent += len(chunk)
+                    self._unsubscribe_count += len(chunk)
+                    with self._lock:
+                        for tid in chunk:
+                            self._subscribed_ids.discard(tid)
+                            self._confirmed_ids.discard(tid)
+                    if self._verbose:
+                        print(
+                            f"[{_now()}][WS][AGGREGATOR] ✗ 取消订阅分片 {chunk_idx}/{len(chunks)} "
+                            f"({len(chunk)} 个token)"
+                        )
+                except Exception as e:
+                    # 发送失败，放回当前及剩余分片
+                    remain = chunk + [tid for c in chunks[chunk_idx:] for tid in c]
+                    with self._lock:
+                        self._pending_unsubscribe.update(remain)
+                    if self._verbose:
+                        print(f"[{_now()}][WS][AGGREGATOR][ERROR] 取消订阅失败: {e}")
+                    break
+                if self._subscribe_chunk_interval_sec > 0 and chunk_idx < len(chunks):
+                    time.sleep(self._subscribe_chunk_interval_sec)
+            if sent and self._verbose:
+                print(f"[{_now()}][WS][AGGREGATOR] ✗ 取消订阅总计 {sent} 个token")
 
         # 再处理订阅
         subscribe_batch: List[str] = []
@@ -431,23 +466,36 @@ class WSAggregatorClient:
                 self._pending_subscribe.clear()
 
         if subscribe_batch:
-            msg = {"operation": "subscribe", "assets_ids": subscribe_batch}
-            msg["custom_feature_enabled"] = self._custom_feature_enabled
-            if self._auth:
-                msg["auth"] = self._auth
-            try:
-                ws.send(json.dumps(msg))
-                self._subscribe_count += len(subscribe_batch)
-                with self._lock:
-                    self._subscribed_ids.update(subscribe_batch)
-                if self._verbose:
-                    print(f"[{_now()}][WS][AGGREGATOR] ✓ 订阅 {len(subscribe_batch)} 个token (总订阅: {len(self._subscribed_ids)})")
-            except Exception as e:
-                # 发送失败，放回队列
-                with self._lock:
-                    self._pending_subscribe.update(subscribe_batch)
-                if self._verbose:
-                    print(f"[{_now()}][WS][AGGREGATOR][ERROR] 订阅失败: {e}")
+            chunks = self._chunked(subscribe_batch, self._subscribe_chunk_size)
+            sent = 0
+            for chunk_idx, chunk in enumerate(chunks, start=1):
+                msg = {"operation": "subscribe", "assets_ids": chunk}
+                msg["custom_feature_enabled"] = self._custom_feature_enabled
+                if self._auth:
+                    msg["auth"] = self._auth
+                try:
+                    ws.send(json.dumps(msg))
+                    sent += len(chunk)
+                    self._subscribe_count += len(chunk)
+                    with self._lock:
+                        self._subscribed_ids.update(chunk)
+                    if self._verbose:
+                        print(
+                            f"[{_now()}][WS][AGGREGATOR] ✓ 订阅分片 {chunk_idx}/{len(chunks)} "
+                            f"({len(chunk)} 个token)"
+                        )
+                except Exception as e:
+                    # 发送失败，放回当前及剩余分片
+                    remain = chunk + [tid for c in chunks[chunk_idx:] for tid in c]
+                    with self._lock:
+                        self._pending_subscribe.update(remain)
+                    if self._verbose:
+                        print(f"[{_now()}][WS][AGGREGATOR][ERROR] 订阅失败: {e}")
+                    break
+                if self._subscribe_chunk_interval_sec > 0 and chunk_idx < len(chunks):
+                    time.sleep(self._subscribe_chunk_interval_sec)
+            if sent and self._verbose:
+                print(f"[{_now()}][WS][AGGREGATOR] ✓ 订阅总计 {sent} 个token (总订阅: {len(self._subscribed_ids)})")
 
     def _on_message(self, ws, message: str) -> None:
         """WS消息回调"""
