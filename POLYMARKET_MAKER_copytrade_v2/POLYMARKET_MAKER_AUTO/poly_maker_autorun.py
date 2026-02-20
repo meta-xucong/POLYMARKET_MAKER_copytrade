@@ -264,6 +264,20 @@ def _extract_position_token_id(entry: Dict[str, Any]) -> Optional[str]:
     return token_id or None
 
 
+def _normalize_unix_ts_seconds(ts_raw: Any) -> int:
+    """将秒/毫秒/微秒/纳秒时间戳统一归一到秒级 Unix 时间戳。"""
+    try:
+        ts = int(float(ts_raw)) if ts_raw is not None else 0
+    except (TypeError, ValueError):
+        return 0
+    if ts <= 0:
+        return 0
+    # 1e11 秒已明显超出常规业务时间范围，通常说明是 ms/us/ns。
+    while ts > 100_000_000_000:
+        ts //= 1000
+    return ts
+
+
 def _extract_position_size(entry: Dict[str, Any]) -> Optional[float]:
     """官方 /positions 返回字段使用 size。"""
     val = entry.get("size")
@@ -1141,7 +1155,8 @@ class AutoRunManager:
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._next_pending_eviction: float = 0.0
         self._last_sell_fill_poll_at: float = 0.0
-        self._last_self_sell_trade_ts: int = 0
+        self._process_started_at: float = time.time()
+        self._last_self_sell_trade_ts: int = int(self._process_started_at)
         self._seen_self_sell_trade_keys: set[str] = set()
         self._seen_self_sell_tokens: set[str] = set()
         self._price_cap_stuck_since: Dict[str, float] = {}
@@ -2677,13 +2692,13 @@ class AutoRunManager:
                 continue
             if self.config.aggressive_first_sell_fill_only and token_id in self._seen_self_sell_tokens:
                 continue
-            ts_raw = row.get("timestamp")
-            try:
-                ts = int(float(ts_raw)) if ts_raw is not None else 0
-            except (TypeError, ValueError):
-                ts = 0
+            ts = _normalize_unix_ts_seconds(row.get("timestamp"))
             if ts > max_seen:
                 max_seen = ts
+
+            # 仅接受本次 autorun 启动之后的卖出成交，避免历史成交把 burst 长期顶满。
+            if ts < int(self._process_started_at):
+                continue
 
             trade_key = (
                 f"{token_id}:{side}:{ts}:"
@@ -4179,7 +4194,8 @@ class AutoRunManager:
         self._shared_ws_pending_since.clear()
         self._seen_self_sell_trade_keys.clear()
         self._seen_self_sell_tokens.clear()
-        self._last_self_sell_trade_ts = 0
+        self._process_started_at = time.time()
+        self._last_self_sell_trade_ts = int(self._process_started_at)
 
         self._ws_cache.clear()
         self._ws_token_ids = []
@@ -4268,13 +4284,20 @@ class AutoRunManager:
             self.pending_exit_topics.append(topic_id)
 
         pending_burst_topics = payload.get("pending_burst_topics") or []
+        restored_burst_to_base = 0
         for topic_id in pending_burst_topics:
             topic_id = str(topic_id)
             if not topic_id:
                 continue
             if topic_id in dead_tokens:
                 continue
-            self._enqueue_burst_topic(topic_id)
+            # 避免历史残留 burst 队列在重启后直接把额外槽位占满。
+            self._enqueue_pending_topic(topic_id)
+            restored_burst_to_base += 1
+        if restored_burst_to_base:
+            print(
+                f"[RESTORE] 已将 {restored_burst_to_base} 个历史 burst token 降级为普通 pending"
+            )
 
         handled_sell_signals = payload.get("handled_sell_signals") or []
         self._handled_sell_signals = {
