@@ -203,3 +203,76 @@ def test_fetch_recent_trades_returns_last_error_after_retries():
         autorun.DATA_API_TRADE_RETRY_ATTEMPTS = old_attempts
         autorun.DATA_API_RETRY_BACKOFF_SEC = old_backoff
         autorun.time.sleep = old_sleep
+
+
+def test_ws_chunk_and_confirm_config_can_be_loaded_from_scheduler():
+    cfg = GlobalConfig.from_dict(
+        {
+            "scheduler": {
+                "ws_subscribe_chunk_size": 17,
+                "ws_subscribe_chunk_interval_ms": 80,
+                "ws_ready_use_confirmed": True,
+                "ws_ready_confirm_grace_sec": 1.5,
+            }
+        }
+    )
+
+    assert cfg.ws_subscribe_chunk_size == 17
+    assert cfg.ws_subscribe_chunk_interval_ms == 80.0
+    assert cfg.ws_ready_use_confirmed is True
+    assert cfg.ws_ready_confirm_grace_sec == 1.5
+
+
+def test_last_trade_event_bootstraps_cache_for_subscribed_token():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "token-a"
+    manager._ws_token_ids = [token_id]
+
+    manager._update_token_timestamp_from_trade(
+        {
+            "event_type": "last_trade_price",
+            "asset_id": token_id,
+            "price": "0.52",
+        }
+    )
+
+    with manager._ws_cache_lock:
+        assert token_id in manager._ws_cache
+        assert manager._ws_cache[token_id]["price"] == 0.52
+        assert manager._ws_cache[token_id]["source"] == "last_trade_price_bootstrap"
+
+
+def test_evict_stale_pending_topics_requires_ws_unconfirmed_and_book_unavailable():
+    cfg = GlobalConfig.from_dict(
+        {
+            "scheduler": {
+                "pending_soft_eviction_minutes": 1,
+                "enable_pending_soft_eviction": True,
+            }
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.pending_topics = ["t1", "t2", "t3"]
+    now = 1000.0
+    manager._pending_first_seen = {"t1": 0.0, "t2": 0.0, "t3": 0.0}
+
+    manager._is_ws_confirmed = lambda token_id: token_id == "t2"  # type: ignore[assignment]
+    manager._probe_clob_book_available = lambda token_id: (token_id == "t3", "probe")  # type: ignore[assignment]
+    records = []
+    manager._append_exit_token_record = lambda token_id, reason, **kwargs: records.append((token_id, reason, kwargs))  # type: ignore[assignment]
+
+    import poly_maker_autorun as autorun
+
+    old_time = autorun.time.time
+    try:
+        autorun.time.time = lambda: now
+        manager._evict_stale_pending_topics()
+    finally:
+        autorun.time.time = old_time
+
+    assert [token_id for token_id, _, _ in records] == ["t1"]
+    assert all(reason == "NO_DATA_TIMEOUT" for _, reason, _ in records)
+    assert "t1" not in manager.pending_topics
+    assert "t2" in manager.pending_topics
+    assert "t3" in manager.pending_topics
