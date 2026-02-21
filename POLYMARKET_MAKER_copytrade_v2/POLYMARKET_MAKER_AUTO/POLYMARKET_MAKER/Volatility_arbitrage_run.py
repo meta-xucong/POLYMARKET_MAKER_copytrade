@@ -2527,16 +2527,29 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     def _handle_termination_signal(signum: int, _frame: Any) -> None:
         nonlocal shutdown_buy_orders_canceled
-        signal_name = signal.Signals(signum).name
+        try:
+            signal_name = signal.Signals(signum).name
+        except Exception:
+            signal_name = f"SIG{signum}"
         print(f"[SIGNAL] 收到 {signal_name}，准备安全退出。")
-        if not shutdown_buy_orders_canceled:
-            _cancel_open_buy_orders_before_exit(f"{signal_name}_SHUTDOWN")
-            shutdown_buy_orders_canceled = True
-        strategy.stop(f"{signal_name.lower()} shutdown")
-        stop_event.set()
+        try:
+            if not shutdown_buy_orders_canceled:
+                try:
+                    _cancel_open_buy_orders_before_exit(f"{signal_name}_SHUTDOWN")
+                except Exception as cancel_exc:
+                    print(f"[SIGNAL][WARN] {signal_name} 撤销 BUY 挂单失败: {cancel_exc}")
+                finally:
+                    shutdown_buy_orders_canceled = True
+            try:
+                strategy.stop(f"{signal_name.lower()} shutdown")
+            except Exception as stop_exc:
+                print(f"[SIGNAL][WARN] {signal_name} strategy.stop 失败: {stop_exc}")
+        finally:
+            stop_event.set()
 
-    signal.signal(signal.SIGTERM, _handle_termination_signal)
-    signal.signal(signal.SIGINT, _handle_termination_signal)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _handle_termination_signal)
+        signal.signal(signal.SIGINT, _handle_termination_signal)
 
     if exit_only:
         _exit_cleanup_only("exit-only cleanup")
