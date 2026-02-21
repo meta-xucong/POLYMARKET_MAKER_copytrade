@@ -149,11 +149,12 @@ aggressive 典型配置（示例）：
 
 ### 2.3 `scheduler.total_liquidation` 总清仓参数
 
-> 当活跃度长期偏低时触发“全局清仓 +（可选）硬重置 + 重启”。默认关闭。
+> 当活跃度长期偏低时触发“全局清仓 +（可选）硬重置 + 重启”，或在 `restart_only` 模式下仅重启。默认关闭。
 
 | 字段 | 含义 | 类型/格式 | 默认 |
 | --- | --- | --- | --- |
 | `enable_total_liquidation` | 是否开启总清仓。 | 布尔 | `false` |
+| `execution_mode` | 触发后的执行模式：`liquidate_then_restart`=执行清仓流程并重启；`restart_only`=仅重启，不清仓、不删除 JSON。 | 枚举字符串 | `liquidate_then_restart` |
 | `min_interval_hours` | 两次总清仓最小间隔。 | 浮点（小时） | `72` |
 | `trigger.idle_slot_ratio_threshold` | 空闲槽位比例触发阈值。 | `0~1` 浮点 | `0.5` |
 | `trigger.idle_slot_duration_minutes` | 空闲槽位持续时长阈值。 | 浮点（分钟） | `120` |
@@ -187,6 +188,7 @@ aggressive 典型配置（示例）：
 ```json
 "total_liquidation": {
   "enable_total_liquidation": true,
+  "execution_mode": "liquidate_then_restart",
   "trigger": {
     "min_free_balance": 20.0,
     "enable_low_balance_force_trigger": true,

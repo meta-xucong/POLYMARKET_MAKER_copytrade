@@ -36,6 +36,7 @@ class LiquidationConfig:
     remove_json_state: bool = True
     task_stop_timeout_minutes: float = 5.0
     blacklist_enabled: bool = True
+    execution_mode: str = "liquidate_then_restart"
 
     @classmethod
     def from_global_config(cls, cfg: Any) -> "LiquidationConfig":
@@ -46,6 +47,7 @@ class LiquidationConfig:
         blacklist = raw.get("blacklist") or {}
         return cls(
             enabled=bool(raw.get("enable_total_liquidation", False)),
+            execution_mode=str(raw.get("execution_mode", "liquidate_then_restart") or "liquidate_then_restart").strip().lower(),
             min_interval_hours=float(raw.get("min_interval_hours", 72.0)),
             idle_slot_ratio_threshold=float(trigger.get("idle_slot_ratio_threshold", 0.5)),
             idle_slot_duration_minutes=float(trigger.get("idle_slot_duration_minutes", 120.0)),
@@ -75,6 +77,8 @@ class TotalLiquidationManager:
     _COLLATERAL_DECIMALS = 6
     _TOKEN_SCOPE_COPYTRADE = "copytrade"
     _TOKEN_SCOPE_ALL_POSITIONS = "all_positions"
+    _EXECUTION_MODE_LIQUIDATE_THEN_RESTART = "liquidate_then_restart"
+    _EXECUTION_MODE_RESTART_ONLY = "restart_only"
 
     def __init__(self, cfg: Any, project_root: Path):
         self.cfg = LiquidationConfig.from_global_config(cfg)
@@ -329,6 +333,20 @@ class TotalLiquidationManager:
         }
 
         try:
+            if self.cfg.execution_mode == self._EXECUTION_MODE_RESTART_ONLY:
+                now = time.time()
+                state = {
+                    "last_trigger_ts": now,
+                    "last_trigger_reason": reasons,
+                    "last_result": result,
+                    "last_duration_sec": now - start,
+                    "execution_mode": self.cfg.execution_mode,
+                }
+                self._save_state(state)
+                print("[GLB_LIQ] 命中 restart_only 模式：跳过清仓与硬重置，仅请求重启 autorun")
+                autorun.stop_event.set()
+                return result
+
             precheck_error, prechecked_client, prechecked_token_scope = self._precheck_liquidation_ready()
             if precheck_error:
                 result.update({"errors": [precheck_error], "aborted": True})

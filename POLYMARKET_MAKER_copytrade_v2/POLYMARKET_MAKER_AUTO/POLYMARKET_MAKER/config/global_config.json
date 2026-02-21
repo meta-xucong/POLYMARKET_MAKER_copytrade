@@ -38,7 +38,8 @@
         "hard_reset_enabled": true,
         "remove_logs": true,
         "remove_json_state": true
-      }
+      },
+      "execution_mode": "liquidate_then_restart"
     },
     "price_cap_refill_stuck_minutes": 120.0,
     "shock_refill_stuck_minutes": 45.0,
