@@ -1,5 +1,6 @@
 import sys
 import types
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -9,7 +10,7 @@ if str(ROOT) not in sys.path:
 if "requests" not in sys.modules:
     sys.modules["requests"] = types.SimpleNamespace(get=lambda *a, **k: None)
 
-from poly_maker_autorun import AutoRunManager, GlobalConfig
+from poly_maker_autorun import AutoRunManager, GlobalConfig, TopicTask
 
 
 def _build_manager(cfg: GlobalConfig) -> AutoRunManager:
@@ -83,7 +84,7 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
         {"topic_id": "a", "token_id": "a"},
         {"topic_id": "b", "token_id": "b"},
     ]
-    manager._load_copytrade_sell_signals = lambda: set()  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
     manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
     manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
 

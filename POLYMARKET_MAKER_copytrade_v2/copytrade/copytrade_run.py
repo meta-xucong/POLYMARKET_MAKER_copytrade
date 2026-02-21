@@ -182,6 +182,11 @@ def _load_sell_signals(path: Path) -> Dict[str, Dict[str, Any]]:
             continue
         entry = dict(item)
         entry.setdefault("introduced_by_buy", False)
+        entry.setdefault("status", "pending")
+        try:
+            entry["attempts"] = int(entry.get("attempts", 0) or 0)
+        except (TypeError, ValueError):
+            entry["attempts"] = 0
         mapping[str(token_id)] = entry
     return mapping
 
@@ -392,6 +397,8 @@ def run_once(
                     "source_account": account,
                     "last_seen": last_seen,
                     "introduced_by_buy": True,
+                    "status": "pending",
+                    "attempts": 0,
                 }
                 existing_sell = sell_map.get(key)
                 existing_ts = _parse_last_seen(
