@@ -46,7 +46,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "max_exit_cleanup_tasks": 3,  # 清仓任务独立槽位，不受 max_concurrent_tasks 限制
     "log_dir": str(PROJECT_ROOT / "logs" / "autorun"),
     "data_dir": str(PROJECT_ROOT / "data"),
-    "handled_topics_path": str(PROJECT_ROOT / "data" / "handled_topics.json"),
+    "handled_topics_path": str(PROJECT_ROOT.parent / "copytrade" / "handled_topics.json"),
     "copytrade_tokens_path": str(
         PROJECT_ROOT.parent / "copytrade" / "tokens_from_copytrade.json"
     ),
@@ -814,7 +814,7 @@ class GlobalConfig:
         handled_topics_path = Path(
             merged.get("handled_topics_path")
             or paths.get("handled_topics_file")
-            or data_dir / "handled_topics.json"
+            or PROJECT_ROOT.parent / "copytrade" / "handled_topics.json"
         )
         copytrade_tokens_path = Path(
             merged.get("copytrade_tokens_path")
@@ -1462,6 +1462,7 @@ class AutoRunManager:
         self.config.ensure_dirs()
         self._load_handled_topics()
         self._restore_runtime_status()
+        self._sync_handled_topics_on_startup()
         self._normalize_pending_queues_for_mode()
         mode = "aggressive" if self._is_aggressive_mode() else "classic"
         print(
@@ -3442,6 +3443,38 @@ class AutoRunManager:
             )
         else:
             print("[INIT] 尚无历史处理话题记录")
+
+    def _sync_handled_topics_on_startup(self) -> None:
+        """启动时将 handled_topics 与当前 copytrade 数据做一次同步裁剪。"""
+        tokens_path = self.config.copytrade_tokens_path
+        signals_path = self.config.copytrade_sell_signals_path
+        if not tokens_path.exists() and not signals_path.exists():
+            return
+
+        source_topics = {
+            topic_id
+            for topic_id in (
+                _topic_id_from_entry(item)
+                for item in self._load_copytrade_tokens()
+            )
+            if topic_id
+        }
+        source_topics.update(self._load_copytrade_sell_signals().keys())
+        source_topics.update(self.pending_topics)
+        source_topics.update(self.pending_burst_topics)
+        source_topics.update(self.pending_exit_topics)
+        source_topics.update(self.tasks.keys())
+
+        if self.handled_topics == source_topics:
+            return
+
+        stale_count = len(self.handled_topics - source_topics)
+        self.handled_topics = set(source_topics)
+        write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+        print(
+            "[HANDLED] 启动同步完成: "
+            f"total={len(self.handled_topics)} stale_removed={max(0, stale_count)}"
+        )
 
     def _update_handled_topics(self, new_topics: List[str]) -> None:
         if not new_topics:
