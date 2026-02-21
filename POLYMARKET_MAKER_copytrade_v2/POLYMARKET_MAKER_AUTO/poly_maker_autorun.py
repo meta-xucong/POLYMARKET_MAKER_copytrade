@@ -1247,6 +1247,118 @@ class AutoRunManager:
         self._buy_pause_deferred_tokens: set[str] = set()
         self._total_liquidation = TotalLiquidationManager(self.config, PROJECT_ROOT)
 
+    def _manual_intervention_path(self) -> Path:
+        return self.config.copytrade_sell_signals_path.parent / "manual_intervention_tokens.json"
+
+    def _record_manual_intervention_token(self, token_id: str, *, retry_count: int, rc: int) -> None:
+        if not token_id:
+            return
+        path = self._manual_intervention_path()
+        payload = _load_json_file(path)
+        rows = payload.get("tokens") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            rows = []
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        out: List[Dict[str, Any]] = []
+        matched = False
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            tid = str(item.get("token_id") or item.get("tokenId") or "").strip()
+            if tid == token_id:
+                item = dict(item)
+                item.update(
+                    {
+                        "token_id": token_id,
+                        "retry_count": int(retry_count),
+                        "last_rc": int(rc),
+                        "updated_at": now_iso,
+                        "reason": "EXIT_CLEANUP_MAX_RETRIES",
+                    }
+                )
+                matched = True
+            out.append(item)
+        if not matched:
+            out.append(
+                {
+                    "token_id": token_id,
+                    "retry_count": int(retry_count),
+                    "last_rc": int(rc),
+                    "updated_at": now_iso,
+                    "reason": "EXIT_CLEANUP_MAX_RETRIES",
+                }
+            )
+        _atomic_json_write(path, {"updated_at": now_iso, "tokens": out})
+
+    def _clear_manual_intervention_token(self, token_id: str) -> None:
+        if not token_id:
+            return
+        path = self._manual_intervention_path()
+        if not path.exists():
+            return
+        payload = _load_json_file(path)
+        rows = payload.get("tokens") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            return
+        kept = [
+            item
+            for item in rows
+            if isinstance(item, dict)
+            and str(item.get("token_id") or item.get("tokenId") or "").strip() != token_id
+        ]
+        if len(kept) == len(rows):
+            return
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _atomic_json_write(path, {"updated_at": now_iso, "tokens": kept})
+
+    def _update_sell_signal_event(
+        self,
+        token_id: str,
+        *,
+        status: str,
+        attempts: Optional[int] = None,
+        note: Optional[str] = None,
+    ) -> None:
+        if not token_id:
+            return
+        path = self.config.copytrade_sell_signals_path
+        if not path.exists():
+            return
+        payload = _load_json_file(path)
+        rows = payload.get("sell_tokens") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            return
+        changed = False
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            tid = str(item.get("token_id") or item.get("tokenId") or "").strip()
+            if tid != token_id:
+                continue
+            if item.get("status") != status:
+                item["status"] = status
+                changed = True
+            if attempts is not None:
+                try:
+                    current_attempts = int(item.get("attempts", 0) or 0)
+                except (TypeError, ValueError):
+                    current_attempts = 0
+                if current_attempts != int(attempts):
+                    item["attempts"] = int(attempts)
+                    changed = True
+            if note is not None and item.get("note") != note:
+                item["note"] = note
+                changed = True
+            if changed:
+                item["updated_at"] = now_iso
+            break
+        if not changed:
+            return
+        payload["updated_at"] = now_iso
+        payload["sell_tokens"] = rows
+        _atomic_json_write(path, payload)
+
     def _is_buy_paused_by_balance(self) -> bool:
         min_balance = float(getattr(self.config, "buy_pause_min_free_balance", 0.0) or 0.0)
         if min_balance <= 0:
@@ -2367,10 +2479,23 @@ class AutoRunManager:
             if rc == 0:
                 self._completed_exit_cleanup_tokens.add(task.topic_id)
                 self._exit_cleanup_retry_counts.pop(task.topic_id, None)
+                self._update_sell_signal_event(
+                    task.topic_id,
+                    status="done",
+                    attempts=0,
+                    note="exit_cleanup_success",
+                )
+                self._clear_manual_intervention_token(task.topic_id)
             else:
                 self._completed_exit_cleanup_tokens.discard(task.topic_id)
                 retry_count = self._exit_cleanup_retry_counts.get(task.topic_id, 0) + 1
                 self._exit_cleanup_retry_counts[task.topic_id] = retry_count
+                self._update_sell_signal_event(
+                    task.topic_id,
+                    status="failed",
+                    attempts=retry_count,
+                    note=f"exit_cleanup_rc_{rc}",
+                )
                 if retry_count <= EXIT_CLEANUP_MAX_RETRIES:
                     if (
                         task.topic_id not in self.pending_exit_topics
@@ -2387,13 +2512,22 @@ class AutoRunManager:
                     # 达到最大重试次数，标记为"已完成"阻止 _apply_sell_signals 再次触发，
                     # 避免通过 handled_topics 移除 → 重新检测 → 再重试的无限循环。
                     self._completed_exit_cleanup_tokens.add(task.topic_id)
+                    self._record_manual_intervention_token(
+                        task.topic_id,
+                        retry_count=retry_count,
+                        rc=rc,
+                    )
                     print(
                         "[COPYTRADE][ERROR] sell 清仓连续失败，已停止自动重试避免循环卡死: "
                         f"token_id={task.topic_id} rc={rc} "
                         f"retry={retry_count}/{EXIT_CLEANUP_MAX_RETRIES}"
                     )
-            # 从 handled_topics 移除，允许后续 copytrade 再次发出买入信号时重新交易
-            self._remove_from_handled_topics(task.topic_id)
+            if rc == 0:
+                # 仅在清仓成功后才释放 token 周期锁并清理 copytrade 文件记录：
+                # - handled_topics: 允许后续新一轮买入
+                # - tokens/sell_signals: 完成本轮生命周期闭环
+                self._remove_from_handled_topics(task.topic_id)
+                self._remove_token_from_copytrade_files(task.topic_id)
 
         if task.no_restart:
             return
@@ -3942,7 +4076,8 @@ class AutoRunManager:
                 if saved.get("resume_drop_pct") is not None:
                     self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
 
-            sell_signals = self._load_copytrade_sell_signals()
+            sell_signal_events = self._load_copytrade_sell_signals()
+            sell_signals = set(sell_signal_events.keys())
             blacklist_tokens = self._load_copytrade_blacklist()
             self._apply_sell_signals(sell_signals)
             blocked_tokens = blacklist_tokens
@@ -4033,16 +4168,16 @@ class AutoRunManager:
         print(f"[COPYTRADE] 已读取 token {len(topics)} 条 | {path}")
         return topics
 
-    def _load_copytrade_sell_signals(self) -> set[str]:
+    def _load_copytrade_sell_signals(self) -> Dict[str, Dict[str, Any]]:
         path = self.config.copytrade_sell_signals_path
         if not path.exists():
-            return set()
+            return {}
         payload = _load_json_file(path)
         raw_tokens = payload.get("sell_tokens")
         if not isinstance(raw_tokens, list):
             print(f"[WARN] copytrade sell_signal 文件格式异常：{path}")
-            return set()
-        signals: set[str] = set()
+            return {}
+        signals: Dict[str, Dict[str, Any]] = {}
         skipped = 0
         for item in raw_tokens:
             if not isinstance(item, dict):
@@ -4053,9 +4188,18 @@ class AutoRunManager:
             if not item.get("introduced_by_buy", False):
                 skipped += 1
                 continue
-            signals.add(str(token_id))
+            status = str(item.get("status") or "pending").strip().lower()
+            if status == "done":
+                continue
+            entry = dict(item)
+            entry["status"] = status if status else "pending"
+            try:
+                entry["attempts"] = int(entry.get("attempts", 0) or 0)
+            except (TypeError, ValueError):
+                entry["attempts"] = 0
+            signals[str(token_id)] = entry
         if signals:
-            preview = ", ".join(list(signals)[:5])
+            preview = ", ".join(list(signals.keys())[:5])
             print(f"[COPYTRADE] 已读取 sell 信号 {len(signals)} 条 preview={preview}")
         if skipped:
             print(f"[COPYTRADE] 已跳过未引入的 sell 信号 {skipped} 条")
@@ -4136,12 +4280,13 @@ class AutoRunManager:
         }
         return has_position
 
-    def _apply_sell_signals(self, sell_signals: set[str]) -> None:
+    def _apply_sell_signals(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
         if not sell_signals:
             return
+        signal_tokens = set(sell_signals.keys())
         # 仅保留当前仍在 sell 文件中的处理记录，
         # 当上游移除并再次写入同一 token 时，允许新一轮 sell 信号重新触发。
-        self._handled_sell_signals.intersection_update(sell_signals)
+        self._handled_sell_signals.intersection_update(signal_tokens)
 
         now = time.time()
         full_recheck_due = (not self._sell_bootstrap_done) or (
@@ -4157,7 +4302,7 @@ class AutoRunManager:
             )
             return
 
-        new_signals = sell_signals - self._handled_sell_signals
+        new_signals = signal_tokens - self._handled_sell_signals
         if not new_signals:
             return
 
@@ -4195,19 +4340,20 @@ class AutoRunManager:
                 )
             self._trigger_sell_exit(token_id, task)
 
-    def _run_full_sell_signal_recheck(self, sell_signals: set[str]) -> None:
+    def _run_full_sell_signal_recheck(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
         """启动首轮 + 周期性兜底：全量检查全部 sell token。"""
         if not sell_signals:
             return
+        signal_tokens = set(sell_signals.keys())
         snapshot, info = self._refresh_sell_position_snapshot()
         # 缓存快照供增量路径使用（新增 sell 信号无需再次拉取）
         self._sell_position_snapshot = snapshot
         self._sell_position_snapshot_info = info
         print(
             "[COPYTRADE][INFO] SELL 全量复检: "
-            f"signals={len(sell_signals)} positions={len(snapshot)} info={info}"
+            f"signals={len(signal_tokens)} positions={len(snapshot)} info={info}"
         )
-        for token_id in sell_signals:
+        for token_id in signal_tokens:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
             has_history = token_id in self.handled_topics
@@ -4240,6 +4386,7 @@ class AutoRunManager:
             self._trigger_sell_exit(token_id, task)
 
     def _trigger_sell_exit(self, token_id: str, task: Optional[TopicTask]) -> None:
+        self._update_sell_signal_event(token_id, status="processing")
         if token_id in self.pending_topics:
             self._remove_pending_topic(token_id)
         if task and task.is_running():
