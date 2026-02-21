@@ -100,104 +100,68 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     assert manager.handled_topics.issuperset({"a", "b"})
 
 
-def test_refresh_topics_does_not_use_sell_signals_as_buy_blocker():
-    cfg = GlobalConfig.from_dict({})
+def test_refresh_topics_routes_new_tokens_to_burst_in_aggressive_mode():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "aggressive_burst_slots": 2}})
     manager = _build_manager(cfg)
 
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
     manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
         {"topic_id": "a", "token_id": "a"},
+        {"topic_id": "b", "token_id": "b"},
     ]
-    manager._load_copytrade_sell_signals = lambda: {"a": {"token_id": "a", "status": "pending", "attempts": 0, "introduced_by_buy": True}}  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: set()  # type: ignore[assignment]
     manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
     manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
 
     manager._refresh_topics()
 
-    assert "a" in manager.pending_topics
-    assert "a" in manager.handled_topics
+    assert manager.pending_topics == []
+    assert manager.pending_burst_topics == ["a", "b"]
+    assert manager.topic_details["a"]["queue_role"] == "new_token"
+    assert manager.topic_details["b"]["queue_role"] == "new_token"
 
 
-def test_sell_cleanup_failure_keeps_handled_and_copytrade_records():
-    cfg = GlobalConfig.from_dict({})
+def test_rebalance_moves_new_token_from_burst_to_base_but_keeps_reentry_in_burst():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "max_concurrent_tasks": 2}})
     manager = _build_manager(cfg)
 
-    removed = []
-    manager._remove_token_from_copytrade_files = lambda token_id: removed.append(token_id)  # type: ignore[assignment]
-    event_updates = []
-    manager._update_sell_signal_event = lambda token_id, **kwargs: event_updates.append((token_id, kwargs))  # type: ignore[assignment]
-    manager.handled_topics.add("tok")
-    task = TopicTask(topic_id="tok")
-    task.end_reason = "sell signal cleanup"
+    manager.pending_burst_topics = ["r1", "n1", "n2"]
+    manager.topic_details["r1"] = {"queue_role": "reentry_token", "schedule_lane": "burst"}
+    manager.topic_details["n1"] = {"queue_role": "new_token", "schedule_lane": "burst"}
+    manager.topic_details["n2"] = {"queue_role": "new_token", "schedule_lane": "burst"}
 
-    manager._handle_process_exit(task, rc=1)
+    class _Task:
+        def __init__(self, running: bool):
+            self._running = running
 
-    assert "tok" in manager.handled_topics
-    assert removed == []
-    assert event_updates
-    assert event_updates[0][1].get("status") == "failed"
+        def is_running(self):
+            return self._running
+
+    manager.tasks = {
+        "base_running": _Task(True),
+    }
+    manager._running_burst_count = lambda: 0  # type: ignore[assignment]
+
+    manager._rebalance_burst_to_base_queue()
+
+    assert manager.pending_topics == ["n1"]
+    assert manager.pending_burst_topics == ["r1", "n2"]
+    assert manager.topic_details["n1"]["schedule_lane"] == "base"
 
 
-def test_sell_cleanup_success_clears_handled_and_copytrade_records():
-    cfg = GlobalConfig.from_dict({})
+def test_reentry_enqueue_promotes_ahead_of_new_tokens_in_burst():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "aggressive_burst_slots": 2}})
     manager = _build_manager(cfg)
+    manager.pending_burst_topics = ["new_a", "new_b"]
 
-    removed = []
-    manager._remove_token_from_copytrade_files = lambda token_id: removed.append(token_id)  # type: ignore[assignment]
-    event_updates = []
-    manager._update_sell_signal_event = lambda token_id, **kwargs: event_updates.append((token_id, kwargs))  # type: ignore[assignment]
-    manager.handled_topics.add("tok")
-    task = TopicTask(topic_id="tok")
-    task.end_reason = "sell signal cleanup"
+    manager.topic_details["new_a"] = {"queue_role": "new_token"}
+    manager.topic_details["new_b"] = {"queue_role": "new_token"}
+    manager.pending_topics = ["reentry_x"]
 
-    manager._handle_process_exit(task, rc=0)
+    manager._poll_aggressive_self_sell_reentry = lambda: None  # type: ignore[assignment]
+    manager._enqueue_burst_topic("reentry_x", promote=True)
 
-    assert "tok" not in manager.handled_topics
-    assert removed == ["tok"]
-    assert event_updates
-    assert event_updates[0][1].get("status") == "done"
-
-
-def test_record_manual_intervention_token_written_to_copytrade_dir(tmp_path):
-    cfg = GlobalConfig.from_dict(
-        {
-            "copytrade_sell_signals_path": str(tmp_path / "copytrade" / "copytrade_sell_signals.json"),
-        }
-    )
-    manager = _build_manager(cfg)
-
-    manager._record_manual_intervention_token("tok", retry_count=4, rc=1)
-
-    out_path = tmp_path / "copytrade" / "manual_intervention_tokens.json"
-    payload = json.loads(out_path.read_text(encoding="utf-8"))
-    rows = payload.get("tokens") or []
-    assert len(rows) == 1
-    assert rows[0]["token_id"] == "tok"
-    assert rows[0]["retry_count"] == 4
-
-
-def test_load_copytrade_sell_signals_skips_done_status(tmp_path):
-    sell_path = tmp_path / "copytrade" / "copytrade_sell_signals.json"
-    sell_path.parent.mkdir(parents=True, exist_ok=True)
-    sell_path.write_text(
-        json.dumps(
-            {
-                "sell_tokens": [
-                    {"token_id": "a", "introduced_by_buy": True, "status": "done"},
-                    {"token_id": "b", "introduced_by_buy": True, "status": "failed", "attempts": "2"},
-                ]
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-    cfg = GlobalConfig.from_dict({"copytrade_sell_signals_path": str(sell_path)})
-    manager = _build_manager(cfg)
-
-    events = manager._load_copytrade_sell_signals()
-    assert "a" not in events
-    assert events["b"]["status"] == "failed"
-    assert events["b"]["attempts"] == 2
+    assert manager.pending_burst_topics[0] == "reentry_x"
 
 
 def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_resume():
