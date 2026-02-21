@@ -25,6 +25,7 @@ elif hasattr(sys.stdout, 'buffer'):
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 import time
 import threading
+import signal
 import re
 import hmac
 import hashlib
@@ -2521,6 +2522,34 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         canceled = _cancel_open_buy_orders_for_token(client, token_id)
         if canceled:
             print(f"[EXIT] {reason} -> 已撤销 BUY 挂单数量={canceled}")
+
+    shutdown_buy_orders_canceled = False
+
+    def _handle_termination_signal(signum: int, _frame: Any) -> None:
+        nonlocal shutdown_buy_orders_canceled
+        try:
+            signal_name = signal.Signals(signum).name
+        except Exception:
+            signal_name = f"SIG{signum}"
+        print(f"[SIGNAL] 收到 {signal_name}，准备安全退出。")
+        try:
+            if not shutdown_buy_orders_canceled:
+                try:
+                    _cancel_open_buy_orders_before_exit(f"{signal_name}_SHUTDOWN")
+                except Exception as cancel_exc:
+                    print(f"[SIGNAL][WARN] {signal_name} 撤销 BUY 挂单失败: {cancel_exc}")
+                finally:
+                    shutdown_buy_orders_canceled = True
+            try:
+                strategy.stop(f"{signal_name.lower()} shutdown")
+            except Exception as stop_exc:
+                print(f"[SIGNAL][WARN] {signal_name} strategy.stop 失败: {stop_exc}")
+        finally:
+            stop_event.set()
+
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _handle_termination_signal)
+        signal.signal(signal.SIGINT, _handle_termination_signal)
 
     if exit_only:
         _exit_cleanup_only("exit-only cleanup")
