@@ -2387,8 +2387,12 @@ class AutoRunManager:
                         f"token_id={task.topic_id} rc={rc} "
                         f"retry={retry_count}/{EXIT_CLEANUP_MAX_RETRIES}"
                     )
-            # 从 handled_topics 移除，允许后续 copytrade 再次发出买入信号时重新交易
-            self._remove_from_handled_topics(task.topic_id)
+            if rc == 0:
+                # 仅在清仓成功后才释放 token 周期锁并清理 copytrade 文件记录：
+                # - handled_topics: 允许后续新一轮买入
+                # - tokens/sell_signals: 完成本轮生命周期闭环
+                self._remove_from_handled_topics(task.topic_id)
+                self._remove_token_from_copytrade_files(task.topic_id)
 
         if task.no_restart:
             return
@@ -3876,7 +3880,9 @@ class AutoRunManager:
             sell_signals = self._load_copytrade_sell_signals()
             blacklist_tokens = self._load_copytrade_blacklist()
             self._apply_sell_signals(sell_signals)
-            blocked_tokens = sell_signals | blacklist_tokens
+            # sell_signals 只承担清仓信号职责，不再作为买入挡板。
+            # 防重复买入由 handled_topics + pending/running 状态负责。
+            blocked_tokens = blacklist_tokens
             new_topics = [
                 topic_id
                 for topic_id in compute_new_topics(self.latest_topics, self.handled_topics)

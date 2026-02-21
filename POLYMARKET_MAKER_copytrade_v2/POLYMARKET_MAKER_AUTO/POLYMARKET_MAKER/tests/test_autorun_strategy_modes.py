@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 if "requests" not in sys.modules:
     sys.modules["requests"] = types.SimpleNamespace(get=lambda *a, **k: None)
 
-from poly_maker_autorun import AutoRunManager, GlobalConfig
+from poly_maker_autorun import AutoRunManager, GlobalConfig, TopicTask
 
 
 def _build_manager(cfg: GlobalConfig) -> AutoRunManager:
@@ -97,6 +97,55 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     assert manager._buy_pause_deferred_tokens == {"a", "b"}
     assert {token_id for token_id, _, _ in captured} == {"a", "b"}
     assert manager.handled_topics.issuperset({"a", "b"})
+
+
+def test_refresh_topics_does_not_use_sell_signals_as_buy_blocker():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "a", "token_id": "a"},
+    ]
+    manager._load_copytrade_sell_signals = lambda: {"a"}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "a" in manager.pending_topics
+    assert "a" in manager.handled_topics
+
+
+def test_sell_cleanup_failure_keeps_handled_and_copytrade_records():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+
+    removed = []
+    manager._remove_token_from_copytrade_files = lambda token_id: removed.append(token_id)  # type: ignore[assignment]
+    manager.handled_topics.add("tok")
+    task = TopicTask(topic_id="tok")
+    task.end_reason = "sell signal cleanup"
+
+    manager._handle_process_exit(task, rc=1)
+
+    assert "tok" in manager.handled_topics
+    assert removed == []
+
+
+def test_sell_cleanup_success_clears_handled_and_copytrade_records():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+
+    removed = []
+    manager._remove_token_from_copytrade_files = lambda token_id: removed.append(token_id)  # type: ignore[assignment]
+    manager.handled_topics.add("tok")
+    task = TopicTask(topic_id="tok")
+    task.end_reason = "sell signal cleanup"
+
+    manager._handle_process_exit(task, rc=0)
+
+    assert "tok" not in manager.handled_topics
+    assert removed == ["tok"]
 
 
 def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_resume():
