@@ -2891,8 +2891,6 @@ class AutoRunManager:
 
     def _rebalance_burst_to_base_queue(self) -> None:
         """机会优先缓冲池回挪：当 base 运行槽位有空缺时，把 burst 中 new token 回挪到 base。"""
-        if not self._is_aggressive_mode():
-            return
         if not self.pending_burst_topics:
             return
 
@@ -3046,7 +3044,8 @@ class AutoRunManager:
                 self._seen_self_sell_trade_keys.add(trade_key)
                 continue
 
-            promote = token_id in self.pending_topics
+            # reentry token 在 burst 等待队列中始终优先于 new token
+            promote = True
             detail = self.topic_details.setdefault(token_id, {})
             detail["queue_role"] = "reentry_token"
             self._enqueue_burst_topic(token_id, promote=promote)
@@ -4081,9 +4080,7 @@ class AutoRunManager:
             sell_signal_events = self._load_copytrade_sell_signals()
             sell_signals = set(sell_signal_events.keys())
             blacklist_tokens = self._load_copytrade_blacklist()
-            self._apply_sell_signals(sell_signal_events)
-            # sell_signals 只承担清仓信号职责，不再作为买入挡板。
-            # 防重复买入由 handled_topics + pending/running 状态负责。
+            self._apply_sell_signals(sell_signals)
             blocked_tokens = blacklist_tokens
             new_topics = [
                 topic_id
@@ -4128,10 +4125,7 @@ class AutoRunManager:
                     else:
                         detail = self.topic_details.setdefault(topic_id, {})
                         detail["queue_role"] = "new_token"
-                        if self._is_aggressive_mode() and self._burst_slots() > 0:
-                            self._enqueue_burst_topic(topic_id, promote=False)
-                        else:
-                            self._enqueue_pending_topic(topic_id)
+                        self._enqueue_burst_topic(topic_id, promote=False)
                     added_topics.append(topic_id)
                 if defer_new_topics and added_topics:
                     print(

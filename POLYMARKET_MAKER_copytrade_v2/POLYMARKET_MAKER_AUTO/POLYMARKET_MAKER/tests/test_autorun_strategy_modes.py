@@ -100,8 +100,8 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     assert manager.handled_topics.issuperset({"a", "b"})
 
 
-def test_refresh_topics_routes_new_tokens_to_burst_in_aggressive_mode():
-    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "aggressive_burst_slots": 2}})
+def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mode():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "aggressive_burst_slots": 2}})
     manager = _build_manager(cfg)
 
     manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
@@ -122,7 +122,7 @@ def test_refresh_topics_routes_new_tokens_to_burst_in_aggressive_mode():
 
 
 def test_rebalance_moves_new_token_from_burst_to_base_but_keeps_reentry_in_burst():
-    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "max_concurrent_tasks": 2}})
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "max_concurrent_tasks": 2}})
     manager = _build_manager(cfg)
 
     manager.pending_burst_topics = ["r1", "n1", "n2"]
@@ -162,6 +162,45 @@ def test_reentry_enqueue_promotes_ahead_of_new_tokens_in_burst():
     manager._enqueue_burst_topic("reentry_x", promote=True)
 
     assert manager.pending_burst_topics[0] == "reentry_x"
+
+
+def test_poll_reentry_always_promotes_to_burst_front():
+    cfg = GlobalConfig.from_dict(
+        {
+            "scheduler": {
+                "strategy_mode": "aggressive",
+                "aggressive_enable_self_sell_reentry": True,
+                "aggressive_reentry_source": "self_account_fills_only",
+            }
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.pending_burst_topics = ["new_a", "new_b"]
+    manager._position_address = "0xabc"
+    manager._process_started_at = 1.0
+    manager._last_self_sell_trade_ts = 1
+
+    import poly_maker_autorun as autorun
+
+    old_fetch = autorun._fetch_recent_trades_from_data_api
+    try:
+        autorun._fetch_recent_trades_from_data_api = lambda *_args, **_kwargs: ([
+            {
+                "side": "SELL",
+                "asset": "reentry_x",
+                "timestamp": 2,
+                "size": "1",
+                "price": "0.5",
+                "conditionId": "c1",
+            }
+        ], "ok")
+
+        manager._poll_aggressive_self_sell_reentry()
+    finally:
+        autorun._fetch_recent_trades_from_data_api = old_fetch
+
+    assert manager.pending_burst_topics[0] == "reentry_x"
+    assert manager.topic_details["reentry_x"]["queue_role"] == "reentry_token"
 
 
 def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_resume():
