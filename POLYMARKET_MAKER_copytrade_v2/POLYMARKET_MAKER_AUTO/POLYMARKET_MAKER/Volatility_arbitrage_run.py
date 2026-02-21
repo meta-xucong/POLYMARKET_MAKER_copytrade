@@ -25,6 +25,7 @@ elif hasattr(sys.stdout, 'buffer'):
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 import time
 import threading
+import signal
 import re
 import hmac
 import hashlib
@@ -1778,8 +1779,14 @@ def _fetch_open_orders_norm(client: Any) -> List[Dict[str, Any]]:
 
 
 def _cancel_order(client: Any, order_id: str) -> None:
+    """Cancel a single open order using py-clob-client compatible APIs.
+
+    Polymarket py-clob-client README / client.py 官方示例与签名优先使用:
+    - client.cancel(order_id)
+    - client.cancel_orders([order_id])
+    """
     if callable(getattr(client, "cancel", None)):
-        client.cancel(order_id=order_id)
+        client.cancel(order_id)
         return
     if callable(getattr(client, "cancel_order", None)):
         client.cancel_order(order_id)
@@ -1787,10 +1794,12 @@ def _cancel_order(client: Any, order_id: str) -> None:
     if callable(getattr(client, "cancel_orders", None)):
         client.cancel_orders([order_id])
         return
+
+    # 兼容可能的包装器实现
     private = getattr(client, "private", None)
     if private is not None:
         if callable(getattr(private, "cancel", None)):
-            private.cancel(order_id=order_id)
+            private.cancel(order_id)
             return
         if callable(getattr(private, "cancel_order", None)):
             private.cancel_order(order_id)
@@ -2521,6 +2530,34 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         canceled = _cancel_open_buy_orders_for_token(client, token_id)
         if canceled:
             print(f"[EXIT] {reason} -> 已撤销 BUY 挂单数量={canceled}")
+
+    shutdown_buy_orders_canceled = False
+
+    def _handle_termination_signal(signum: int, _frame: Any) -> None:
+        nonlocal shutdown_buy_orders_canceled
+        try:
+            signal_name = signal.Signals(signum).name
+        except Exception:
+            signal_name = f"SIG{signum}"
+        print(f"[SIGNAL] 收到 {signal_name}，准备安全退出。")
+        try:
+            if not shutdown_buy_orders_canceled:
+                try:
+                    _cancel_open_buy_orders_before_exit(f"{signal_name}_SHUTDOWN")
+                except Exception as cancel_exc:
+                    print(f"[SIGNAL][WARN] {signal_name} 撤销 BUY 挂单失败: {cancel_exc}")
+                finally:
+                    shutdown_buy_orders_canceled = True
+            try:
+                strategy.stop(f"{signal_name.lower()} shutdown")
+            except Exception as stop_exc:
+                print(f"[SIGNAL][WARN] {signal_name} strategy.stop 失败: {stop_exc}")
+        finally:
+            stop_event.set()
+
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _handle_termination_signal)
+        signal.signal(signal.SIGINT, _handle_termination_signal)
 
     if exit_only:
         _exit_cleanup_only("exit-only cleanup")
