@@ -109,7 +109,7 @@ def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mod
         {"topic_id": "a", "token_id": "a"},
         {"topic_id": "b", "token_id": "b"},
     ]
-    manager._load_copytrade_sell_signals = lambda: set()  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
     manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
     manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
 
