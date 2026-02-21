@@ -100,8 +100,8 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     assert manager.handled_topics.issuperset({"a", "b"})
 
 
-def test_refresh_topics_routes_new_tokens_to_burst_in_aggressive_mode():
-    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "aggressive_burst_slots": 2}})
+def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mode():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "aggressive_burst_slots": 2}})
     manager = _build_manager(cfg)
 
     manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
@@ -122,7 +122,7 @@ def test_refresh_topics_routes_new_tokens_to_burst_in_aggressive_mode():
 
 
 def test_rebalance_moves_new_token_from_burst_to_base_but_keeps_reentry_in_burst():
-    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "max_concurrent_tasks": 2}})
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "max_concurrent_tasks": 2}})
     manager = _build_manager(cfg)
 
     manager.pending_burst_topics = ["r1", "n1", "n2"]
