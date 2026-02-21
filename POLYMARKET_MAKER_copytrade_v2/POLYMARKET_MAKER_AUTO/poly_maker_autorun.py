@@ -1309,6 +1309,11 @@ class AutoRunManager:
         mode = (self.config.strategy_mode or "classic").strip().lower()
         return mode == "aggressive"
 
+    @staticmethod
+    def _queue_role(detail: Dict[str, Any]) -> str:
+        role = str((detail or {}).get("queue_role") or "unknown").strip().lower()
+        return role if role else "unknown"
+
     def _burst_slots(self) -> int:
         if not self._is_aggressive_mode():
             return 0
@@ -2535,6 +2540,8 @@ class AutoRunManager:
             self._defer_pending_topics_due_to_low_balance()
             return
 
+        self._rebalance_burst_to_base_queue()
+
         base_limit = max(1, int(self.config.max_concurrent_tasks))
         burst_limit = self._burst_slots()
         max_total = base_limit + burst_limit
@@ -2748,6 +2755,51 @@ class AutoRunManager:
             self.pending_topics.append(topic_id)
         self._pending_first_seen.setdefault(topic_id, time.time())
 
+    def _rebalance_burst_to_base_queue(self) -> None:
+        """机会优先缓冲池回挪：当 base 运行槽位有空缺时，把 burst 中 new token 回挪到 base。"""
+        if not self.pending_burst_topics:
+            return
+
+        base_limit = max(1, int(self.config.max_concurrent_tasks))
+        running_total = sum(1 for t in self.tasks.values() if t.is_running())
+        running_burst = self._running_burst_count()
+        running_base = max(0, running_total - running_burst)
+        base_slots_available = max(0, base_limit - running_base)
+        if base_slots_available <= 0:
+            return
+
+        moved: List[str] = []
+        kept: List[str] = []
+        for topic_id in self.pending_burst_topics:
+            detail = self.topic_details.get(topic_id) or {}
+            role = self._queue_role(detail)
+            # reentry token 保持在 burst，确保其优先级高于新 token
+            if role == "reentry_token":
+                kept.append(topic_id)
+                continue
+            if base_slots_available > 0:
+                moved.append(topic_id)
+                base_slots_available -= 1
+            else:
+                kept.append(topic_id)
+
+        if not moved:
+            return
+
+        self.pending_burst_topics = kept
+        # 头插 base 队列，确保“有空位即挪入”并尽快被调度
+        for topic_id in reversed(moved):
+            if topic_id in self.pending_topics:
+                continue
+            self.pending_topics.insert(0, topic_id)
+            self._pending_first_seen.setdefault(topic_id, time.time())
+            detail = self.topic_details.setdefault(topic_id, {})
+            detail["schedule_lane"] = "base"
+
+        print(
+            f"[SCHED][REBALANCE] base空位回挪 {len(moved)} 个 token 到pending_base（burst_wait={len(self.pending_burst_topics)}）"
+        )
+
     def _enqueue_burst_topic(self, topic_id: str, *, promote: bool = False) -> None:
         if not topic_id:
             return
@@ -2859,6 +2911,8 @@ class AutoRunManager:
                 continue
 
             promote = token_id in self.pending_topics
+            detail = self.topic_details.setdefault(token_id, {})
+            detail["queue_role"] = "reentry_token"
             self._enqueue_burst_topic(token_id, promote=promote)
             self._seen_self_sell_trade_keys.add(trade_key)
             self._seen_self_sell_tokens.add(token_id)
@@ -3314,6 +3368,16 @@ class AutoRunManager:
             f"pending_burst={len(self.pending_burst_topics)} "
             f"pending_exit={len(self.pending_exit_topics)}"
         )
+        role_base: Dict[str, int] = {}
+        for topic_id in self.pending_topics:
+            role = self._queue_role(self.topic_details.get(topic_id) or {})
+            role_base[role] = role_base.get(role, 0) + 1
+        role_burst: Dict[str, int] = {}
+        for topic_id in self.pending_burst_topics:
+            role = self._queue_role(self.topic_details.get(topic_id) or {})
+            role_burst[role] = role_burst.get(role, 0) + 1
+        if role_base or role_burst:
+            print(f"[STATUS] pending_base_roles={role_base} pending_burst_roles={role_burst}")
         if not self.tasks:
             print("[RUN] 当前无运行中的话题")
             return
@@ -3333,8 +3397,12 @@ class AutoRunManager:
         log_hint = (task.log_excerpt.splitlines() or ["-"])[-1].strip()
 
         prefix = f"[RUN {index}]" if index is not None else "[RUN]"
+        detail = self.topic_details.get(task.topic_id) or {}
+        lane = detail.get("schedule_lane") or "-"
+        role = self._queue_role(detail)
         print(
             f"{prefix} topic={task.topic_id} status={task.status} "
+            f"lane={lane} role={role} "
             f"start={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(task.start_time))} "
             f"pid={pid_text} hb={hb_text} notes={len(task.notes)} "
             f"log={log_name} last_line={log_hint or '-'}"
@@ -3823,6 +3891,7 @@ class AutoRunManager:
             self.topic_details[token_id]["resume_state"] = resume_state
             self.topic_details[token_id]["refill_retry_count"] = retry_count
             self.topic_details[token_id]["refill_exit_reason"] = exit_reason
+            self.topic_details[token_id]["queue_role"] = "refill_token"
             if resume_drop_pct is not None:
                 self.topic_details[token_id]["resume_drop_pct"] = resume_drop_pct
             else:
@@ -3876,7 +3945,7 @@ class AutoRunManager:
             sell_signals = self._load_copytrade_sell_signals()
             blacklist_tokens = self._load_copytrade_blacklist()
             self._apply_sell_signals(sell_signals)
-            blocked_tokens = sell_signals | blacklist_tokens
+            blocked_tokens = blacklist_tokens
             new_topics = [
                 topic_id
                 for topic_id in compute_new_topics(self.latest_topics, self.handled_topics)
@@ -3918,7 +3987,9 @@ class AutoRunManager:
                                 refillable=True,
                             )
                     else:
-                        self._enqueue_pending_topic(topic_id)
+                        detail = self.topic_details.setdefault(topic_id, {})
+                        detail["queue_role"] = "new_token"
+                        self._enqueue_burst_topic(topic_id, promote=False)
                     added_topics.append(topic_id)
                 if defer_new_topics and added_topics:
                     print(
