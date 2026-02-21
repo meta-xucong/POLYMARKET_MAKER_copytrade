@@ -99,6 +99,109 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     assert manager.handled_topics.issuperset({"a", "b"})
 
 
+def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mode():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "aggressive_burst_slots": 2}})
+    manager = _build_manager(cfg)
+
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "a", "token_id": "a"},
+        {"topic_id": "b", "token_id": "b"},
+    ]
+    manager._load_copytrade_sell_signals = lambda: set()  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert manager.pending_topics == []
+    assert manager.pending_burst_topics == ["a", "b"]
+    assert manager.topic_details["a"]["queue_role"] == "new_token"
+    assert manager.topic_details["b"]["queue_role"] == "new_token"
+
+
+def test_rebalance_moves_new_token_from_burst_to_base_but_keeps_reentry_in_burst():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "max_concurrent_tasks": 2}})
+    manager = _build_manager(cfg)
+
+    manager.pending_burst_topics = ["r1", "n1", "n2"]
+    manager.topic_details["r1"] = {"queue_role": "reentry_token", "schedule_lane": "burst"}
+    manager.topic_details["n1"] = {"queue_role": "new_token", "schedule_lane": "burst"}
+    manager.topic_details["n2"] = {"queue_role": "new_token", "schedule_lane": "burst"}
+
+    class _Task:
+        def __init__(self, running: bool):
+            self._running = running
+
+        def is_running(self):
+            return self._running
+
+    manager.tasks = {
+        "base_running": _Task(True),
+    }
+    manager._running_burst_count = lambda: 0  # type: ignore[assignment]
+
+    manager._rebalance_burst_to_base_queue()
+
+    assert manager.pending_topics == ["n1"]
+    assert manager.pending_burst_topics == ["r1", "n2"]
+    assert manager.topic_details["n1"]["schedule_lane"] == "base"
+
+
+def test_reentry_enqueue_promotes_ahead_of_new_tokens_in_burst():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "aggressive", "aggressive_burst_slots": 2}})
+    manager = _build_manager(cfg)
+    manager.pending_burst_topics = ["new_a", "new_b"]
+
+    manager.topic_details["new_a"] = {"queue_role": "new_token"}
+    manager.topic_details["new_b"] = {"queue_role": "new_token"}
+    manager.pending_topics = ["reentry_x"]
+
+    manager._poll_aggressive_self_sell_reentry = lambda: None  # type: ignore[assignment]
+    manager._enqueue_burst_topic("reentry_x", promote=True)
+
+    assert manager.pending_burst_topics[0] == "reentry_x"
+
+
+def test_poll_reentry_always_promotes_to_burst_front():
+    cfg = GlobalConfig.from_dict(
+        {
+            "scheduler": {
+                "strategy_mode": "aggressive",
+                "aggressive_enable_self_sell_reentry": True,
+                "aggressive_reentry_source": "self_account_fills_only",
+            }
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.pending_burst_topics = ["new_a", "new_b"]
+    manager._position_address = "0xabc"
+    manager._process_started_at = 1.0
+    manager._last_self_sell_trade_ts = 1
+
+    import poly_maker_autorun as autorun
+
+    old_fetch = autorun._fetch_recent_trades_from_data_api
+    try:
+        autorun._fetch_recent_trades_from_data_api = lambda *_args, **_kwargs: ([
+            {
+                "side": "SELL",
+                "asset": "reentry_x",
+                "timestamp": 2,
+                "size": "1",
+                "price": "0.5",
+                "conditionId": "c1",
+            }
+        ], "ok")
+
+        manager._poll_aggressive_self_sell_reentry()
+    finally:
+        autorun._fetch_recent_trades_from_data_api = old_fetch
+
+    assert manager.pending_burst_topics[0] == "reentry_x"
+    assert manager.topic_details["reentry_x"]["queue_role"] == "reentry_token"
+
+
 def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_resume():
     cfg = GlobalConfig.from_dict({"scheduler": {"buy_pause_min_free_balance": 20}})
     manager = _build_manager(cfg)
