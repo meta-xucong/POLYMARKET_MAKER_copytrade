@@ -1,5 +1,6 @@
 import sys
 import types
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,7 +84,7 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
         {"topic_id": "a", "token_id": "a"},
         {"topic_id": "b", "token_id": "b"},
     ]
-    manager._load_copytrade_sell_signals = lambda: set()  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
     manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
     manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
 
@@ -106,7 +107,7 @@ def test_refresh_topics_does_not_use_sell_signals_as_buy_blocker():
     manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
         {"topic_id": "a", "token_id": "a"},
     ]
-    manager._load_copytrade_sell_signals = lambda: {"a"}  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {"a": {"token_id": "a", "status": "pending", "attempts": 0, "introduced_by_buy": True}}  # type: ignore[assignment]
     manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
     manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
 
@@ -122,6 +123,8 @@ def test_sell_cleanup_failure_keeps_handled_and_copytrade_records():
 
     removed = []
     manager._remove_token_from_copytrade_files = lambda token_id: removed.append(token_id)  # type: ignore[assignment]
+    event_updates = []
+    manager._update_sell_signal_event = lambda token_id, **kwargs: event_updates.append((token_id, kwargs))  # type: ignore[assignment]
     manager.handled_topics.add("tok")
     task = TopicTask(topic_id="tok")
     task.end_reason = "sell signal cleanup"
@@ -130,6 +133,8 @@ def test_sell_cleanup_failure_keeps_handled_and_copytrade_records():
 
     assert "tok" in manager.handled_topics
     assert removed == []
+    assert event_updates
+    assert event_updates[0][1].get("status") == "failed"
 
 
 def test_sell_cleanup_success_clears_handled_and_copytrade_records():
@@ -138,6 +143,8 @@ def test_sell_cleanup_success_clears_handled_and_copytrade_records():
 
     removed = []
     manager._remove_token_from_copytrade_files = lambda token_id: removed.append(token_id)  # type: ignore[assignment]
+    event_updates = []
+    manager._update_sell_signal_event = lambda token_id, **kwargs: event_updates.append((token_id, kwargs))  # type: ignore[assignment]
     manager.handled_topics.add("tok")
     task = TopicTask(topic_id="tok")
     task.end_reason = "sell signal cleanup"
@@ -146,6 +153,51 @@ def test_sell_cleanup_success_clears_handled_and_copytrade_records():
 
     assert "tok" not in manager.handled_topics
     assert removed == ["tok"]
+    assert event_updates
+    assert event_updates[0][1].get("status") == "done"
+
+
+def test_record_manual_intervention_token_written_to_copytrade_dir(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "copytrade_sell_signals_path": str(tmp_path / "copytrade" / "copytrade_sell_signals.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+
+    manager._record_manual_intervention_token("tok", retry_count=4, rc=1)
+
+    out_path = tmp_path / "copytrade" / "manual_intervention_tokens.json"
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    rows = payload.get("tokens") or []
+    assert len(rows) == 1
+    assert rows[0]["token_id"] == "tok"
+    assert rows[0]["retry_count"] == 4
+
+
+def test_load_copytrade_sell_signals_skips_done_status(tmp_path):
+    sell_path = tmp_path / "copytrade" / "copytrade_sell_signals.json"
+    sell_path.parent.mkdir(parents=True, exist_ok=True)
+    sell_path.write_text(
+        json.dumps(
+            {
+                "sell_tokens": [
+                    {"token_id": "a", "introduced_by_buy": True, "status": "done"},
+                    {"token_id": "b", "introduced_by_buy": True, "status": "failed", "attempts": "2"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict({"copytrade_sell_signals_path": str(sell_path)})
+    manager = _build_manager(cfg)
+
+    events = manager._load_copytrade_sell_signals()
+    assert "a" not in events
+    assert events["b"]["status"] == "failed"
+    assert events["b"]["attempts"] == 2
 
 
 def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_resume():
