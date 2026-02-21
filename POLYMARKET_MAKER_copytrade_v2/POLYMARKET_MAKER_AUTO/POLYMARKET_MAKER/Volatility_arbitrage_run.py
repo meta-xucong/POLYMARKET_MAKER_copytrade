@@ -25,6 +25,7 @@ elif hasattr(sys.stdout, 'buffer'):
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 import time
 import threading
+import signal
 import re
 import hmac
 import hashlib
@@ -2521,6 +2522,21 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         canceled = _cancel_open_buy_orders_for_token(client, token_id)
         if canceled:
             print(f"[EXIT] {reason} -> 已撤销 BUY 挂单数量={canceled}")
+
+    shutdown_buy_orders_canceled = False
+
+    def _handle_termination_signal(signum: int, _frame: Any) -> None:
+        nonlocal shutdown_buy_orders_canceled
+        signal_name = signal.Signals(signum).name
+        print(f"[SIGNAL] 收到 {signal_name}，准备安全退出。")
+        if not shutdown_buy_orders_canceled:
+            _cancel_open_buy_orders_before_exit(f"{signal_name}_SHUTDOWN")
+            shutdown_buy_orders_canceled = True
+        strategy.stop(f"{signal_name.lower()} shutdown")
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _handle_termination_signal)
+    signal.signal(signal.SIGINT, _handle_termination_signal)
 
     if exit_only:
         _exit_cleanup_only("exit-only cleanup")
