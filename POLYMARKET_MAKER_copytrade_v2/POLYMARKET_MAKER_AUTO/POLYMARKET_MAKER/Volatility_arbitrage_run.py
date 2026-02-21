@@ -1779,8 +1779,14 @@ def _fetch_open_orders_norm(client: Any) -> List[Dict[str, Any]]:
 
 
 def _cancel_order(client: Any, order_id: str) -> None:
+    """Cancel a single open order using py-clob-client compatible APIs.
+
+    Polymarket py-clob-client README / client.py 官方示例与签名优先使用:
+    - client.cancel(order_id)
+    - client.cancel_orders([order_id])
+    """
     if callable(getattr(client, "cancel", None)):
-        client.cancel(order_id=order_id)
+        client.cancel(order_id)
         return
     if callable(getattr(client, "cancel_order", None)):
         client.cancel_order(order_id)
@@ -1788,10 +1794,12 @@ def _cancel_order(client: Any, order_id: str) -> None:
     if callable(getattr(client, "cancel_orders", None)):
         client.cancel_orders([order_id])
         return
+
+    # 兼容可能的包装器实现
     private = getattr(client, "private", None)
     if private is not None:
         if callable(getattr(private, "cancel", None)):
-            private.cancel(order_id=order_id)
+            private.cancel(order_id)
             return
         if callable(getattr(private, "cancel_order", None)):
             private.cancel_order(order_id)
