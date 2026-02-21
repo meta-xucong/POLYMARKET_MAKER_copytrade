@@ -2,7 +2,7 @@
   "scheduler": {
     "max_concurrent_tasks": 20,
     "command_poll_seconds": 30.0,
-    "copytrade_poll_seconds": 60.0,
+    "copytrade_poll_seconds": 30.0,
     "strategy_mode": "classic",
     "aggressive_burst_slots": 5,
     "aggressive_enable_self_sell_reentry": false,
@@ -10,7 +10,7 @@
     "aggressive_first_sell_fill_only": true,
     "aggressive_sell_fill_poll_sec": 15.0,
     "enable_slot_refill": true,
-    "refill_cooldown_minutes": 30,
+    "refill_cooldown_minutes": 15,
     "max_refill_retries": 3,
     "refill_check_interval_sec": 60.0,
     "total_liquidation": {
@@ -21,9 +21,9 @@
         "idle_slot_duration_minutes": 240.0,
         "no_trade_duration_minutes": 240.0,
         "min_free_balance": 20.0,
-        "enable_low_balance_force_trigger": true,
+        "enable_low_balance_force_trigger": false,
         "low_balance_force_hours": 6.0,
-        "require_conditions": 3,
+        "require_conditions": 2,
         "balance_poll_interval_sec": 600.0,
         "startup_grace_hours": 4.0
       },
@@ -48,7 +48,7 @@
   },
   "maker": {
     "poll_sec": 15.0,
-    "position_sync_interval": 90.0
+    "position_sync_interval": 60.0
   },
   "debug": {
     "ws_debug_raw": false
