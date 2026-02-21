@@ -721,6 +721,47 @@ def test_precheck_all_positions_does_not_require_copytrade_scope():
         assert scope is None
 
 
+def test_execute_restart_only_mode_skips_liquidation_and_hard_reset():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg = _build_cfg(base, enable=True)
+        cfg.total_liquidation["execution_mode"] = "restart_only"
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+
+        mgr = TotalLiquidationManager(cfg, base / "POLYMARKET_MAKER_AUTO")
+
+        class _Evt:
+            def __init__(self):
+                self.called = False
+
+            def set(self):
+                self.called = True
+
+        class _Run:
+            def __init__(self):
+                self.pending_topics = ["x"]
+                self.pending_exit_topics = ["y"]
+                self.stop_event = _Evt()
+
+            def _cleanup_all_tasks(self):
+                raise RuntimeError("should not cleanup")
+
+        autorun = _Run()
+
+        mgr._precheck_liquidation_ready = lambda: (_ for _ in ()).throw(RuntimeError("should not precheck"))
+        mgr._liquidate_positions = lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("should not liquidate"))
+        mgr._hard_reset_files = lambda _a: (_ for _ in ()).throw(RuntimeError("should not hard reset"))
+
+        result = mgr.execute(autorun, ["cond_a", "cond_b"])
+
+        assert result["hard_reset"] is False
+        assert result["liquidated"] == 0
+        assert autorun.stop_event.called is True
+        assert mgr._state.get("last_trigger_ts") is not None
+        assert mgr._state.get("execution_mode") == "restart_only"
+
+
 def test_execute_aborted_does_not_hard_reset_or_stop():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
