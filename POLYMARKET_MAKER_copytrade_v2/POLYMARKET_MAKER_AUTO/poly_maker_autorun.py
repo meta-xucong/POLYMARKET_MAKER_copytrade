@@ -4078,9 +4078,8 @@ class AutoRunManager:
                     self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
 
             sell_signal_events = self._load_copytrade_sell_signals()
-            sell_signals = set(sell_signal_events.keys())
             blacklist_tokens = self._load_copytrade_blacklist()
-            self._apply_sell_signals(sell_signals)
+            self._apply_sell_signals(sell_signal_events)
             blocked_tokens = blacklist_tokens
             new_topics = [
                 topic_id
