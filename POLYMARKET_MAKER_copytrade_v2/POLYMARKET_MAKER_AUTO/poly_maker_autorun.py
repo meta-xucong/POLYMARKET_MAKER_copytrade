@@ -139,6 +139,9 @@ DEFAULT_GLOBAL_CONFIG = {
             "enabled": True,
         },
     },
+    # Maker 子进程配置
+    "maker_poll_sec": 15.0,
+    "maker_position_sync_interval": 60.0,
 }
 
 # Shared WS 等待防抖参数（写死，避免依赖外部 JSON）
