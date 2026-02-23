@@ -767,6 +767,7 @@ class GlobalConfig:
     aggressive_sell_fill_poll_sec: float = float(
         DEFAULT_GLOBAL_CONFIG["aggressive_sell_fill_poll_sec"]
     )
+    aggressive_burst_slots: int = int(DEFAULT_GLOBAL_CONFIG.get("aggressive_burst_slots", 10))
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
