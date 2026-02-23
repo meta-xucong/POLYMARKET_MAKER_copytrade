@@ -46,7 +46,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "max_exit_cleanup_tasks": 3,  # 清仓任务独立槽位，不受 max_concurrent_tasks 限制
     "log_dir": str(PROJECT_ROOT / "logs" / "autorun"),
     "data_dir": str(PROJECT_ROOT / "data"),
-    "handled_topics_path": str(PROJECT_ROOT.parent / "copytrade" / "handled_topics.json"),
+    "handled_topics_path": str(PROJECT_ROOT / "data" / "handled_topics.json"),
     "copytrade_tokens_path": str(
         PROJECT_ROOT.parent / "copytrade" / "tokens_from_copytrade.json"
     ),
@@ -829,7 +829,7 @@ class GlobalConfig:
         handled_topics_path = Path(
             merged.get("handled_topics_path")
             or paths.get("handled_topics_file")
-            or PROJECT_ROOT.parent / "copytrade" / "handled_topics.json"
+            or PROJECT_ROOT / "data" / "handled_topics.json"
         )
         copytrade_tokens_path = Path(
             merged.get("copytrade_tokens_path")
