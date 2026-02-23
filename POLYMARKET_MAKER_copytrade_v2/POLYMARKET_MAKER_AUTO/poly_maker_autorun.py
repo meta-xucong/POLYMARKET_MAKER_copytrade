@@ -3556,13 +3556,17 @@ class AutoRunManager:
             print("[INIT] 尚无历史处理话题记录")
 
     def _sync_handled_topics_on_startup(self) -> None:
-        """启动时将 handled_topics 与当前 copytrade 数据做一次同步裁剪。"""
+        """启动时将 handled_topics 与当前 copytrade 数据做一次同步裁剪。
+        
+        【修复】如果 token 在 copytrade 中、在 handled_topics 中，但没有运行中的任务，
+        则将其从 handled_topics 移除，这样它会被当作新token启动管理。
+        """
         tokens_path = self.config.copytrade_tokens_path
         signals_path = self.config.copytrade_sell_signals_path
         if not tokens_path.exists() and not signals_path.exists():
             return
 
-        source_topics = {
+        copytrade_topics = {
             topic_id
             for topic_id in (
                 _topic_id_from_entry(item)
@@ -3570,22 +3574,34 @@ class AutoRunManager:
             )
             if topic_id
         }
-        source_topics.update(self._load_copytrade_sell_signals().keys())
-        source_topics.update(self.pending_topics)
-        source_topics.update(self.pending_burst_topics)
-        source_topics.update(self.pending_exit_topics)
-        source_topics.update(self.tasks.keys())
-
-        if self.handled_topics == source_topics:
-            return
-
-        stale_count = len(self.handled_topics - source_topics)
-        self.handled_topics = set(source_topics)
-        write_handled_topics(self.config.handled_topics_path, self.handled_topics)
-        print(
-            "[HANDLED] 启动同步完成: "
-            f"total={len(self.handled_topics)} stale_removed={max(0, stale_count)}"
-        )
+        copytrade_topics.update(self._load_copytrade_sell_signals().keys())
+        
+        # 构建正在运行或等待中的任务集合
+        active_tasks = set(self.tasks.keys()) | set(self.pending_topics) | set(self.pending_burst_topics) | set(self.pending_exit_topics)
+        
+        # 【关键修复】找出在 copytrade 中、在 handled 中，但没有活跃任务的 token
+        # 这些token需要重新启动
+        inactive_in_copytrade = (self.handled_topics & copytrade_topics) - active_tasks
+        if inactive_in_copytrade:
+            print(f"[HANDLED] 发现 {len(inactive_in_copytrade)} 个 copytrade token 无运行任务，将重新启动管理")
+            self.handled_topics -= inactive_in_copytrade
+        
+        # 构建完整的source_topics（用于检测已不在copytrade中的stale记录）
+        source_topics = copytrade_topics | active_tasks
+        
+        # 移除不在source中的stale记录
+        stale_topics = self.handled_topics - source_topics
+        if stale_topics:
+            self.handled_topics -= stale_topics
+            
+        if self.handled_topics != (self.handled_topics | copytrade_topics):
+            stale_count = len(stale_topics) if stale_topics else 0
+            self.handled_topics = self.handled_topics | copytrade_topics
+            write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+            print(
+                "[HANDLED] 启动同步完成: "
+                f"total={len(self.handled_topics)} stale_removed={stale_count}"
+            )
 
     def _update_handled_topics(self, new_topics: List[str]) -> None:
         if not new_topics:
