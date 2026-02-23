@@ -105,6 +105,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "aggressive_reentry_source": "self_account_fills_only",
     "aggressive_first_sell_fill_only": True,
     "aggressive_sell_fill_poll_sec": 15.0,
+    "aggressive_burst_slots": 10,
     # 全局总清仓（默认关闭）
     "total_liquidation": {
         "enable_total_liquidation": False,
