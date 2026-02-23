@@ -2147,6 +2147,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     max_buy_price = _coerce_float(run_cfg.get("max_buy_price"))
     if max_buy_price is None:
         max_buy_price = 0.98  # 默认买入价格上限 0.98
+    min_buy_price = _coerce_float(run_cfg.get("min_buy_price"))
+    if min_buy_price is None:
+        min_buy_price = 0.01  # 默认最低买入价 0.01
     drop_window = _coerce_float(run_cfg.get("drop_window_minutes")) or 10.0
     drop_pct = _normalize_ratio(run_cfg.get("drop_pct"), 0.05)
     profit_pct = _normalize_ratio(run_cfg.get("profit_pct"), 0.05)
@@ -2313,6 +2316,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         token_id=token_id,
         buy_price_threshold=buy_threshold,
         max_buy_price=max_buy_price,
+        min_price=min_buy_price,
         drop_window_minutes=drop_window,
         drop_pct=drop_pct,
         profit_pct=profit_pct,
@@ -2359,36 +2363,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print(f"[INIT] Maker 配置: poll_sec={maker_poll_sec}s, position_sync_interval={maker_position_sync_interval}s")
     if keep_sell_orders_on_timeout:
         print("[INIT] 已启用激进模式：时间阈值退出时保留卖单")
-
-    # ========== Slot Refill (回填) 恢复状态 ==========
-    resume_state = run_cfg.get("resume_state")
-    if resume_state and isinstance(resume_state, dict):
-        has_position = resume_state.get("has_position", False)
-        position_size = resume_state.get("position_size")
-        entry_price = resume_state.get("entry_price")
-        skip_buy = resume_state.get("skip_buy", False)
-        refill_retry_count = run_cfg.get("refill_retry_count", 0)
-
-        print(f"\n[REFILL] ========== 回填恢复状态 ==========")
-        print(f"[REFILL] token_id: {token_id[:20]}...")
-        print(f"[REFILL] 重试次数: {refill_retry_count}")
-
-        if has_position and position_size:
-            # 有持仓：同步到策略，跳过买入阶段
-            print(f"[REFILL] 检测到持仓恢复状态:")
-            print(f"[REFILL]   持仓数量: {position_size}")
-            print(f"[REFILL]   买入价格: {entry_price}")
-            print(f"[REFILL]   跳过买入: {skip_buy}")
-            strategy.sync_position(
-                total_position=position_size,
-                ref_price=entry_price
-            )
-            print(f"[REFILL] ✓ 已同步持仓状态到策略，将直接进入卖出等待")
-        else:
-            # 无持仓：正常启动等待买入
-            print(f"[REFILL] 无持仓恢复状态，将正常等待买入信号")
-
-        print(f"[REFILL] ========================================\n")
 
     def _exit_cleanup_only(reason: str) -> None:
         """
@@ -3611,6 +3585,27 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     def _exit_signal_active() -> bool:
         return bool(exit_signal_path and exit_signal_path.exists())
 
+    def _safe_topic_filename(topic_id: str) -> str:
+        """与调度层保持一致的文件名安全化处理"""
+        return topic_id.replace("/", "_").replace("\\", "_")
+
+    def _low_balance_signal_active() -> bool:
+        """检测低余额暂停买入信号文件"""
+        safe_id = _safe_topic_filename(token_id)
+        signal_file = Path(run_cfg.get("data_dir", "data")) / f"low_balance_signal_{safe_id}.json"
+        if signal_file.exists():
+            return True
+        return False
+
+    def _cleanup_low_balance_signal() -> None:
+        """清理低余额信号文件（退出时调用）"""
+        try:
+            safe_id = _safe_topic_filename(token_id)
+            signal_file = Path(run_cfg.get("data_dir", "data")) / f"low_balance_signal_{safe_id}.json"
+            signal_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def _force_exit(reason: str) -> None:
         """
         正在运行的进程收到 exit signal 时的清仓函数。
@@ -3941,6 +3936,24 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         if has_position:
             exit_after_sell_only_clear = True
             print("[COUNTDOWN] 仍有持仓，将继续等待卖出，清仓后停止脚本。")
+            # 【关键修复】立即启动卖出流程，确保超时机制生效
+            # 避免价格不满足条件时无限等待
+            floor_hint = _latest_best_bid()
+            if floor_hint is None:
+                floor_hint = _latest_best_ask()
+            if floor_hint is None:
+                floor_hint = _latest_price()
+            if floor_hint and position_size and position_size > 0:
+                print(f"[SELL-ONLY] 立即启动卖出监控，地板价参考: {floor_hint:.4f}")
+                # 使用线程异步执行卖出，避免阻塞主循环
+                import threading
+                sell_thread = threading.Thread(
+                    target=_execute_sell,
+                    args=(position_size,),
+                    kwargs={"floor_hint": floor_hint, "source": f"[SELL-ONLY][{reason}]"},
+                    daemon=True
+                )
+                sell_thread.start()
         else:
             print("[COUNTDOWN] 当前无持仓，倒计时仅卖出模式下直接停止脚本。")
             strategy.stop("countdown sell-only window (flat)")
@@ -4252,6 +4265,62 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 f"price={display_price:.4f} size={sold_display:.4f} status={sell_status}{dust_note}"
             )
 
+    # ========== Slot Refill (回填) 恢复状态 ==========
+    # 【修复BUG】将REFILL逻辑移动到 _execute_sell 定义之后，确保可以立即调用挂卖单
+    resume_state = run_cfg.get("resume_state")
+    if resume_state and isinstance(resume_state, dict):
+        has_position = resume_state.get("has_position", False)
+        position_size = resume_state.get("position_size")
+        entry_price = resume_state.get("entry_price")
+        skip_buy = resume_state.get("skip_buy", False)
+        refill_retry_count = run_cfg.get("refill_retry_count", 0)
+
+        print(f"\n[REFILL] ========== 回填恢复状态 ==========")
+        print(f"[REFILL] token_id: {token_id[:20]}...")
+        print(f"[REFILL] 重试次数: {refill_retry_count}")
+
+        if has_position and position_size:
+            # 有持仓：同步到策略，跳过买入阶段
+            print(f"[REFILL] 检测到持仓恢复状态:")
+            print(f"[REFILL]   持仓数量: {position_size}")
+            print(f"[REFILL]   买入价格: {entry_price}")
+            print(f"[REFILL]   跳过买入: {skip_buy}")
+            
+            # 同步策略状态
+            strategy.sync_position(
+                total_position=position_size,
+                ref_price=entry_price
+            )
+            print(f"[REFILL] ✓ 已同步持仓状态到策略")
+            
+            # 【关键修复】立即执行卖出，不依赖策略信号（避免价格不满足时不返回SELL导致的死锁）
+            fallback_px = entry_price
+            if fallback_px is None or fallback_px <= 0:
+                # 尝试从WS缓存获取当前价格
+                try:
+                    latest_snap = latest.get(token_id) or {}
+                    fallback_px = float(latest_snap.get("best_bid") or 0.0)
+                    if fallback_px <= 0:
+                        fallback_px = float(latest_snap.get("best_ask") or 0.0)
+                except Exception:
+                    fallback_px = 0.0
+            
+            if fallback_px > 0 and position_size > 0:
+                print(f"[REFILL] 立即启动卖出流程，地板价参考: {fallback_px:.4f}")
+                _execute_sell(
+                    position_size, 
+                    floor_hint=fallback_px, 
+                    source="[REFILL]"
+                )
+            else:
+                print(f"[REFILL][WARN] 无法确定地板价({fallback_px})或持仓({position_size})，跳过自动卖出")
+        else:
+            # 无持仓：正常启动等待买入
+            print(f"[REFILL] 无持仓恢复状态，将正常等待买入信号")
+
+        print(f"[REFILL] ========================================\n")
+    # ========== Slot Refill 结束 ==========
+
     def _handle_stagnation_exit(change_ratio: float, window_span: float) -> None:
         nonlocal exit_after_sell_only_clear, stagnation_triggered
         if stagnation_triggered:
@@ -4334,6 +4403,26 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print("[INIT][TRACE] 7. 启动countdown_monitor线程...")
         threading.Thread(target=_countdown_monitor, daemon=True).start()
 
+    # ========== 启动时资金不足检测（快速回笼资金） ==========
+    if _low_balance_signal_active():
+        print("[INIT][BUY_GATE] 检测到账户资金不足信号，启动快速资金回笼模式")
+        _maybe_refresh_position_size("[INIT][LOW_BALANCE] 同步持仓", force=True)
+        if _has_actionable_position():
+            print("[INIT][LOW_BALANCE] 当前有持仓，立即进入SELL-ONLY模式尝试卖出")
+            _activate_sell_only("low balance at startup")
+        else:
+            print("[INIT][LOW_BALANCE] 当前无持仓，快速退出释放队列")
+            _cancel_open_buy_orders_before_exit("LOW_BALANCE_NO_POSITION_STARTUP")
+            _record_exit_token(token_id, "LOW_BALANCE_FAST_EXIT", {
+                "has_position": False,
+                "reason": "low balance at startup, no position to sell",
+            })
+            strategy.stop("low balance fast exit")
+            stop_event.set()
+            # 直接跳到清理逻辑
+            return
+    # ========== 资金不足检测结束 ==========
+
     print("[INIT][TRACE] 8. 所有初始化完成，准备进入主循环...")
 
     # 主循环诊断变量（用于追踪循环是否正常执行）
@@ -4382,6 +4471,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if _exit_signal_active():
                     _force_exit("sell signal file detected")
                     break
+                
+                # 低余额信号检测：进入仅卖出模式，撤掉所有买单
+                if _low_balance_signal_active() and not sell_only_event.is_set():
+                    print("[BUY_GATE][SIGNAL] 检测到账户低余额信号，进入仅卖出模式并撤销所有买单")
+                    _cancel_open_buy_orders_before_exit("LOW_BALANCE_PAUSE")
+                    _activate_sell_only("account balance below minimum")
+                    # 清理待执行的买入信号
+                    if pending_buy is not None:
+                        strategy.on_reject("low balance pause")
+                        pending_buy = None
+                
                 if pending_buy is not None and now >= buy_cooldown_until:
                     if sell_only_event.is_set():
                         print("[COUNTDOWN] 仍在仅卖出模式内，丢弃待执行的买入信号。")
@@ -5324,6 +5424,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     finally:
         stop_event.set()
+        # 清理低余额信号文件
+        _cleanup_low_balance_signal()
         final_status = strategy.status()
         print(f"[EXIT] 最终状态: {final_status}")
         try:

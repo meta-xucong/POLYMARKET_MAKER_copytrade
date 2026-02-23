@@ -1,10 +1,14 @@
 {
   "scheduler": {
-    "max_concurrent_tasks": 20,
+    "max_concurrent_tasks": 15,
     "command_poll_seconds": 30.0,
     "copytrade_poll_seconds": 30.0,
     "strategy_mode": "classic",
-    "aggressive_burst_slots": 5,
+    "burst_slots": 10,
+    "enable_burst_queue": true,
+    "enable_reentry": true,
+    "exhausted_keep_orders": true,
+    "exhausted_enable_reentry": true,
     "aggressive_enable_self_sell_reentry": false,
     "aggressive_reentry_source": "self_account_fills_only",
     "aggressive_first_sell_fill_only": true,

@@ -32,6 +32,7 @@
 | `order_size_is_target` | `true`=将 `order_size` 视作目标总仓位；`false`=单笔下单量。 | 布尔 | 控总仓建议 `true`。 |
 | `sell_mode` | 卖出挂单风格。 | `aggressive` / `conservative` | 默认 `aggressive`。 |
 | `buy_price_threshold` | 买入价格上限阈值。 | `0~1` 浮点 | 留空则按策略逻辑。 |
+| `min_buy_price` | 硬性买入价格下限（低于则不买）。 | `0~1` 浮点 | 风险控制建议 `0.05`，避免买入过低价token。 |
 | `max_buy_price` | 硬性买入价格上限（超过则不买）。 | `0~1` 浮点 | 风险控制建议保留，如 `0.98`。 |
 | `drop_window_minutes` | 跌幅计算窗口（分钟）。 | 浮点 | 常用 `10~120`。 |
 | `drop_pct` | 触发买入的下跌比例阈值。 | 比例浮点 | 如 `0.01`（1%）。 |

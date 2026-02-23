@@ -953,6 +953,44 @@ class TotalLiquidationManager:
                 continue
         return token_ids
 
+    def _cancel_open_orders_for_token(self, client: Any, token_id: str) -> int:
+        """撤销指定token的所有开放订单。返回撤销的订单数量。"""
+        try:
+            open_orders = self._fetch_open_orders(client)
+            canceled = 0
+            for order in open_orders:
+                if str(order.get("token_id")) != str(token_id):
+                    continue
+                order_id = order.get("order_id")
+                if not order_id:
+                    continue
+                try:
+                    self._cancel_order(client, str(order_id))
+                    canceled += 1
+                except Exception:
+                    pass
+            return canceled
+        except Exception:
+            return 0
+
+    def _fetch_open_orders(self, client: Any) -> List[Dict[str, Any]]:
+        """获取所有开放订单。"""
+        try:
+            # 尝试使用client的get_orders方法
+            if hasattr(client, 'get_orders'):
+                return client.get_orders() or []
+            return []
+        except Exception:
+            return []
+
+    def _cancel_order(self, client: Any, order_id: str) -> None:
+        """撤销单个订单。"""
+        try:
+            if hasattr(client, 'cancel_order'):
+                client.cancel_order(order_id)
+        except Exception:
+            pass
+
     def _liquidate_positions(
         self,
         autorun: Any,
@@ -1013,6 +1051,13 @@ class TotalLiquidationManager:
                 continue
 
             try:
+                # 【修复】清仓前先撤销该token的所有挂单，避免重复挂单
+                try:
+                    canceled = self._cancel_open_orders_for_token(client, token_id)
+                    if canceled:
+                        print(f"[GLB_LIQ] 已撤销 {token_id[:20]}... 的 {canceled} 个挂单")
+                except Exception as cancel_exc:
+                    print(f"[GLB_LIQ][WARN] 撤销 {token_id[:20]}... 挂单失败: {cancel_exc}")
                 spread = (ask - bid) if (ask > 0 and bid > 0 and ask >= bid) else 0.0
 
                 quote_fresh = self._is_quote_fresh(autorun, token_id)

@@ -97,8 +97,11 @@ DEFAULT_GLOBAL_CONFIG = {
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 可选策略模式（classic/aggressive）
     "strategy_mode": "classic",
-    "aggressive_burst_slots": 5,
-    "aggressive_enable_self_sell_reentry": False,
+    "burst_slots": 10,
+    "enable_burst_queue": true,
+    "enable_reentry": true,
+    "exhausted_keep_orders": true,
+    "exhausted_enable_reentry": true,
     "aggressive_reentry_source": "self_account_fills_only",
     "aggressive_first_sell_fill_only": True,
     "aggressive_sell_fill_poll_sec": 15.0,
@@ -749,10 +752,12 @@ class GlobalConfig:
     )
     exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
     strategy_mode: str = str(DEFAULT_GLOBAL_CONFIG["strategy_mode"])
-    aggressive_burst_slots: int = int(DEFAULT_GLOBAL_CONFIG["aggressive_burst_slots"])
-    aggressive_enable_self_sell_reentry: bool = bool(
-        DEFAULT_GLOBAL_CONFIG["aggressive_enable_self_sell_reentry"]
-    )
+    # 【重构】burst和reentry参数与mode解耦
+    burst_slots: int = int(DEFAULT_GLOBAL_CONFIG["burst_slots"])
+    enable_burst_queue: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_burst_queue"])
+    enable_reentry: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_reentry"])
+    exhausted_keep_orders: bool = bool(DEFAULT_GLOBAL_CONFIG["exhausted_keep_orders"])
+    exhausted_enable_reentry: bool = bool(DEFAULT_GLOBAL_CONFIG["exhausted_enable_reentry"])
     aggressive_reentry_source: str = str(
         DEFAULT_GLOBAL_CONFIG["aggressive_reentry_source"]
     )
@@ -1014,12 +1019,47 @@ class GlobalConfig:
                 scheduler.get("strategy_mode", merged.get("strategy_mode", cls.strategy_mode))
                 or "classic"
             ).strip().lower(),
+            # 【重构】burst和reentry参数与mode解耦
+            burst_slots=max(
+                0,
+                int(
+                    scheduler.get(
+                        "burst_slots",
+                        merged.get("burst_slots", cls.burst_slots),
+                    )
+                ),
+            ),
+            enable_burst_queue=bool(
+                scheduler.get(
+                    "enable_burst_queue",
+                    merged.get("enable_burst_queue", cls.enable_burst_queue),
+                )
+            ),
+            enable_reentry=bool(
+                scheduler.get(
+                    "enable_reentry",
+                    merged.get("enable_reentry", cls.enable_reentry),
+                )
+            ),
+            exhausted_keep_orders=bool(
+                scheduler.get(
+                    "exhausted_keep_orders",
+                    merged.get("exhausted_keep_orders", cls.exhausted_keep_orders),
+                )
+            ),
+            exhausted_enable_reentry=bool(
+                scheduler.get(
+                    "exhausted_enable_reentry",
+                    merged.get("exhausted_enable_reentry", cls.exhausted_enable_reentry),
+                )
+            ),
+            # 兼容旧配置
             aggressive_burst_slots=max(
                 0,
                 int(
                     scheduler.get(
                         "aggressive_burst_slots",
-                        merged.get("aggressive_burst_slots", cls.aggressive_burst_slots),
+                        merged.get("aggressive_burst_slots", cls.burst_slots),
                     )
                 ),
             ),
@@ -1028,7 +1068,7 @@ class GlobalConfig:
                     "aggressive_enable_self_sell_reentry",
                     merged.get(
                         "aggressive_enable_self_sell_reentry",
-                        cls.aggressive_enable_self_sell_reentry,
+                        cls.enable_reentry,
                     ),
                 )
             ),
@@ -1389,6 +1429,11 @@ class AutoRunManager:
                 "[BUY_GATE] 余额门禁状态切换: "
                 f"{state} | free_balance={float(balance):.4f} M={min_balance:.4f}"
             )
+            # 状态切换时，通知所有运行中的子进程
+            if paused:
+                self._notify_all_tasks_low_balance()
+            else:
+                self._cleanup_all_low_balance_signals()
         self._buy_paused_due_to_balance = paused
         return paused
 
@@ -1418,6 +1463,39 @@ class AutoRunManager:
             )
         print(f"[BUY_GATE] 低余额暂停中：已将 {len(to_defer)} 个待启动 token 转入回填队列")
 
+    def _notify_all_tasks_low_balance(self) -> None:
+        """向所有运行中的子进程发送低余额暂停买入信号"""
+        for topic_id, task in self.tasks.items():
+            if not task.is_running():
+                continue
+            self._issue_low_balance_signal(topic_id)
+        running_count = sum(1 for t in self.tasks.values() if t.is_running())
+        if running_count > 0:
+            print(f"[BUY_GATE] 已向 {running_count} 个运行中的子进程发送低余额暂停买入信号")
+
+    def _issue_low_balance_signal(self, token_id: str) -> None:
+        """发送低余额暂停买入信号文件"""
+        path = self.config.data_dir / f"low_balance_signal_{_safe_topic_filename(token_id)}.json"
+        payload = {
+            "token_id": token_id,
+            "signal": "PAUSE_BUY",
+            "min_balance": float(self.config.buy_pause_min_free_balance),
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _dump_json_file(path, payload)
+
+    def _cleanup_all_low_balance_signals(self) -> None:
+        """清理所有低余额信号文件（余额恢复时调用）"""
+        cleaned = 0
+        for f in self.config.data_dir.glob("low_balance_signal_*.json"):
+            try:
+                f.unlink(missing_ok=True)
+                cleaned += 1
+            except Exception:
+                pass
+        if cleaned > 0:
+            print(f"[BUY_GATE] 余额恢复，已清理 {cleaned} 个低余额暂停买入信号文件")
+
     def _is_aggressive_mode(self) -> bool:
         mode = (self.config.strategy_mode or "classic").strip().lower()
         return mode == "aggressive"
@@ -1428,9 +1506,13 @@ class AutoRunManager:
         return role if role else "unknown"
 
     def _burst_slots(self) -> int:
-        if not self._is_aggressive_mode():
+        """Burst槽位数：经典模式和激进模式都启用，区别只在进程退出行为"""
+        # 【重构】使用新的burst_slots参数（兼容旧的aggressive_burst_slots）
+        if not self.config.enable_burst_queue:
             return 0
-        return max(0, int(self.config.aggressive_burst_slots))
+        # 优先使用新参数，如果不存在则使用旧参数
+        slots = getattr(self.config, 'burst_slots', None) or getattr(self.config, 'aggressive_burst_slots', 10)
+        return max(0, int(slots))
 
     def _running_burst_count(self) -> int:
         count = 0
@@ -1443,20 +1525,16 @@ class AutoRunManager:
         return count
 
     def _normalize_pending_queues_for_mode(self) -> None:
-        """模式切换保护：classic 下将 burst 队列回落到普通 pending，防止 token 卡住。"""
-        if self._is_aggressive_mode():
-            return
-        if not self.pending_burst_topics:
-            return
-        moved = 0
-        for topic_id in list(self.pending_burst_topics):
-            if topic_id in self.pending_topics:
-                continue
-            self.pending_topics.append(topic_id)
-            moved += 1
-        self.pending_burst_topics.clear()
-        if moved:
-            print(f"[MODE] classic 模式已接管 {moved} 个 burst 队列 token")
+        """模式切换保护：已废弃，经典模式和激进模式都支持burst队列。
+        
+        经典模式与激进模式的区别只在进程退出行为：
+        - 经典模式：进程结束撤卖单（由 Volatility_arbitrage_run.py 中的 keep_sell_orders_on_timeout 控制）
+        - 激进模式：进程结束保留卖单
+        两者都支持burst队列加速新token和reentry token。
+        """
+        # 【修复】此函数不再强制将burst队列挪到base队列
+        # 保留函数作为兼容性空实现
+        pass
 
     # ========== 核心循环 ==========
     def run_loop(self) -> None:
@@ -1490,9 +1568,9 @@ class AutoRunManager:
                     if self.config.enable_slot_refill and now >= self._next_refill_check:
                         self._schedule_refill()
                         self._next_refill_check = now + self.config.refill_check_interval_sec
+                    # 【重构】enable_reentry与mode解耦，classic模式下也可启用
                     if (
-                        self._is_aggressive_mode()
-                        and self.config.aggressive_enable_self_sell_reentry
+                        self.config.enable_reentry
                         and now - self._last_sell_fill_poll_at
                         >= float(self.config.aggressive_sell_fill_poll_sec)
                     ):
@@ -2986,9 +3064,16 @@ class AutoRunManager:
         self._shared_ws_pending_since.pop(topic_id, None)
 
     def _poll_aggressive_self_sell_reentry(self) -> None:
+        """检测自有账户卖出成交，将token重新加入burst队列。
+        
+        【重构】此功能与mode解耦，classic模式下也可启用。
+        区别：classic模式进程结束撤卖单，但卖出成交后仍可reentry。
+        """
         if self.config.aggressive_reentry_source != "self_account_fills_only":
             return
-        if not self.config.aggressive_enable_self_sell_reentry:
+        # 【重构】使用新的enable_reentry参数（兼容旧的aggressive_enable_self_sell_reentry）
+        enable_reentry = getattr(self.config, 'enable_reentry', None) or getattr(self.config, 'aggressive_enable_self_sell_reentry', False)
+        if not enable_reentry:
             return
 
         if not self._position_address:
@@ -3224,7 +3309,23 @@ class AutoRunManager:
         merged["maker_poll_sec"] = self.config.maker_poll_sec
         merged["maker_position_sync_interval"] = self.config.maker_position_sync_interval
         merged["strategy_mode"] = "aggressive" if self._is_aggressive_mode() else "classic"
-        merged["keep_sell_orders_on_timeout"] = bool(self._is_aggressive_mode())
+        
+        # 【重构】处理exhausted状态（3次refill后）
+        retry_count = topic_info.get("refill_retry_count", 0)
+        max_retries = self.config.max_refill_retries
+        is_exhausted = retry_count >= max_retries and max_retries > 0
+        
+        # 默认：aggressive模式保留卖单，classic模式撤卖单
+        # 【新功能】exhausted状态可覆盖此行为
+        base_keep_orders = bool(self._is_aggressive_mode())
+        if is_exhausted and self.config.exhausted_keep_orders:
+            # 3次refill后，强制保留卖单（临终关怀模式）
+            base_keep_orders = True
+        merged["keep_sell_orders_on_timeout"] = base_keep_orders
+        
+        # 传递exhausted_enable_reentry参数（用于Volatility_arbitrage_run.py）
+        merged["exhausted_enable_reentry"] = self.config.exhausted_enable_reentry
+        merged["is_exhausted_token"] = is_exhausted
 
         return merged
 
@@ -4083,6 +4184,7 @@ class AutoRunManager:
         try:
             self.latest_topics = self._load_copytrade_tokens()
             # 保留已有的 resume_state（回填恢复状态），只更新 copytrade 数据
+            # 【修复】同时保留 schedule_lane 和 queue_role，用于状态显示
             old_resume_states: Dict[str, Any] = {}
             for tid, detail in self.topic_details.items():
                 if detail.get("resume_state") or detail.get("refill_exit_reason") or detail.get("resume_drop_pct") is not None:
@@ -4091,6 +4193,8 @@ class AutoRunManager:
                         "refill_retry_count": detail.get("refill_retry_count", 0),
                         "refill_exit_reason": detail.get("refill_exit_reason"),
                         "resume_drop_pct": detail.get("resume_drop_pct"),
+                        "schedule_lane": detail.get("schedule_lane"),
+                        "queue_role": detail.get("queue_role"),
                     }
             self.topic_details = {}
             for item in self.latest_topics:
@@ -4110,6 +4214,11 @@ class AutoRunManager:
                     self.topic_details[tid]["refill_exit_reason"] = saved["refill_exit_reason"]
                 if saved.get("resume_drop_pct") is not None:
                     self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
+                # 【修复】恢复 schedule_lane 和 queue_role
+                if saved.get("schedule_lane"):
+                    self.topic_details[tid]["schedule_lane"] = saved["schedule_lane"]
+                if saved.get("queue_role"):
+                    self.topic_details[tid]["queue_role"] = saved["queue_role"]
 
             sell_signal_events = self._load_copytrade_sell_signals()
             blacklist_tokens = self._load_copytrade_blacklist()
