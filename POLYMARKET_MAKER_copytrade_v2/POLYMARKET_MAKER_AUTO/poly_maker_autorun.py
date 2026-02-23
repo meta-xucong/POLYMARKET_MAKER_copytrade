@@ -106,6 +106,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "aggressive_first_sell_fill_only": True,
     "aggressive_sell_fill_poll_sec": 15.0,
     "aggressive_burst_slots": 10,
+    "aggressive_enable_self_sell_reentry": False,
     # 全局总清仓（默认关闭）
     "total_liquidation": {
         "enable_total_liquidation": False,
@@ -769,6 +770,9 @@ class GlobalConfig:
         DEFAULT_GLOBAL_CONFIG["aggressive_sell_fill_poll_sec"]
     )
     aggressive_burst_slots: int = int(DEFAULT_GLOBAL_CONFIG.get("aggressive_burst_slots", 10))
+    aggressive_enable_self_sell_reentry: bool = bool(
+        DEFAULT_GLOBAL_CONFIG.get("aggressive_enable_self_sell_reentry", False)
+    )
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
