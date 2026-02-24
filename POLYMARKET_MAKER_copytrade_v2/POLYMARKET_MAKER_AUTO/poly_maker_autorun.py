@@ -3586,21 +3586,19 @@ class AutoRunManager:
             print(f"[HANDLED] 发现 {len(inactive_in_copytrade)} 个 copytrade token 无运行任务，将重新启动管理")
             self.handled_topics -= inactive_in_copytrade
         
-        # 构建完整的source_topics（用于检测已不在copytrade中的stale记录）
-        source_topics = copytrade_topics | active_tasks
-        
-        # 移除不在source中的stale记录
-        stale_topics = self.handled_topics - source_topics
+        # 【修复】移除已不在 copytrade 中且无活跃任务的 stale 记录
+        stale_topics = self.handled_topics - copytrade_topics - active_tasks
         if stale_topics:
             self.handled_topics -= stale_topics
             
-        if self.handled_topics != (self.handled_topics | copytrade_topics):
-            stale_count = len(stale_topics) if stale_topics else 0
-            self.handled_topics = self.handled_topics | copytrade_topics
+        # 如果 handled_topics 被修改，写回文件
+        if inactive_in_copytrade or stale_topics:
             write_handled_topics(self.config.handled_topics_path, self.handled_topics)
             print(
                 "[HANDLED] 启动同步完成: "
-                f"total={len(self.handled_topics)} stale_removed={stale_count}"
+                f"total={len(self.handled_topics)} "
+                f"reactivated={len(inactive_in_copytrade)} "
+                f"stale_removed={len(stale_topics)}"
             )
 
     def _update_handled_topics(self, new_topics: List[str]) -> None:
@@ -4746,21 +4744,28 @@ class AutoRunManager:
         self._dump_runtime_status()
 
     def _restore_runtime_status(self) -> None:
-        """尝试从上次运行的状态文件恢复待处理队列等信息。"""
+        """尝试从上次运行的状态文件恢复待处理队列等信息。
+        
+        【修复】不再直接恢复 handled_topics，只恢复实际有任务在运行的 token。
+        防止程序重启后，handled_topics 包含大量无运行任务的 token，导致无法启动新管理。
+        """
 
         if not self.status_path.exists():
             return
         try:
             payload = _load_json_file(self.status_path)
-            handled_topics = payload.get("handled_topics") or []
             pending_topics = payload.get("pending_topics") or []
             tasks_snapshot = payload.get("tasks") or {}
         except Exception as exc:  # pragma: no cover - 容错
             print(f"[WARN] 无法读取运行状态文件，已忽略: {exc}")
             return
-
-        if handled_topics:
-            self.handled_topics.update(str(t) for t in handled_topics)
+        
+        # 【修复】只恢复有实际运行任务的 token 到 handled_topics
+        # 其他的 token 应该通过 _sync_handled_topics_on_startup 重新评估
+        active_tokens_from_snapshot = set(str(t) for t in pending_topics) | set(str(t) for t in tasks_snapshot.keys())
+        if active_tokens_from_snapshot:
+            self.handled_topics.update(active_tokens_from_snapshot)
+            print(f"[RESTORE] 从运行状态恢复 {len(active_tokens_from_snapshot)} 个活跃 token 到 handled_topics")
 
         # ===== 构建黑名单：确定已死亡的 token =====
         # 只过滤 MARKET_CLOSED 的 token，避免误删正常 token
