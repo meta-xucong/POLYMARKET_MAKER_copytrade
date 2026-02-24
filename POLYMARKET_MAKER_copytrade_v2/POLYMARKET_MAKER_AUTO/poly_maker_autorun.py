@@ -1447,11 +1447,48 @@ class AutoRunManager:
         return paused
 
     def _defer_pending_topics_due_to_low_balance(self) -> None:
-        to_defer = list(dict.fromkeys(self.pending_topics + self.pending_burst_topics))
-        if not to_defer:
-            return
-        self.pending_topics.clear()
+        """低余额时：只阻止需要买入的token，有持仓的可卖出token保留在队列中
+        
+        解决死锁问题：当余额不足时，允许有持仓的token启动卖出，
+        以便快速回笼资金，避免持仓卖不掉、余额涨不了的死锁。
+        """
+        # 处理burst队列（新token）：全部defer，因为这些token还没有持仓
+        burst_to_defer = list(self.pending_burst_topics)
         self.pending_burst_topics.clear()
+        
+        # 处理base队列：只defer无持仓的token，保留有持仓的
+        base_to_keep = []
+        base_to_defer = []
+        for token_id in self.pending_topics:
+            detail = self.topic_details.get(token_id) or {}
+            # 判断是否有持仓：通过resume_state或refill_exit_reason（SELL_ABANDONED等）
+            has_position = False
+            resume_state = detail.get("resume_state")
+            if resume_state and resume_state.get("has_position"):
+                has_position = True
+            else:
+                # 检查是否是因为有持仓而退出的refill token
+                # 这些token虽然没有resume_state（启动后被清除），但有refill_exit_reason标记
+                exit_reason = detail.get("refill_exit_reason", "")
+                if exit_reason in ("SELL_ABANDONED", "BUY_BLOCK_ENTRY_SYNC_FAILED", 
+                                   "BUY_BLOCK_TRIGGER_UNAVAILABLE", "exit_cleanup"):
+                    has_position = True
+            
+            if has_position:
+                base_to_keep.append(token_id)
+            else:
+                base_to_defer.append(token_id)
+        
+        # 清空pending_topics，稍后只把有持仓的加回来
+        self.pending_topics.clear()
+        
+        # 保留有持仓的token在pending_topics中（允许启动卖出）
+        for token_id in base_to_keep:
+            self.pending_topics.append(token_id)
+            print(f"[BUY_GATE] 保留有持仓token可卖出: {token_id[:20]}...")
+        
+        # defer所有需要买入的token
+        to_defer = burst_to_defer + base_to_defer
         for token_id in to_defer:
             self._pending_first_seen.pop(token_id, None)
             self._shared_ws_wait_failures.pop(token_id, None)
@@ -1461,7 +1498,6 @@ class AutoRunManager:
             if token_id in self._buy_pause_deferred_tokens:
                 continue
             self._buy_pause_deferred_tokens.add(token_id)
-            # 【修复】设置 queue_role 以便状态显示
             detail = self.topic_details.setdefault(token_id, {})
             detail["queue_role"] = "deferred_token"
             self._append_exit_token_record(
@@ -1473,7 +1509,11 @@ class AutoRunManager:
                 },
                 refillable=True,
             )
-        print(f"[BUY_GATE] 低余额暂停中：已将 {len(to_defer)} 个待启动 token 转入回填队列")
+        
+        if to_defer:
+            print(f"[BUY_GATE] 低余额暂停中：已将 {len(to_defer)} 个无持仓token转入回填队列")
+        if base_to_keep:
+            print(f"[BUY_GATE] 低余额策略：保留 {len(base_to_keep)} 个有持仓token可启动卖出")
 
     def _notify_all_tasks_low_balance(self) -> None:
         """向所有运行中的子进程发送低余额暂停买入信号"""
@@ -2763,8 +2803,9 @@ class AutoRunManager:
 
     def _schedule_pending_topics(self) -> None:
         if self._is_buy_paused_by_balance():
+            # 低余额时：只defer无持仓的token，保留有持仓的可卖出
+            # 不直接return，继续执行让有持仓的token可以启动
             self._defer_pending_topics_due_to_low_balance()
-            return
 
         self._rebalance_burst_to_base_queue()
 
@@ -4187,7 +4228,11 @@ class AutoRunManager:
             self.topic_details[token_id]["resume_state"] = resume_state
             self.topic_details[token_id]["refill_retry_count"] = retry_count
             self.topic_details[token_id]["refill_exit_reason"] = exit_reason
-            self.topic_details[token_id]["queue_role"] = "refill_token"
+            # 区分有持仓和无持仓的refill token，便于低余额时区分处理
+            if has_position:
+                self.topic_details[token_id]["queue_role"] = "refill_with_position"
+            else:
+                self.topic_details[token_id]["queue_role"] = "refill_buy"
             if resume_drop_pct is not None:
                 self.topic_details[token_id]["resume_drop_pct"] = resume_drop_pct
             else:
