@@ -171,7 +171,9 @@ ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 CLOB_API_ROOT = os.getenv("POLY_CLOB_API_ROOT", "https://clob.polymarket.com")
 POSITION_CHECK_CACHE_TTL_SEC = 300.0
-POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 10.0
+# 低余额筛查场景下：无持仓 token 启动时检查一次，之后每 30 分钟再复检，
+# 避免在 copytrade 轮询周期（30s）下重复高频查询。
+POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 1800.0
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
 DATA_API_RATE_LIMIT_SEC = 1.0
