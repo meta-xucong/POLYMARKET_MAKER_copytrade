@@ -66,7 +66,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "ws_debug_raw": False,
     # Slot refill (回填) 配置
     "enable_slot_refill": True,
-    "refill_cooldown_minutes": 30.0,
+    "refill_cooldown_minutes": 5.0,  # 【修复】从30分钟缩短到5分钟，加快token复用
     "max_refill_retries": 3,
     "refill_check_interval_sec": 60.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
@@ -1239,6 +1239,8 @@ class AutoRunManager:
         self._ws_cache_path = self.config.data_dir / "ws_cache.json"
         self._ws_cache_lock = threading.Lock()
         self._ws_cache: Dict[str, Dict[str, Any]] = {}
+        # 【修复】添加 topic_details 锁，保护并发修改
+        self._topic_details_lock = threading.Lock()
         self._ws_cache_dirty = False
         self._ws_cache_last_flush = 0.0
         self._ws_thread: Optional[threading.Thread] = None
@@ -1571,10 +1573,51 @@ class AutoRunManager:
         for task in self.tasks.values():
             if not task.is_running():
                 continue
-            lane = (self.topic_details.get(task.topic_id) or {}).get("schedule_lane")
+            # 【修复】读取 topic_details 使用锁保护
+            with self._topic_details_lock:
+                lane = (self.topic_details.get(task.topic_id) or {}).get("schedule_lane")
             if lane == "burst":
                 count += 1
         return count
+
+    def _demote_oldest_burst_token(self) -> bool:
+        """
+        【新增】将运行时间最长的 burst token 降级为 base token。
+        
+        当 burst 槽位满但 base 槽位有空位时调用，释放一个 burst 槽位给新token。
+        
+        Returns:
+            bool: 是否成功降级
+        """
+        oldest_task = None
+        oldest_start_time = float('inf')
+        
+        # 【修复】先找到最老的 burst token（读取不需要锁）
+        for task in self.tasks.values():
+            if not task.is_running():
+                continue
+            # 读取时使用锁保护
+            with self._topic_details_lock:
+                detail = self.topic_details.get(task.topic_id) or {}
+            if detail.get("schedule_lane") == "burst":
+                if task.start_time < oldest_start_time:
+                    oldest_start_time = task.start_time
+                    oldest_task = task
+        
+        if oldest_task:
+            # 【修复】降级操作使用锁保护
+            with self._topic_details_lock:
+                detail = self.topic_details.setdefault(oldest_task.topic_id, {})
+                detail["schedule_lane"] = "base"
+            runtime_hours = (time.time() - oldest_task.start_time) / 3600
+            print(
+                f"[SCHED][DEMOTE] burst token 降级为 base: {oldest_task.topic_id[:20]}... "
+                f"已运行 {runtime_hours:.1f} 小时"
+            )
+            # 【修复】立即同步状态到文件，供子进程读取
+            self._dump_runtime_status()
+            return True
+        return False
 
     def _normalize_pending_queues_for_mode(self) -> None:
         """模式切换保护：已废弃，经典模式和激进模式都支持burst队列。
@@ -2811,25 +2854,51 @@ class AutoRunManager:
 
         base_limit = max(1, int(self.config.max_concurrent_tasks))
         burst_limit = self._burst_slots()
-        max_total = base_limit + burst_limit
+        
+        # 【修复】Burst/Base 运行时隔离：
+        # - Burst token 最多 burst_limit 个（高优先级新token）
+        # - Base token 最多 base_limit 个（普通refill token）
+        # - 当 burst 满且 base 有空位时，降级最老的 burst token
+        
         checks_remaining = len(self.pending_topics) + len(self.pending_burst_topics)
 
         while checks_remaining > 0:
             running_total = sum(1 for t in self.tasks.values() if t.is_running())
             running_burst = self._running_burst_count()
             running_base = max(0, running_total - running_burst)
-            if running_total >= max_total:
-                break
+            
+            # 【修复】独立槽位检查：burst 和 base 分别限制
+            burst_full = running_burst >= burst_limit
+            base_full = running_base >= base_limit
+            
+            # 【修复】当 base 不满且 burst 满时，降级一个 burst 来补位
+            # 这样能实现：burst=10满负荷运转，base通过降级逐步填满
+            # 同时 pending_burst 快速消耗
+            if not base_full and burst_full and self.pending_burst_topics:
+                # base有空位但burst已满，降级最老的burst到base
+                if self._demote_oldest_burst_token():
+                    # 降级成功，重新计算计数
+                    running_burst = self._running_burst_count()
+                    running_base = running_total - running_burst
+                    burst_full = running_burst >= burst_limit
+                    base_full = running_base >= base_limit
+            
+            if burst_full and base_full:
+                break  # 两者都满，停止调度
 
-            use_burst = bool(
-                self.pending_burst_topics
-                and running_burst < burst_limit
-            )
-            use_base = bool(
-                self.pending_topics
-                and running_base < base_limit
-            )
-            if not use_burst and not use_base:
+            # 【修复】优先级逻辑：
+            # 1. 如果 pending_burst 有token，优先启动（填满burst到10）
+            # 2. 只有当 pending_burst 为空时，才启动 pending_topics
+            
+            if self.pending_burst_topics and not burst_full:
+                use_burst = True
+                use_base = False
+            elif self.pending_topics and not base_full:
+                # 只有pending_burst为空时才启动pending_base
+                use_burst = False
+                use_base = True
+            else:
+                # 两者都无法启动（burst满且无法降级，或base满，或两者都空）
                 break
 
             now = time.time()
@@ -3023,7 +3092,11 @@ class AutoRunManager:
         self._pending_first_seen.setdefault(topic_id, time.time())
 
     def _rebalance_burst_to_base_queue(self) -> None:
-        """机会优先缓冲池回挪：当 base 运行槽位有空缺时，把 burst 中 new token 回挪到 base。"""
+        """【已废弃】在新 Burst/Base 隔离逻辑下，不再将 pending burst token 移到 base。"""
+        # 【修复】直接返回，不再执行回挪，保持 pending_burst_topics 不变
+        # 让 _schedule_pending_topics 中的优先级逻辑决定启动顺序
+        return
+        # 以下代码不再执行：
         if not self.pending_burst_topics:
             return
 
@@ -4939,6 +5012,17 @@ class AutoRunManager:
             self._completed_exit_cleanup_tokens -= stale
             for tk in stale:
                 self._exit_cleanup_retry_counts.pop(tk, None)
+        
+        # 【修复】包含 topic_details 中的 schedule_lane 信息，供子进程同步
+        topic_details_export = {}
+        with self._topic_details_lock:
+            for topic_id, detail in self.topic_details.items():
+                if topic_id in self.tasks:  # 只导出运行中的任务
+                    topic_details_export[topic_id] = {
+                        "schedule_lane": detail.get("schedule_lane", "base"),
+                        "queue_role": detail.get("queue_role"),
+                    }
+        
         payload = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "handled_topics_total": len(self.handled_topics),
@@ -4952,6 +5036,7 @@ class AutoRunManager:
             ),
             "exit_cleanup_retry_counts": dict(self._exit_cleanup_retry_counts),
             "tasks": {},
+            "topic_details": topic_details_export,  # 【修复】添加 topic_details 供子进程读取
         }
         for topic_id, task in self.tasks.items():
             payload["tasks"][topic_id] = {

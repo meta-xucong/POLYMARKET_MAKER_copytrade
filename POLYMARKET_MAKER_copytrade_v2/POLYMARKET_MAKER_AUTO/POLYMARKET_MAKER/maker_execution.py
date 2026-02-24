@@ -1535,7 +1535,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             f"{change}目标至 {goal_size:.{SELL_SIZE_DP}f}"
                             + (" (已锁定不扩回)" if shrink_locked else "")
                         )
-                        _touch_activity()
+                        # 【修复】移除 _touch_activity()，仓位更新不应重置超时
                         if remaining <= _MIN_FILL_EPS:
                             if active_order:
                                 _cancel_order(client, active_order)
@@ -1558,7 +1558,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             aggressive_timer_anchor_fill = None
                             aggressive_next_price_override = None
                             next_price_override = None
-                            _touch_activity()
+                            # 【修复】移除 _touch_activity()，被动撤单不应重置超时
                             continue
 
         if best_ask_fn is not None:
@@ -1637,7 +1637,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_timer_anchor_fill = None
                     aggressive_next_price_override = None
                     next_price_override = None
-                    _touch_activity()
+                    # 【修复】移除 _touch_activity()，被动撤单不应重置超时
                 sleep_fn(poll_sec)
                 continue
             if ask < floor_float - 1e-12:
@@ -1657,11 +1657,13 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_timer_anchor_fill = None
                     aggressive_next_price_override = None
                     next_price_override = None
-                    _touch_activity()
+                    # 【修复】移除 _touch_activity()，被动撤单不应重置超时
                 sleep_fn(poll_sec)
                 continue
             if waiting_for_floor and ask >= floor_float:
                 waiting_for_floor = False
+            # 【修复】等待地板价恢复期间，不触发 _touch_activity()
+            # 只有成交才应该重置超时计时器
         else:
             if ask is None or ask <= 0:
                 # 价格无效超时检测（aggressive 模式同样适用）
@@ -2080,7 +2082,7 @@ def maker_sell_follow_ask_with_floor_wait(
                             active_price = None
                             aggressive_next_price_override = floor_float
                             next_price_override = floor_float
-                            _touch_activity()
+                            # 【修复】移除 _touch_activity()，被动撤单不应重置超时
                         continue
                     next_px = max(
                         _round_down_to_dp(target_price, price_dp),
@@ -2100,7 +2102,7 @@ def maker_sell_follow_ask_with_floor_wait(
                         aggressive_next_price_override = next_px
                         aggressive_timer_start = None
                         aggressive_timer_anchor_fill = current_filled
-                        _touch_activity()
+                        # 【修复】移除 _touch_activity()，被动撤单不应重置超时
                         continue
 
         if active_price is not None and ask <= active_price - tick - 1e-12:
@@ -2126,7 +2128,7 @@ def maker_sell_follow_ask_with_floor_wait(
                     aggressive_timer_anchor_fill = None
                     aggressive_next_price_override = floor_float
                     next_price_override = floor_float
-                    _touch_activity()
+                    # 【修复】移除 _touch_activity()，被动撤单不应重置超时
                     continue
             print(
                 f"[MAKER][SELL] 卖一下行 -> 撤单重挂 | old={active_price:.{price_dp}f} new={new_px:.{price_dp}f}"
@@ -2144,7 +2146,7 @@ def maker_sell_follow_ask_with_floor_wait(
             aggressive_timer_anchor_fill = None
             aggressive_next_price_override = new_px if aggressive_mode else None
             next_price_override = new_px
-            _touch_activity()
+            # 【修复】移除 _touch_activity()，被动撤单不应重置超时
             continue
 
         final_states = {"FILLED", "MATCHED", "COMPLETED", "EXECUTED"}

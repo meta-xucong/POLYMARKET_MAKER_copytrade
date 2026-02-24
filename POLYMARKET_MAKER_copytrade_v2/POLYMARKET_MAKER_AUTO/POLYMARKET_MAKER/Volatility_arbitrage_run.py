@@ -4429,6 +4429,33 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     loop_iteration_count = 0
     last_loop_diagnostic_log = time.time()
 
+    # 【修复】添加读取主进程状态文件的逻辑
+    script_dir = Path(__file__).parent.parent.parent  # 项目根目录
+    autorun_status_path = script_dir / "data" / "autorun_status.json"
+    current_schedule_lane = "burst"  # 默认burst
+    last_lane_check = 0.0
+    
+    def _sync_schedule_lane_from_autorun() -> None:
+        """从主进程状态文件同步 schedule_lane"""
+        nonlocal current_schedule_lane, last_lane_check
+        now = time.time()
+        # 每30秒检查一次
+        if now - last_lane_check < 30:
+            return
+        last_lane_check = now
+        try:
+            if autorun_status_path.exists():
+                with open(autorun_status_path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                topic_details = payload.get("topic_details", {})
+                token_info = topic_details.get(str(token_id), {})
+                new_lane = token_info.get("schedule_lane", "burst")
+                if new_lane != current_schedule_lane:
+                    print(f"[SYNC] schedule_lane 变更: {current_schedule_lane} → {new_lane}")
+                    current_schedule_lane = new_lane
+        except Exception:
+            pass  # 读取失败保持当前状态
+    
     print(f"[MAIN_LOOP] 🚀 进入主循环 (use_shared_ws={use_shared_ws})")
     sys.stdout.flush()  # 立即刷新确保日志输出
 
@@ -4445,11 +4472,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
             # 每60秒打印一次主循环运行状态
             if now - last_loop_diagnostic_log >= 60:
-                print(f"[MAIN_LOOP] ✓ 主循环运行中 (iterations={loop_iteration_count}, use_shared_ws={use_shared_ws})")
+                print(f"[MAIN_LOOP] ✓ 主循环运行中 (iterations={loop_iteration_count}, use_shared_ws={use_shared_ws}, lane={current_schedule_lane})")
                 sys.stdout.flush()
                 last_loop_diagnostic_log = now
 
             try:
+                # 【修复】同步 schedule_lane
+                _sync_schedule_lane_from_autorun()
+                
                 if use_shared_ws:
                     _apply_shared_ws_snapshot()
 
