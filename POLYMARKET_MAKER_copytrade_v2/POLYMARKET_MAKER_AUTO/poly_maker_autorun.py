@@ -1611,6 +1611,12 @@ class AutoRunManager:
         slots = getattr(self.config, 'burst_slots', None) or getattr(self.config, 'aggressive_burst_slots', 10)
         return max(0, int(slots))
 
+    def _max_total_task_slots(self) -> int:
+        """总并发硬上限（base + burst）。"""
+        base_limit = max(1, int(self.config.max_concurrent_tasks))
+        burst_limit = self._burst_slots()
+        return max(1, base_limit + burst_limit)
+
     def _running_burst_count(self) -> int:
         count = 0
         for task in self.tasks.values():
@@ -2754,10 +2760,13 @@ class AutoRunManager:
             max_retries = max(0, int(self.config.process_start_retries))
             if task.restart_attempts < max_retries:
                 running = sum(1 for t in self.tasks.values() if t.is_running())
-                if running >= max(1, int(self.config.max_concurrent_tasks)):
+                max_total = self._max_total_task_slots()
+                if running >= max_total:
                     self._enqueue_pending_topic(task.topic_id)
                     task.status = "pending"
-                    task.heartbeat("restart deferred due to max concurrency")
+                    task.heartbeat(
+                        f"restart deferred due to total concurrency cap ({running}/{max_total})"
+                    )
                     return
                 task.restart_attempts += 1
                 task.status = "restarting"
@@ -2907,6 +2916,13 @@ class AutoRunManager:
 
         while checks_remaining > 0:
             running_total = sum(1 for t in self.tasks.values() if t.is_running())
+            max_total = self._max_total_task_slots()
+            if running_total >= max_total:
+                print(
+                    f"[SCHED][CAP] 达到总并发上限: running={running_total}/{max_total} "
+                    f"(base={base_limit}, burst={burst_limit})"
+                )
+                break
             running_burst = self._running_burst_count()
             running_base = max(0, running_total - running_burst)
             
@@ -3586,6 +3602,15 @@ class AutoRunManager:
         return merged
 
     def _start_topic_process(self, topic_id: str) -> bool:
+        running = sum(1 for t in self.tasks.values() if t.is_running())
+        max_total = self._max_total_task_slots()
+        if running >= max_total:
+            print(
+                f"[SCHED][CAP] 拒绝启动 topic={topic_id[:16]}... "
+                f"running={running}/{max_total}"
+            )
+            return False
+
         config_data = self._build_run_config(topic_id)
         cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(topic_id)}.json"
         _dump_json_file(cfg_path, config_data)
@@ -4296,11 +4321,19 @@ class AutoRunManager:
                 skip_stats["not_refillable"] = skip_stats.get("not_refillable", 0) + 1
                 continue
 
-            # 低余额暂停期间产生的 token：暂停状态下不参与回填；恢复后可立即回填
+            # 低余额暂停期间产生的 token：
+            # - 无持仓：暂停状态下不参与回填
+            # - 有持仓：允许回填并走“仅卖出”恢复路径，避免低余额死锁
             if exit_reason == "LOW_BALANCE_PAUSE":
-                if self._buy_paused_due_to_balance:
-                    skip_stats["low_balance_paused"] = skip_stats.get("low_balance_paused", 0) + 1
-                    continue
+                has_position_flag = bool((record.get("exit_data") or {}).get("has_position", False))
+                if self._buy_paused_due_to_balance and not has_position_flag:
+                    # 兜底：若历史记录未标记 has_position，实时检查一次账户持仓
+                    if token_id and self._has_account_position(token_id):
+                        has_position_flag = True
+                        record.setdefault("exit_data", {})["has_position"] = True
+                    else:
+                        skip_stats["low_balance_paused"] = skip_stats.get("low_balance_paused", 0) + 1
+                        continue
                 effective_cooldown_seconds = 0.0
             else:
                 effective_cooldown_seconds = cooldown_seconds
@@ -4581,11 +4614,12 @@ class AutoRunManager:
                             # 【修复】设置 queue_role 以便状态显示
                             detail = self.topic_details.setdefault(topic_id, {})
                             detail["queue_role"] = "deferred_token"
+                            has_position = self._has_account_position(topic_id)
                             self._append_exit_token_record(
                                 topic_id,
                                 "LOW_BALANCE_PAUSE",
                                 exit_data={
-                                    "has_position": False,
+                                    "has_position": has_position,
                                     "deferred_by_low_balance": True,
                                 },
                                 refillable=True,

@@ -179,10 +179,10 @@ except Exception as e:
 print("\n[7/9] 测试语法检查...")
 try:
     import py_compile
-    py_compile.compile('poly_maker_autorun.py', doraise=True)
+    py_compile.compile(str(PROJECT_ROOT / 'poly_maker_autorun.py'), doraise=True)
     print("  [OK] poly_maker_autorun.py 语法正确")
     
-    py_compile.compile('POLYMARKET_MAKER/market_state_checker.py', doraise=True)
+    py_compile.compile(str(MAKER_ROOT / 'market_state_checker.py'), doraise=True)
     print("  [OK] market_state_checker.py 语法正确")
     
 except Exception as e:
