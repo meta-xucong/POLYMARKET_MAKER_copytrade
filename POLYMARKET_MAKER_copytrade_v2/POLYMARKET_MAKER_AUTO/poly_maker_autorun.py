@@ -1461,6 +1461,9 @@ class AutoRunManager:
             if token_id in self._buy_pause_deferred_tokens:
                 continue
             self._buy_pause_deferred_tokens.add(token_id)
+            # 【修复】设置 queue_role 以便状态显示
+            detail = self.topic_details.setdefault(token_id, {})
+            detail["queue_role"] = "deferred_token"
             self._append_exit_token_record(
                 token_id,
                 "LOW_BALANCE_PAUSE",
@@ -4278,6 +4281,9 @@ class AutoRunManager:
                     if defer_new_topics:
                         if topic_id not in self._buy_pause_deferred_tokens:
                             self._buy_pause_deferred_tokens.add(topic_id)
+                            # 【修复】设置 queue_role 以便状态显示
+                            detail = self.topic_details.setdefault(topic_id, {})
+                            detail["queue_role"] = "deferred_token"
                             self._append_exit_token_record(
                                 topic_id,
                                 "LOW_BALANCE_PAUSE",
@@ -4790,6 +4796,9 @@ class AutoRunManager:
             if topic_id in self.pending_topics:
                 continue
             restored_topics.append(topic_id)
+            # 【修复】设置 queue_role 以便状态显示
+            detail = self.topic_details.setdefault(topic_id, {})
+            detail["queue_role"] = "restored_token"
             self._enqueue_pending_topic(topic_id)
 
         for topic_id, info in tasks_snapshot.items():
@@ -4840,6 +4849,9 @@ class AutoRunManager:
             if topic_id in dead_tokens:
                 continue
             # 避免历史残留 burst 队列在重启后直接把额外槽位占满。
+            # 【修复】设置 queue_role 以便状态显示
+            detail = self.topic_details.setdefault(topic_id, {})
+            detail["queue_role"] = "restored_token"
             self._enqueue_pending_topic(topic_id)
             restored_burst_to_base += 1
         if restored_burst_to_base:
