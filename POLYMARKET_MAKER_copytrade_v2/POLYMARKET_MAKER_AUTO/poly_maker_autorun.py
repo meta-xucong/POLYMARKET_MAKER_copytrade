@@ -4321,11 +4321,19 @@ class AutoRunManager:
                 skip_stats["not_refillable"] = skip_stats.get("not_refillable", 0) + 1
                 continue
 
-            # 低余额暂停期间产生的 token：暂停状态下不参与回填；恢复后可立即回填
+            # 低余额暂停期间产生的 token：
+            # - 无持仓：暂停状态下不参与回填
+            # - 有持仓：允许回填并走“仅卖出”恢复路径，避免低余额死锁
             if exit_reason == "LOW_BALANCE_PAUSE":
-                if self._buy_paused_due_to_balance:
-                    skip_stats["low_balance_paused"] = skip_stats.get("low_balance_paused", 0) + 1
-                    continue
+                has_position_flag = bool((record.get("exit_data") or {}).get("has_position", False))
+                if self._buy_paused_due_to_balance and not has_position_flag:
+                    # 兜底：若历史记录未标记 has_position，实时检查一次账户持仓
+                    if token_id and self._has_account_position(token_id):
+                        has_position_flag = True
+                        record.setdefault("exit_data", {})["has_position"] = True
+                    else:
+                        skip_stats["low_balance_paused"] = skip_stats.get("low_balance_paused", 0) + 1
+                        continue
                 effective_cooldown_seconds = 0.0
             else:
                 effective_cooldown_seconds = cooldown_seconds
@@ -4606,11 +4614,12 @@ class AutoRunManager:
                             # 【修复】设置 queue_role 以便状态显示
                             detail = self.topic_details.setdefault(topic_id, {})
                             detail["queue_role"] = "deferred_token"
+                            has_position = self._has_account_position(topic_id)
                             self._append_exit_token_record(
                                 topic_id,
                                 "LOW_BALANCE_PAUSE",
                                 exit_data={
-                                    "has_position": False,
+                                    "has_position": has_position,
                                     "deferred_by_low_balance": True,
                                 },
                                 refillable=True,
