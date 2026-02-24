@@ -1604,12 +1604,26 @@ class AutoRunManager:
 
     def _burst_slots(self) -> int:
         """Burst槽位数：经典模式和激进模式都启用，区别只在进程退出行为"""
-        # 【重构】使用新的burst_slots参数（兼容旧的aggressive_burst_slots）
+        # 【重构】使用新的 burst_slots 参数，同时兼容旧的 aggressive_burst_slots。
         if not self.config.enable_burst_queue:
             return 0
-        # 优先使用新参数，如果不存在则使用旧参数
-        slots = getattr(self.config, 'burst_slots', None) or getattr(self.config, 'aggressive_burst_slots', 10)
-        return max(0, int(slots))
+
+        slots = int(getattr(self.config, "burst_slots", DEFAULT_GLOBAL_CONFIG["burst_slots"]))
+        legacy_slots = int(
+            getattr(
+                self.config,
+                "aggressive_burst_slots",
+                DEFAULT_GLOBAL_CONFIG["aggressive_burst_slots"],
+            )
+        )
+
+        # 兼容旧配置：当未显式设置 burst_slots（仍为默认值）但设置了 aggressive_burst_slots 时，
+        # 应以旧字段为准，避免升级后槽位被错误回退到默认值。
+        default_slots = int(DEFAULT_GLOBAL_CONFIG["burst_slots"])
+        if slots == default_slots and legacy_slots != default_slots:
+            slots = legacy_slots
+
+        return max(0, slots)
 
     def _max_total_task_slots(self) -> int:
         """总并发硬上限（base + burst）。"""
