@@ -154,6 +154,30 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     assert manager.handled_topics.issuperset({"a", "b"})
 
 
+
+
+def test_refresh_topics_preserves_queue_role_for_existing_pending_burst():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic"}})
+    manager = _build_manager(cfg)
+
+    manager.pending_burst_topics = ["a"]
+    manager.topic_details["a"] = {"queue_role": "new_token", "schedule_lane": "burst"}
+    manager.handled_topics.add("a")
+
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "a", "token_id": "a"},
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert manager.pending_burst_topics == ["a"]
+    assert manager.topic_details["a"]["queue_role"] == "new_token"
+    assert manager._queue_role(manager.topic_details.get("a") or {}) == "new_token"
+
 def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mode():
     cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "aggressive_burst_slots": 2}})
     manager = _build_manager(cfg)

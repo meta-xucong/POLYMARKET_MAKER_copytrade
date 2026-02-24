@@ -4553,19 +4553,30 @@ class AutoRunManager:
     def _refresh_topics(self) -> None:
         try:
             self.latest_topics = self._load_copytrade_tokens()
-            # 保留已有的 resume_state（回填恢复状态），只更新 copytrade 数据
-            # 【修复】同时保留 schedule_lane 和 queue_role，用于状态显示
-            old_resume_states: Dict[str, Any] = {}
-            for tid, detail in self.topic_details.items():
-                if detail.get("resume_state") or detail.get("refill_exit_reason") or detail.get("resume_drop_pct") is not None:
-                    old_resume_states[tid] = {
-                        "resume_state": detail.get("resume_state"),
-                        "refill_retry_count": detail.get("refill_retry_count", 0),
-                        "refill_exit_reason": detail.get("refill_exit_reason"),
-                        "resume_drop_pct": detail.get("resume_drop_pct"),
-                        "schedule_lane": detail.get("schedule_lane"),
-                        "queue_role": detail.get("queue_role"),
-                    }
+            # 保留已有运行态覆盖信息（回填状态 + 调度/展示元数据），再覆盖 copytrade 快照。
+            # 否则 pending 队列中的 token 在 refresh 后可能丢失 queue_role，状态日志会出现 unknown。
+            old_runtime_overlays: Dict[str, Any] = {}
+            tracked_topics = (
+                set(self.topic_details.keys())
+                | set(self.pending_topics)
+                | set(self.pending_burst_topics)
+                | set(self.pending_exit_topics)
+                | set(self.tasks.keys())
+            )
+            for tid in tracked_topics:
+                detail = self.topic_details.get(tid) or {}
+                overlay: Dict[str, Any] = {}
+                if "resume_state" in detail:
+                    overlay["resume_state"] = detail.get("resume_state")
+                    overlay["refill_retry_count"] = detail.get("refill_retry_count", 0)
+                    overlay["refill_exit_reason"] = detail.get("refill_exit_reason")
+                    overlay["resume_drop_pct"] = detail.get("resume_drop_pct")
+                if detail.get("schedule_lane"):
+                    overlay["schedule_lane"] = detail.get("schedule_lane")
+                if detail.get("queue_role"):
+                    overlay["queue_role"] = detail.get("queue_role")
+                if overlay:
+                    old_runtime_overlays[tid] = overlay
             self.topic_details = {}
             for item in self.latest_topics:
                 topic_id = _topic_id_from_entry(item)
@@ -4574,17 +4585,17 @@ class AutoRunManager:
                 detail = dict(item)
                 detail.setdefault("topic_id", topic_id)
                 self.topic_details[topic_id] = detail
-            # 恢复之前保存的 resume_state（回填恢复状态）
-            for tid, saved in old_resume_states.items():
+            # 恢复运行态覆盖信息（回填状态 + 调度/展示元数据）
+            for tid, saved in old_runtime_overlays.items():
                 if tid not in self.topic_details:
                     self.topic_details[tid] = {}
-                self.topic_details[tid]["resume_state"] = saved.get("resume_state")
-                self.topic_details[tid]["refill_retry_count"] = saved.get("refill_retry_count", 0)
-                if saved.get("refill_exit_reason"):
-                    self.topic_details[tid]["refill_exit_reason"] = saved["refill_exit_reason"]
-                if saved.get("resume_drop_pct") is not None:
-                    self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
-                # 【修复】恢复 schedule_lane 和 queue_role
+                if "resume_state" in saved:
+                    self.topic_details[tid]["resume_state"] = saved.get("resume_state")
+                    self.topic_details[tid]["refill_retry_count"] = saved.get("refill_retry_count", 0)
+                    if saved.get("refill_exit_reason"):
+                        self.topic_details[tid]["refill_exit_reason"] = saved["refill_exit_reason"]
+                    if saved.get("resume_drop_pct") is not None:
+                        self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
                 if saved.get("schedule_lane"):
                     self.topic_details[tid]["schedule_lane"] = saved["schedule_lane"]
                 if saved.get("queue_role"):
