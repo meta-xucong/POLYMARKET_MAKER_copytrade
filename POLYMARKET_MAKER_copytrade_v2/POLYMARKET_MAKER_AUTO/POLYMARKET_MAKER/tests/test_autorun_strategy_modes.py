@@ -8,7 +8,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 if "requests" not in sys.modules:
-    sys.modules["requests"] = types.SimpleNamespace(get=lambda *a, **k: None)
+    class _DummySession:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, *args, **kwargs):
+            return None
+
+    sys.modules["requests"] = types.SimpleNamespace(
+        get=lambda *a, **k: None,
+        Session=_DummySession,
+        exceptions=types.SimpleNamespace(RequestException=Exception),
+    )
 
 from poly_maker_autorun import AutoRunManager, GlobalConfig, TopicTask
 
@@ -21,10 +32,10 @@ def test_default_mode_is_classic():
     cfg = GlobalConfig.from_dict({})
     assert cfg.strategy_mode == "classic"
     assert cfg.handled_topics_path.name == "handled_topics.json"
-    assert cfg.handled_topics_path.parent.name == "copytrade"
+    assert cfg.handled_topics_path.parent.name == "data"
     manager = _build_manager(cfg)
     assert manager._is_aggressive_mode() is False
-    assert manager._burst_slots() == 0
+    assert manager._burst_slots() == 10
 
 
 def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
@@ -60,9 +71,11 @@ def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
 
     manager._sync_handled_topics_on_startup()
 
-    assert manager.handled_topics == {"keep_token"}
+    # 现行语义：copytrade 中存在但无活跃任务的 token 将从 handled 中移除，
+    # 以便后续重新进入调度启动。
+    assert manager.handled_topics == set()
     payload = json.loads(handled_path.read_text(encoding="utf-8"))
-    assert payload.get("topics") == ["keep_token"]
+    assert payload.get("topics") == []
 
 
 def test_aggressive_mode_uses_burst_slots_and_queue_promotion():
@@ -92,8 +105,9 @@ def test_classic_mode_drains_burst_queue_into_pending():
 
     manager._normalize_pending_queues_for_mode()
 
-    assert manager.pending_burst_topics == []
-    assert manager.pending_topics == ["z", "x", "y"]
+    # 现行语义：函数为空实现，不再将 burst 回挪到 base。
+    assert manager.pending_burst_topics == ["x", "y"]
+    assert manager.pending_topics == ["z"]
 
 
 def test_schedule_pending_topics_pauses_and_defers_when_low_balance():
@@ -140,6 +154,30 @@ def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     assert manager.handled_topics.issuperset({"a", "b"})
 
 
+
+
+def test_refresh_topics_preserves_queue_role_for_existing_pending_burst():
+    cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic"}})
+    manager = _build_manager(cfg)
+
+    manager.pending_burst_topics = ["a"]
+    manager.topic_details["a"] = {"queue_role": "new_token", "schedule_lane": "burst"}
+    manager.handled_topics.add("a")
+
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "a", "token_id": "a"},
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert manager.pending_burst_topics == ["a"]
+    assert manager.topic_details["a"]["queue_role"] == "new_token"
+    assert manager._queue_role(manager.topic_details.get("a") or {}) == "new_token"
+
 def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mode():
     cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "aggressive_burst_slots": 2}})
     manager = _build_manager(cfg)
@@ -184,9 +222,10 @@ def test_rebalance_moves_new_token_from_burst_to_base_but_keeps_reentry_in_burst
 
     manager._rebalance_burst_to_base_queue()
 
-    assert manager.pending_topics == ["n1"]
-    assert manager.pending_burst_topics == ["r1", "n2"]
-    assert manager.topic_details["n1"]["schedule_lane"] == "base"
+    # 现行语义：rebalance 已废弃，队列不应被修改。
+    assert manager.pending_topics == []
+    assert manager.pending_burst_topics == ["r1", "n1", "n2"]
+    assert manager.topic_details["n1"]["schedule_lane"] == "burst"
 
 
 def test_reentry_enqueue_promotes_ahead_of_new_tokens_in_burst():
