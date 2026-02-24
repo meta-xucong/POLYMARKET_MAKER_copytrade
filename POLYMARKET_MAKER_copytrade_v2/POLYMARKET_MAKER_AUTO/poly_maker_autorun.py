@@ -38,6 +38,26 @@ MAKER_ROOT = PROJECT_ROOT / "POLYMARKET_MAKER"
 if str(MAKER_ROOT) not in sys.path:
     sys.path.insert(0, str(MAKER_ROOT))
 
+# =====================
+# 市场状态检测模块（新增）- 必须在 sys.path 修改后导入
+# =====================
+try:
+    from market_state_checker import (
+        MarketStateChecker,
+        MarketClosedCleaner,
+        MarketStatus,
+        MarketState,
+        check_market_state,
+        clean_closed_market,
+        should_refill_token,
+        init_market_state_checker,
+        init_cleaner,
+    )
+    MARKET_STATE_CHECKER_AVAILABLE = True
+except ImportError as e:
+    print(f"[WARNING] market_state_checker 模块导入失败: {e}")
+    MARKET_STATE_CHECKER_AVAILABLE = False
+
 DEFAULT_GLOBAL_CONFIG = {
     "copytrade_poll_sec": 30.0,
     "sell_position_poll_interval_sec": 7200.0,
@@ -1298,6 +1318,29 @@ class AutoRunManager:
         self._buy_pause_last_balance: Optional[float] = None
         self._buy_pause_deferred_tokens: set[str] = set()
         self._total_liquidation = TotalLiquidationManager(self.config, PROJECT_ROOT)
+        
+        # =====================
+        # 市场状态检测器初始化（新增）
+        # =====================
+        self._market_state_checker: Optional[MarketStateChecker] = None
+        self._market_closed_cleaner: Optional[MarketClosedCleaner] = None
+        self._file_io_lock = threading.RLock()  # 文件操作锁（共享给检测器和清理器）
+        
+        if MARKET_STATE_CHECKER_AVAILABLE:
+            try:
+                self._market_state_checker = init_market_state_checker(
+                    file_lock=self._file_io_lock
+                )
+                self._market_closed_cleaner = init_cleaner(
+                    file_lock=self._file_io_lock
+                )
+                print("[INIT] 市场状态检测器已初始化")
+            except Exception as e:
+                print(f"[WARNING] 市场状态检测器初始化失败: {e}")
+                self._market_state_checker = None
+                self._market_closed_cleaner = None
+        else:
+            print("[INIT] 市场状态检测器不可用（模块导入失败）")
 
     def _manual_intervention_path(self) -> Path:
         return self.config.copytrade_sell_signals_path.parent / "manual_intervention_tokens.json"
@@ -3193,6 +3236,41 @@ class AutoRunManager:
         self._shared_ws_wait_timeout_events.pop(topic_id, None)
         self._shared_ws_pending_since.pop(topic_id, None)
 
+    def _get_condition_id_for_token(self, token_id: str) -> Optional[str]:
+        """
+        根据 token_id 获取 condition_id
+        
+        从 topic_details 或 latest_topics 中查找
+        """
+        # 1. 从 topic_details 中查找
+        with self._topic_details_lock:
+            detail = self.topic_details.get(token_id, {})
+            condition_id = (
+                detail.get("condition_id") 
+                or detail.get("conditionId")
+                or detail.get("market_id")
+            )
+            if condition_id:
+                return condition_id
+        
+        # 2. 从 latest_topics 中查找
+        for entry in self.latest_topics:
+            entry_token_id = _topic_id_from_entry(entry)
+            if entry_token_id == token_id:
+                # 【修复】确保 entry 是字典类型才调用 .get()
+                if isinstance(entry, dict):
+                    condition_id = (
+                        entry.get("condition_id")
+                        or entry.get("conditionId")
+                        or entry.get("market_id")
+                    )
+                    if condition_id:
+                        return condition_id
+                # 如果 entry 是字符串或其他类型，无法获取 condition_id
+                break
+        
+        return None
+
     def _poll_aggressive_self_sell_reentry(self) -> None:
         """检测自有账户卖出成交，将token重新加入burst队列。
         
@@ -3291,24 +3369,27 @@ class AutoRunManager:
     ) -> None:
         if not token_id:
             return
-        records = self._load_exit_tokens()
-        if not isinstance(records, list):
-            records = []
-        records.append(
-            {
-                "token_id": token_id,
-                "exit_ts": time.time(),
-                "exit_reason": exit_reason,
-                "exit_data": exit_data or {},
-                "refillable": refillable,
-            }
-        )
-        try:
-            self._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._exit_tokens_path.open("w", encoding="utf-8") as f:
-                json.dump(records, f, ensure_ascii=False, indent=2)
-        except OSError as exc:  # pragma: no cover - 文件系统异常
-            print(f"[WARN] 写入 exit_tokens.json 失败: {exc}")
+        
+        # 【修改】使用文件锁保护，与清理器保持一致
+        with self._file_io_lock:
+            records = self._load_exit_tokens()
+            if not isinstance(records, list):
+                records = []
+            records.append(
+                {
+                    "token_id": token_id,
+                    "exit_ts": time.time(),
+                    "exit_reason": exit_reason,
+                    "exit_data": exit_data or {},
+                    "refillable": refillable,
+                }
+            )
+            try:
+                self._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._exit_tokens_path.open("w", encoding="utf-8") as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
+            except OSError as exc:  # pragma: no cover - 文件系统异常
+                print(f"[WARN] 写入 exit_tokens.json 失败: {exc}")
 
     def _evict_stale_pending_topics(self) -> None:
         if not self.config.enable_pending_soft_eviction:
@@ -3350,19 +3431,64 @@ class AutoRunManager:
             if book_available:
                 continue
 
+            # 【新增】当 Book 返回 404 时，主动查询市场状态，避免误判
+            exit_reason = "NO_DATA_TIMEOUT"
+            refillable = True
+            exit_data_extra = {}
+            
+            if "404" in book_reason and self._market_state_checker:
+                condition_id = self._get_condition_id_for_token(topic_id)
+                if condition_id:
+                    try:
+                        market_state = self._market_state_checker.check_market_state(
+                            condition_id, topic_id, use_cache=False
+                        )
+                        exit_data_extra["market_state"] = market_state.to_dict()
+                        
+                        if market_state.is_permanently_closed:
+                            # 市场已关闭 - 永久退出，不可回填
+                            exit_reason = "MARKET_CLOSED"
+                            refillable = False
+                            print(
+                                f"[PENDING] 市场已关闭，永久移除: {topic_id[:16]}... "
+                                f"status={market_state.status.value}"
+                            )
+                            # 清理文件
+                            if self._market_closed_cleaner:
+                                copytrade_state_path = self.config.copytrade_tokens_path.parent / "copytrade_state.json"
+                                self._market_closed_cleaner.clean_closed_market(
+                                    token_id=topic_id,
+                                    condition_id=condition_id,
+                                    exit_reason=exit_reason,
+                                    copytrade_file=str(self.config.copytrade_tokens_path),
+                                    copytrade_state_file=str(copytrade_state_path) if copytrade_state_path.exists() else None,
+                                    exit_tokens_file=str(self._exit_tokens_path),
+                                )
+                        elif market_state.status == MarketStatus.LOW_LIQUIDITY:
+                            # 低流动性市场 - 正常退出，可回填
+                            exit_reason = "LOW_LIQUIDITY_TIMEOUT"
+                            refillable = True
+                            print(
+                                f"[PENDING] 低流动性市场超时: {topic_id[:16]}... "
+                                f"(bids={market_state.data.get('bids_count', 0)}, "
+                                f"asks={market_state.data.get('asks_count', 0)})"
+                            )
+                    except Exception as e:
+                        print(f"[WARNING] 市场状态检测失败: {topic_id[:16]}..., error={e}")
+
             exit_data = {
                 "pending_age_sec": round(now - first_seen, 1),
                 "cache_age_sec": round(cache_age, 1) if cache_age is not None else None,
                 "ws_confirmed": ws_confirmed,
                 "book_probe_reason": book_reason,
+                **exit_data_extra,
             }
             self._remove_pending_topic(topic_id)
-            # NO_DATA_TIMEOUT 允许回填，但在 _filter_refillable_tokens 中有更严格的次数限制
             self._append_exit_token_record(
                 topic_id,
-                "NO_DATA_TIMEOUT",
+                exit_reason,
                 exit_data=exit_data,
-                refillable=True,
+                refillable=refillable,
             )
             evicted.append(topic_id)
 
@@ -3922,57 +4048,59 @@ class AutoRunManager:
         if not token_id:
             return
 
-        # 1. 从 tokens_from_copytrade.json 移除
-        tokens_path = self.config.copytrade_tokens_path
-        if tokens_path.exists():
-            try:
-                with tokens_path.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
+        # 【修改】使用文件锁保护所有文件操作
+        with self._file_io_lock:
+            # 1. 从 tokens_from_copytrade.json 移除
+            tokens_path = self.config.copytrade_tokens_path
+            if tokens_path.exists():
+                try:
+                    with tokens_path.open("r", encoding="utf-8") as f:
+                        data = json.load(f)
 
-                if isinstance(data, dict) and "tokens" in data:
-                    original_count = len(data["tokens"])
-                    data["tokens"] = [
-                        t for t in data["tokens"]
-                        if _topic_id_from_entry(t) != token_id
-                    ]
-                    removed_count = original_count - len(data["tokens"])
+                    if isinstance(data, dict) and "tokens" in data:
+                        original_count = len(data["tokens"])
+                        data["tokens"] = [
+                            t for t in data["tokens"]
+                            if _topic_id_from_entry(t) != token_id
+                        ]
+                        removed_count = original_count - len(data["tokens"])
 
-                    if removed_count > 0:
-                        data["updated_at"] = time.strftime(
-                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                        )
-                        _atomic_json_write(tokens_path, data)
-                        print(
-                            f"[CLEANUP] 已从 tokens_from_copytrade.json 移除 token={token_id[:20]}..."
-                        )
-            except (json.JSONDecodeError, OSError) as exc:
-                print(f"[CLEANUP] 更新 tokens_from_copytrade.json 失败: {exc}")
+                        if removed_count > 0:
+                            data["updated_at"] = time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                            )
+                            _atomic_json_write(tokens_path, data)
+                            print(
+                                f"[CLEANUP] 已从 tokens_from_copytrade.json 移除 token={token_id[:20]}..."
+                            )
+                except (json.JSONDecodeError, OSError) as exc:
+                    print(f"[CLEANUP] 更新 tokens_from_copytrade.json 失败: {exc}")
 
-        # 2. 从 copytrade_sell_signals.json 移除
-        signals_path = self.config.copytrade_sell_signals_path
-        if signals_path.exists():
-            try:
-                with signals_path.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
+            # 2. 从 copytrade_sell_signals.json 移除
+            signals_path = self.config.copytrade_sell_signals_path
+            if signals_path.exists():
+                try:
+                    with signals_path.open("r", encoding="utf-8") as f:
+                        data = json.load(f)
 
-                if isinstance(data, dict) and "sell_tokens" in data:
-                    original_count = len(data["sell_tokens"])
-                    data["sell_tokens"] = [
-                        t for t in data["sell_tokens"]
-                        if _topic_id_from_entry(t) != token_id
-                    ]
-                    removed_count = original_count - len(data["sell_tokens"])
+                    if isinstance(data, dict) and "sell_tokens" in data:
+                        original_count = len(data["sell_tokens"])
+                        data["sell_tokens"] = [
+                            t for t in data["sell_tokens"]
+                            if _topic_id_from_entry(t) != token_id
+                        ]
+                        removed_count = original_count - len(data["sell_tokens"])
 
-                    if removed_count > 0:
-                        data["updated_at"] = time.strftime(
-                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                        )
-                        _atomic_json_write(signals_path, data)
-                        print(
-                            f"[CLEANUP] 已从 copytrade_sell_signals.json 移除 token={token_id[:20]}..."
-                        )
-            except (json.JSONDecodeError, OSError) as exc:
-                print(f"[CLEANUP] 更新 copytrade_sell_signals.json 失败: {exc}")
+                        if removed_count > 0:
+                            data["updated_at"] = time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                            )
+                            _atomic_json_write(signals_path, data)
+                            print(
+                                f"[CLEANUP] 已从 copytrade_sell_signals.json 移除 token={token_id[:20]}..."
+                            )
+                except (json.JSONDecodeError, OSError) as exc:
+                    print(f"[CLEANUP] 更新 copytrade_sell_signals.json 失败: {exc}")
 
         # 3. 从内存队列中移除
         if token_id in self.pending_topics or token_id in self.pending_burst_topics:
@@ -4007,21 +4135,23 @@ class AutoRunManager:
         Returns:
             退出token记录列表
         """
-        if not self._exit_tokens_path.exists():
-            if self._refill_debug:
-                print(f"[REFILL][DEBUG] exit_tokens.json 不存在: {self._exit_tokens_path}")
-            return []
-        try:
-            with self._exit_tokens_path.open("r", encoding="utf-8") as f:
-                records = json.load(f)
-            if not isinstance(records, list):
+        # 【修改】使用文件锁保护读操作
+        with self._file_io_lock:
+            if not self._exit_tokens_path.exists():
+                if self._refill_debug:
+                    print(f"[REFILL][DEBUG] exit_tokens.json 不存在: {self._exit_tokens_path}")
                 return []
-            if self._refill_debug:
-                print(f"[REFILL][DEBUG] 读取 exit_tokens 记录数: {len(records)}")
-            return records
-        except (json.JSONDecodeError, OSError) as exc:
-            print(f"[REFILL] 读取退出token记录失败: {exc}")
-            return []
+            try:
+                with self._exit_tokens_path.open("r", encoding="utf-8") as f:
+                    records = json.load(f)
+                if not isinstance(records, list):
+                    return []
+                if self._refill_debug:
+                    print(f"[REFILL][DEBUG] 读取 exit_tokens 记录数: {len(records)}")
+                return records
+            except (json.JSONDecodeError, OSError) as exc:
+                print(f"[REFILL] 读取退出token记录失败: {exc}")
+                return []
 
     def _cleanup_closed_market_tokens(self) -> None:
         """
@@ -4109,9 +4239,13 @@ class AutoRunManager:
         Returns:
             可回填的token记录列表（按优先级排序）
         """
-        # 不可重试的退出原因
+        # 不可重试的退出原因（永久关闭）
         NON_RETRYABLE_REASONS = {
             "MARKET_CLOSED",
+            "MARKET_RESOLVED",
+            "MARKET_ARCHIVED",
+            "MARKET_NOT_FOUND",
+            "MARKET_CLOSED_ON_REFILL",
             "USER_STOPPED",
             "DEADLINE_REACHED",
         }
@@ -4209,6 +4343,47 @@ class AutoRunManager:
             if token_id in self._refilled_tokens:
                 skip_stats["recent_refilled"] = skip_stats.get("recent_refilled", 0) + 1
                 continue
+
+            # 【新增】对于 NO_DATA_TIMEOUT/LOW_LIQUIDITY_TIMEOUT，回填前重新验证市场状态
+            if exit_reason in ("NO_DATA_TIMEOUT", "LOW_LIQUIDITY_TIMEOUT", "WS_TIMEOUT"):
+                if self._market_state_checker:
+                    condition_id = self._get_condition_id_for_token(token_id)
+                    if condition_id:
+                        try:
+                            market_state = self._market_state_checker.check_market_state(
+                                condition_id, token_id, use_cache=False
+                            )
+                            
+                            if market_state.is_permanently_closed:
+                                # 市场已关闭，拒绝回填并更新记录
+                                print(
+                                    f"[REFILL] 拒绝回填（市场已关闭）: {token_id[:16]}... "
+                                    f"status={market_state.status.value}"
+                                )
+                                record["refillable"] = False
+                                record["market_closed_on_refill_check"] = True
+                                record["market_status"] = market_state.status.value
+                                skip_stats["market_closed_on_refill"] = skip_stats.get("market_closed_on_refill", 0) + 1
+                                
+                                # 清理文件
+                                if self._market_closed_cleaner:
+                                    copytrade_state_path = self.config.copytrade_tokens_path.parent / "copytrade_state.json"
+                                    self._market_closed_cleaner.clean_closed_market(
+                                        token_id=token_id,
+                                        condition_id=condition_id,
+                                        exit_reason="MARKET_CLOSED_ON_REFILL",
+                                        copytrade_file=str(self.config.copytrade_tokens_path),
+                                        copytrade_state_file=str(copytrade_state_path) if copytrade_state_path.exists() else None,
+                                        exit_tokens_file=str(self._exit_tokens_path),
+                                    )
+                                continue
+                            else:
+                                print(
+                                    f"[REFILL] 允许回填: {token_id[:16]}... "
+                                    f"status={market_state.status.value}"
+                                )
+                        except Exception as e:
+                            print(f"[WARNING] 回填前市场状态检测失败: {token_id[:16]}..., error={e}")
 
             refillable.append(record)
 
