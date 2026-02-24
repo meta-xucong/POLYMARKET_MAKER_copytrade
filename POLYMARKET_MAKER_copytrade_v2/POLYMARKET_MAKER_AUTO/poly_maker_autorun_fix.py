@@ -1,11 +1,12 @@
-    def _rebalance_burst_to_base_queue(self) -> None:
-        """【已废弃】在新 Burst/Base 隔离逻辑下，不再将 pending burst token 移到 base。
-        
-        原因：新逻辑通过降级运行中的 burst token 来释放槽位，
-        保持 pending burst token 在高优先级队列中等待。
-        """
-        # 【修复】不再执行回挪，保持 pending_burst_topics 不变
-        # 让 _schedule_pending_topics 中的优先级逻辑决定启动顺序
-        pass
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Deprecated helper placeholder.
 
-    def _enqueue_burst_topic(self, topic_id: str, *, promote: bool = False) -> None:
+该文件在历史修复中被误提交为不完整代码片段，
+会导致语法检查失败。当前保留为占位模块，避免误导性导入和编译错误。
+
+真实逻辑已在 `poly_maker_autorun.py` 的 `AutoRunManager` 中实现。
+"""
+
+__all__ = []
