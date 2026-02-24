@@ -1611,6 +1611,12 @@ class AutoRunManager:
         slots = getattr(self.config, 'burst_slots', None) or getattr(self.config, 'aggressive_burst_slots', 10)
         return max(0, int(slots))
 
+    def _max_total_task_slots(self) -> int:
+        """总并发硬上限（base + burst）。"""
+        base_limit = max(1, int(self.config.max_concurrent_tasks))
+        burst_limit = self._burst_slots()
+        return max(1, base_limit + burst_limit)
+
     def _running_burst_count(self) -> int:
         count = 0
         for task in self.tasks.values():
@@ -2754,10 +2760,13 @@ class AutoRunManager:
             max_retries = max(0, int(self.config.process_start_retries))
             if task.restart_attempts < max_retries:
                 running = sum(1 for t in self.tasks.values() if t.is_running())
-                if running >= max(1, int(self.config.max_concurrent_tasks)):
+                max_total = self._max_total_task_slots()
+                if running >= max_total:
                     self._enqueue_pending_topic(task.topic_id)
                     task.status = "pending"
-                    task.heartbeat("restart deferred due to max concurrency")
+                    task.heartbeat(
+                        f"restart deferred due to total concurrency cap ({running}/{max_total})"
+                    )
                     return
                 task.restart_attempts += 1
                 task.status = "restarting"
@@ -2907,6 +2916,13 @@ class AutoRunManager:
 
         while checks_remaining > 0:
             running_total = sum(1 for t in self.tasks.values() if t.is_running())
+            max_total = self._max_total_task_slots()
+            if running_total >= max_total:
+                print(
+                    f"[SCHED][CAP] 达到总并发上限: running={running_total}/{max_total} "
+                    f"(base={base_limit}, burst={burst_limit})"
+                )
+                break
             running_burst = self._running_burst_count()
             running_base = max(0, running_total - running_burst)
             
@@ -3586,6 +3602,15 @@ class AutoRunManager:
         return merged
 
     def _start_topic_process(self, topic_id: str) -> bool:
+        running = sum(1 for t in self.tasks.values() if t.is_running())
+        max_total = self._max_total_task_slots()
+        if running >= max_total:
+            print(
+                f"[SCHED][CAP] 拒绝启动 topic={topic_id[:16]}... "
+                f"running={running}/{max_total}"
+            )
+            return False
+
         config_data = self._build_run_config(topic_id)
         cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(topic_id)}.json"
         _dump_json_file(cfg_path, config_data)

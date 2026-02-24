@@ -175,7 +175,7 @@ try:
     # 无法真正实例化 AutoRunManager（需要太多依赖），但我们可以检查语法
     # 通过尝试编译来验证
     import py_compile
-    py_compile.compile('poly_maker_autorun.py', doraise=True)
+    py_compile.compile(str(PROJECT_ROOT / 'poly_maker_autorun.py'), doraise=True)
     print("  [OK] poly_maker_autorun.py 语法正确")
     
     # 检查关键方法存在
