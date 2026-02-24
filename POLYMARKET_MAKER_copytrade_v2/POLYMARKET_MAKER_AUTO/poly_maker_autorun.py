@@ -3158,6 +3158,10 @@ class AutoRunManager:
         else:
             self.pending_burst_topics.append(topic_id)
         self._pending_first_seen.setdefault(topic_id, time.time())
+        # 【优化】为没有角色的token设置默认角色，便于日志识别
+        detail = self.topic_details.setdefault(topic_id, {})
+        if not detail.get("queue_role"):
+            detail["queue_role"] = "burst_candidate"
 
     def _remove_burst_topic(self, topic_id: str) -> None:
         if topic_id in self.pending_burst_topics:
