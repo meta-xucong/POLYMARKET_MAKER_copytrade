@@ -114,8 +114,67 @@ def test_sync_startup_skips_destructive_changes_when_position_snapshot_unavailab
     manager._sync_handled_topics_on_startup()
 
     assert manager.handled_topics == {"keep_token"}
+    assert manager._startup_sync_retry_needed is True
+    assert manager._next_startup_sync_retry_at > 0
     payload = json.loads(handled_path.read_text(encoding="utf-8"))
     assert payload.get("topics") == ["keep_token"]
+
+
+def test_refresh_topics_retries_startup_sync_and_purges_runtime_state(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": ["keep_token"]}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps({"updated_at": "", "tokens": [{"token_id": "keep_token"}]}),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps({"updated_at": "", "sell_tokens": []}),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager.topic_details["keep_token"] = {"resume_state": {"has_position": False}}
+    manager._pending_first_seen["keep_token"] = 1.0
+    manager._shared_ws_wait_failures["keep_token"] = 1
+    manager._clob_book_probe_cache["keep_token"] = {"bid": 0.1}
+    manager._position_snapshot_cache["keep_token"] = {"has_position": False}
+
+    manager._refresh_sell_position_snapshot = lambda: ({}, "api_unavailable")  # type: ignore[assignment]
+    manager._sync_handled_topics_on_startup()
+    assert manager._startup_sync_retry_needed is True
+
+    manager._refresh_sell_position_snapshot = lambda: ({}, "ok")  # type: ignore[assignment]
+    manager._next_startup_sync_retry_at = 0.0
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert manager._startup_sync_retry_needed is False
+    assert "keep_token" not in manager.topic_details
+    assert "keep_token" not in manager._pending_first_seen
+    assert "keep_token" not in manager._shared_ws_wait_failures
+    assert "keep_token" not in manager._clob_book_probe_cache
+    assert "keep_token" not in manager._position_snapshot_cache
 
 
 def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
