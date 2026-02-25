@@ -1301,7 +1301,7 @@ class AutoRunManager:
         self._handled_sell_signals: set[str] = set()
         self._position_snapshot_cache: Dict[str, Dict[str, Any]] = {}
         self._exit_cleanup_retry_counts: Dict[str, int] = {}
-        self._startup_sync_retry_needed: bool = False
+        self._startup_sync_retry_needed: bool = True
         self._next_startup_sync_retry_at: float = 0.0
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
@@ -3909,11 +3909,7 @@ class AutoRunManager:
             print("[INIT] 尚无历史处理话题记录")
 
     def _sync_handled_topics_on_startup(self) -> None:
-        """启动时将 handled_topics 与当前 copytrade 数据做一次同步裁剪。
-        
-        【修复】如果 token 在 copytrade 中、在 handled_topics 中，但没有运行中的任务，
-        则将其从 handled_topics 移除，这样它会被当作新token启动管理。
-        """
+        """启动全量对账：SELL 优先，其次按持仓分流，最后清理无持仓残留。"""
         tokens_path = self.config.copytrade_tokens_path
         signals_path = self.config.copytrade_sell_signals_path
         if not tokens_path.exists() and not signals_path.exists():
@@ -3933,78 +3929,94 @@ class AutoRunManager:
             sell_signals = self._load_copytrade_sell_signals()
         except Exception as exc:
             print(f"[HANDLED][WARN] startup sync skipped due to copytrade read error: {exc}")
+            self._startup_sync_retry_needed = True
+            self._next_startup_sync_retry_at = time.time() + max(
+                30.0, float(self.config.copytrade_poll_sec)
+            )
             return
         copytrade_topics.update(sell_signals.keys())
-        
-        # 构建正在运行或等待中的任务集合
-        active_tasks = set(self.tasks.keys()) | set(self.pending_topics) | set(self.pending_burst_topics) | set(self.pending_exit_topics)
-        
-        # 【关键修复】找出在 copytrade 中、在 handled 中，但没有活跃任务的 token
-        # 这些token需要重新启动
-        inactive_in_copytrade = (self.handled_topics & copytrade_topics) - active_tasks
-        inactive_for_startup = set(inactive_in_copytrade)
-        
-        # 【修复】移除已不在 copytrade 中且无活跃任务的 stale 记录
-        to_reactivate: set[str] = set()
-        to_cleanup: set[str] = set()
-        to_liquidate: set[str] = set()
-        if inactive_for_startup:
-            pos_snapshot, pos_info = self._refresh_sell_position_snapshot()
-            if pos_info != "ok":
-                print(
-                    "[HANDLED][WARN] startup position snapshot unavailable, skip inactive split: "
-                    f"info={pos_info} count={len(inactive_for_startup)}"
-                )
-                # Keep a lightweight retry marker so refresh loop can re-run startup sync.
-                self._startup_sync_retry_needed = True
-                self._next_startup_sync_retry_at = time.time() + max(
-                    30.0, float(self.config.copytrade_poll_sec)
-                )
-            else:
-                self._startup_sync_retry_needed = False
-                self._next_startup_sync_retry_at = 0.0
-                tokens_with_sell_signal = set(sell_signals.keys())
-                for token_id in inactive_for_startup:
-                    pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
-                    has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
-                    has_sell_signal = token_id in tokens_with_sell_signal
-                    if has_sell_signal and has_position:
-                        to_liquidate.add(token_id)
-                    elif has_position:
-                        to_reactivate.add(token_id)
-                    else:
-                        to_cleanup.add(token_id)
 
-                for token_id in sorted(to_liquidate):
-                    self._trigger_sell_exit(token_id, task=None)
-
-                for token_id in sorted(to_cleanup):
-                    self._remove_token_from_copytrade_files(token_id)
-                    self._purge_token_runtime_state(token_id)
-                    self._remove_from_handled_topics(token_id)
-
-                if to_reactivate:
-                    self.handled_topics -= to_reactivate
-
-        stale_topics = self.handled_topics - copytrade_topics - active_tasks
-        if stale_topics:
-            self.handled_topics -= stale_topics
-
-        if not inactive_for_startup:
+        active_tasks = (
+            set(self.tasks.keys())
+            | set(self.pending_topics)
+            | set(self.pending_burst_topics)
+            | set(self.pending_exit_topics)
+        )
+        to_reconcile = copytrade_topics - active_tasks
+        if not to_reconcile:
             self._startup_sync_retry_needed = False
             self._next_startup_sync_retry_at = 0.0
-            
-        # 如果 handled_topics 被修改，写回文件
-        if to_reactivate or to_cleanup or to_liquidate or stale_topics:
-            write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+            return
+
+        pos_snapshot, pos_info = self._refresh_sell_position_snapshot()
+        if pos_info != "ok":
             print(
-                "[HANDLED] 启动同步完成: "
-                f"total={len(self.handled_topics)} "
-                f"reactivated={len(to_reactivate)} "
-                f"cleaned={len(to_cleanup)} "
-                f"liquidating={len(to_liquidate)} "
-                f"stale_removed={len(stale_topics)}"
+                "[HANDLED][WARN] startup position snapshot unavailable, defer full reconcile: "
+                f"info={pos_info} count={len(to_reconcile)}"
             )
+            self._startup_sync_retry_needed = True
+            self._next_startup_sync_retry_at = time.time() + max(
+                30.0, float(self.config.copytrade_poll_sec)
+            )
+            return
+
+        tokens_with_sell_signal = set(sell_signals.keys())
+        to_liquidate: set[str] = set()
+        to_reactivate: set[str] = set()
+        to_cleanup: set[str] = set()
+
+        for token_id in sorted(to_reconcile):
+            pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
+            has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+            has_sell_signal = token_id in tokens_with_sell_signal
+            if has_sell_signal and has_position:
+                to_liquidate.add(token_id)
+            elif has_position:
+                to_reactivate.add(token_id)
+            else:
+                to_cleanup.add(token_id)
+
+        for token_id in sorted(to_liquidate):
+            self._trigger_sell_exit(token_id, task=None)
+
+        for token_id in sorted(to_reactivate):
+            if token_id in self.pending_burst_topics:
+                self._remove_pending_topic(token_id)
+            if token_id not in self.pending_topics:
+                detail = self.topic_details.setdefault(token_id, {})
+                detail["queue_role"] = "startup_reconcile_position"
+                detail["schedule_lane"] = "base"
+                self._enqueue_pending_topic(token_id)
+
+        for token_id in sorted(to_cleanup):
+            self._remove_token_from_copytrade_files(token_id)
+            self._purge_token_runtime_state(token_id)
+            self._remove_from_handled_topics(token_id)
+
+        keep_handled = to_reactivate | to_liquidate
+        stale_topics = self.handled_topics - copytrade_topics - active_tasks
+        changed = False
+        if keep_handled:
+            before = len(self.handled_topics)
+            self.handled_topics.update(keep_handled)
+            changed = changed or (len(self.handled_topics) != before)
+        if stale_topics:
+            self.handled_topics -= stale_topics
+            changed = True
+        if changed:
+            write_handled_topics(self.config.handled_topics_path, self.handled_topics)
+
+        self._startup_sync_retry_needed = False
+        self._next_startup_sync_retry_at = 0.0
+        print(
+            "[HANDLED] 启动全量对账完成: "
+            f"total={len(self.handled_topics)} "
+            f"reconciled={len(to_reconcile)} "
+            f"reactivated={len(to_reactivate)} "
+            f"liquidating={len(to_liquidate)} "
+            f"cleaned={len(to_cleanup)} "
+            f"stale_removed={len(stale_topics)}"
+        )
 
     def _update_handled_topics(self, new_topics: List[str]) -> None:
         if not new_topics:
@@ -4703,8 +4715,12 @@ class AutoRunManager:
 
     def _refresh_topics(self) -> None:
         try:
-            if self._startup_sync_retry_needed and time.time() >= self._next_startup_sync_retry_at:
-                self._sync_handled_topics_on_startup()
+            if self._startup_sync_retry_needed:
+                if time.time() >= self._next_startup_sync_retry_at:
+                    self._sync_handled_topics_on_startup()
+                if self._startup_sync_retry_needed:
+                    print("[HANDLED][INFO] startup reconcile pending, skip normal refresh this round")
+                    return
             self.latest_topics = self._load_copytrade_tokens()
             # 保留已有运行态覆盖信息（回填状态 + 调度/展示元数据），再覆盖 copytrade 快照。
             # 否则 pending 队列中的 token 在 refresh 后可能丢失 queue_role，状态日志会出现 unknown。
@@ -4825,7 +4841,8 @@ class AutoRunManager:
         if not path.exists():
             print(f"[WARN] copytrade token 文件不存在：{path}")
             return []
-        payload = _load_json_file(path)
+        with self._file_io_lock:
+            payload = _load_json_file(path)
         raw_tokens = payload.get("tokens")
         if not isinstance(raw_tokens, list):
             print(f"[WARN] copytrade token 文件格式异常：{path}")
@@ -4853,7 +4870,8 @@ class AutoRunManager:
         path = self.config.copytrade_sell_signals_path
         if not path.exists():
             return {}
-        payload = _load_json_file(path)
+        with self._file_io_lock:
+            payload = _load_json_file(path)
         raw_tokens = payload.get("sell_tokens")
         if not isinstance(raw_tokens, list):
             print(f"[WARN] copytrade sell_signal 文件格式异常：{path}")
@@ -4890,7 +4908,8 @@ class AutoRunManager:
         path = self.config.copytrade_blacklist_path
         if not path.exists():
             return set()
-        payload = _load_json_file(path)
+        with self._file_io_lock:
+            payload = _load_json_file(path)
         rows = payload.get("tokens") if isinstance(payload, dict) else []
         if not isinstance(rows, list):
             print(f"[WARN] copytrade blacklist 文件格式异常：{path}")
