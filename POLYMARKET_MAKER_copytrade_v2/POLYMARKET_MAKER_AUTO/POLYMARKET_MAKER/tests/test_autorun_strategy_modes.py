@@ -223,6 +223,90 @@ def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
     assert captured == [("t1", None)]
 
 
+def test_startup_full_reconcile_cleans_copytrade_token_when_handled_missing(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": []}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps({"updated_at": "", "tokens": [{"token_id": "ghost_token"}]}),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps({"updated_at": "", "sell_tokens": []}),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({}, "ok")  # type: ignore[assignment]
+
+    manager._sync_handled_topics_on_startup()
+
+    payload = json.loads(tokens_path.read_text(encoding="utf-8"))
+    token_ids = [item.get("token_id") for item in payload.get("tokens", []) if isinstance(item, dict)]
+    assert "ghost_token" not in token_ids
+    assert "ghost_token" not in manager.pending_topics
+    assert "ghost_token" not in manager.pending_burst_topics
+    assert manager._startup_sync_retry_needed is False
+
+
+def test_startup_full_reconcile_moves_position_token_to_base_pending(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": []}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps({"updated_at": "", "tokens": [{"token_id": "hold_token"}]}),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps({"updated_at": "", "sell_tokens": []}),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({"hold_token": 1.2}, "ok")  # type: ignore[assignment]
+
+    manager._sync_handled_topics_on_startup()
+
+    assert "hold_token" in manager.pending_topics
+    assert "hold_token" not in manager.pending_burst_topics
+    detail = manager.topic_details.get("hold_token") or {}
+    assert detail.get("schedule_lane") == "base"
+    assert detail.get("queue_role") == "startup_reconcile_position"
+    assert manager._startup_sync_retry_needed is False
+
+
 def test_aggressive_mode_uses_burst_slots_and_queue_promotion():
     cfg = GlobalConfig.from_dict(
         {
@@ -277,6 +361,8 @@ def test_schedule_pending_topics_pauses_and_defers_when_low_balance():
 def test_refresh_topics_defers_new_topics_when_low_balance_pause_active():
     cfg = GlobalConfig.from_dict({"scheduler": {"buy_pause_min_free_balance": 20}})
     manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager._next_startup_sync_retry_at = 0.0
 
     manager._is_buy_paused_by_balance = lambda: True  # type: ignore[assignment]
     manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
@@ -326,6 +412,8 @@ def test_refresh_topics_preserves_queue_role_for_existing_pending_burst():
 def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mode():
     cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "aggressive_burst_slots": 2}})
     manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager._next_startup_sync_retry_at = 0.0
 
     manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
     manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
