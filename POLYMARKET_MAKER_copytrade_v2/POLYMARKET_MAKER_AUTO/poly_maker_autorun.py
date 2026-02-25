@@ -1301,6 +1301,8 @@ class AutoRunManager:
         self._handled_sell_signals: set[str] = set()
         self._position_snapshot_cache: Dict[str, Dict[str, Any]] = {}
         self._exit_cleanup_retry_counts: Dict[str, int] = {}
+        self._startup_sync_retry_needed: bool = False
+        self._next_startup_sync_retry_at: float = 0.0
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
         self._position_address_warned: bool = False
@@ -3915,6 +3917,8 @@ class AutoRunManager:
         tokens_path = self.config.copytrade_tokens_path
         signals_path = self.config.copytrade_sell_signals_path
         if not tokens_path.exists() and not signals_path.exists():
+            self._startup_sync_retry_needed = False
+            self._next_startup_sync_retry_at = 0.0
             return
 
         try:
@@ -3951,7 +3955,14 @@ class AutoRunManager:
                     "[HANDLED][WARN] startup position snapshot unavailable, skip inactive split: "
                     f"info={pos_info} count={len(inactive_for_startup)}"
                 )
+                # Keep a lightweight retry marker so refresh loop can re-run startup sync.
+                self._startup_sync_retry_needed = True
+                self._next_startup_sync_retry_at = time.time() + max(
+                    30.0, float(self.config.copytrade_poll_sec)
+                )
             else:
+                self._startup_sync_retry_needed = False
+                self._next_startup_sync_retry_at = 0.0
                 tokens_with_sell_signal = set(sell_signals.keys())
                 for token_id in inactive_for_startup:
                     pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
@@ -3969,6 +3980,7 @@ class AutoRunManager:
 
                 for token_id in sorted(to_cleanup):
                     self._remove_token_from_copytrade_files(token_id)
+                    self._purge_token_runtime_state(token_id)
                     self._remove_from_handled_topics(token_id)
 
                 if to_reactivate:
@@ -3977,6 +3989,10 @@ class AutoRunManager:
         stale_topics = self.handled_topics - copytrade_topics - active_tasks
         if stale_topics:
             self.handled_topics -= stale_topics
+
+        if not inactive_for_startup:
+            self._startup_sync_retry_needed = False
+            self._next_startup_sync_retry_at = 0.0
             
         # 如果 handled_topics 被修改，写回文件
         if to_reactivate or to_cleanup or to_liquidate or stale_topics:
@@ -4009,6 +4025,27 @@ class AutoRunManager:
             self.handled_topics.discard(token_id)
             write_handled_topics(self.config.handled_topics_path, self.handled_topics)
             print(f"[HANDLED] 已从 handled_topics 移除 token={token_id[:16]}...（允许后续重新交易）")
+
+    def _purge_token_runtime_state(self, token_id: str) -> None:
+        if not token_id:
+            return
+        self.topic_details.pop(token_id, None)
+        self._pending_first_seen.pop(token_id, None)
+        self._shared_ws_wait_failures.pop(token_id, None)
+        self._shared_ws_wait_timeout_events.pop(token_id, None)
+        self._shared_ws_paused_until.pop(token_id, None)
+        self._shared_ws_pending_since.pop(token_id, None)
+        self._clob_book_probe_cache.pop(token_id, None)
+        self._position_snapshot_cache.pop(token_id, None)
+        self._refilled_tokens.discard(token_id)
+        self._refill_retry_counts.pop(token_id, None)
+        self._completed_exit_cleanup_tokens.discard(token_id)
+        self._exit_cleanup_retry_counts.pop(token_id, None)
+        self._handled_sell_signals.discard(token_id)
+        self._seen_self_sell_tokens.discard(token_id)
+        self._clear_reentry_eligible_token(token_id, reason="runtime_purge")
+        with self._ws_cache_lock:
+            self._ws_cache.pop(token_id, None)
 
     # ========== 命令处理 ==========
     def enqueue_command(self, command: str) -> None:
@@ -4666,6 +4703,8 @@ class AutoRunManager:
 
     def _refresh_topics(self) -> None:
         try:
+            if self._startup_sync_retry_needed and time.time() >= self._next_startup_sync_retry_at:
+                self._sync_handled_topics_on_startup()
             self.latest_topics = self._load_copytrade_tokens()
             # 保留已有运行态覆盖信息（回填状态 + 调度/展示元数据），再覆盖 copytrade 快照。
             # 否则 pending 队列中的 token 在 refresh 后可能丢失 queue_role，状态日志会出现 unknown。
