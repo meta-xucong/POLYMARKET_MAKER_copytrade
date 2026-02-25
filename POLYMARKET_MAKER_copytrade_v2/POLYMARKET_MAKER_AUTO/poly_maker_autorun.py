@@ -2095,7 +2095,26 @@ class AutoRunManager:
         if not token_id:
             return
         self._reentry_eligible_tokens.add(token_id)
-        self._reentry_eligible_reasons[token_id] = source
+        src = str(source or "").strip().upper() or "UNKNOWN"
+        self._reentry_eligible_reasons[token_id] = src
+        print(
+            "[AGGRESSIVE][REENTRY] 标记可回补 token="
+            f"{token_id} source={src}"
+        )
+
+    def _clear_reentry_eligible_token(self, token_id: str, *, reason: str) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        had_token = token_id in self._reentry_eligible_tokens
+        src = self._reentry_eligible_reasons.pop(token_id, "unknown")
+        self._reentry_eligible_tokens.discard(token_id)
+        if had_token or src != "unknown":
+            clear_reason = str(reason or "").strip() or "unspecified"
+            print(
+                "[AGGRESSIVE][REENTRY] 清理回补标记 token="
+                f"{token_id} source={src} reason={clear_reason}"
+            )
 
     def _refresh_ws_cache_after_reconnect(self, connect_count: int) -> None:
         now = time.time()
@@ -3415,8 +3434,7 @@ class AutoRunManager:
             self._enqueue_burst_topic(token_id, promote=promote)
             self._seen_self_sell_trade_keys.add(trade_key)
             self._seen_self_sell_tokens.add(token_id)
-            reentry_source = self._reentry_eligible_reasons.pop(token_id, "unknown")
-            self._reentry_eligible_tokens.discard(token_id)
+            reentry_source = self._reentry_eligible_reasons.get(token_id, "unknown")
             processed += 1
             print(
                 "[AGGRESSIVE][REENTRY] 检测到自有账户卖出成交，已加入burst队列: "
@@ -3808,6 +3826,7 @@ class AutoRunManager:
         if topic_id in self.topic_details:
             self.topic_details[topic_id].pop("resume_state", None)
             self.topic_details[topic_id].pop("refill_retry_count", None)
+        self._clear_reentry_eligible_token(topic_id, reason="maker_started")
         print(f"[START] topic={topic_id} pid={proc.pid} log={log_path}")
         return True
 
@@ -4971,8 +4990,7 @@ class AutoRunManager:
             self._trigger_sell_exit(token_id, task)
 
     def _trigger_sell_exit(self, token_id: str, task: Optional[TopicTask]) -> None:
-        self._reentry_eligible_tokens.discard(token_id)
-        self._reentry_eligible_reasons.pop(token_id, None)
+        self._clear_reentry_eligible_token(token_id, reason="sell_exit_triggered")
         self._update_sell_signal_event(token_id, status="processing")
         if token_id in self.pending_topics:
             self._remove_pending_topic(token_id)
