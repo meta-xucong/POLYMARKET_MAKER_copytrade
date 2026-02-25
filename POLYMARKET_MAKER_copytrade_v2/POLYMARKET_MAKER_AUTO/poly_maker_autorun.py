@@ -1311,6 +1311,14 @@ class AutoRunManager:
         # WS 健康分层清理状态
         self._ws_recent_recovery_ts: Dict[str, float] = {}
         self._ws_prev_stale_state: Dict[str, bool] = {}
+        self._ws_reconnect_reason_counts: Dict[str, int] = {
+            "closed": 0,
+            "error": 0,
+            "silence": 0,
+        }
+        self._ws_last_reconnect_reason: Optional[str] = None
+        self._reentry_eligible_tokens: set[str] = set()
+        self._reentry_eligible_reasons: Dict[str, str] = {}
         # 日志清理相关（每天清理7天前的日志）
         self._next_log_cleanup: float = 0.0
         self._log_cleanup_interval_sec: float = 3600.0  # 每小时检查一次
@@ -2056,12 +2064,38 @@ class AutoRunManager:
         return None
 
     def _on_ws_state(self, state: str, info: Dict[str, Any]) -> None:
+        if state in self._ws_reconnect_reason_counts:
+            self._ws_reconnect_reason_counts[state] = (
+                int(self._ws_reconnect_reason_counts.get(state, 0)) + 1
+            )
+            self._ws_last_reconnect_reason = state
+            return
         if state != "open":
             return
         connect_count = int(info.get("connect_count", 0) or 0)
         if connect_count <= 1:
             return
         self._refresh_ws_cache_after_reconnect(connect_count)
+
+    def _is_reentry_eligible_exit(
+        self,
+        exit_reason: str,
+        exit_data: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        reason = str(exit_reason or "").strip().upper()
+        data = exit_data or {}
+        if reason == "SELL_ABANDONED":
+            return True
+        if reason == "LOW_BALANCE_PAUSE":
+            return bool(data.get("has_position"))
+        return False
+
+    def _mark_reentry_eligible_token(self, token_id: str, *, source: str) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        self._reentry_eligible_tokens.add(token_id)
+        self._reentry_eligible_reasons[token_id] = source
 
     def _refresh_ws_cache_after_reconnect(self, connect_count: int) -> None:
         now = time.time()
@@ -3370,6 +3404,9 @@ class AutoRunManager:
             if token_id in self.pending_burst_topics:
                 self._seen_self_sell_trade_keys.add(trade_key)
                 continue
+            if token_id not in self._reentry_eligible_tokens:
+                self._seen_self_sell_trade_keys.add(trade_key)
+                continue
 
             # reentry token 在 burst 等待队列中始终优先于 new token
             promote = True
@@ -3378,10 +3415,12 @@ class AutoRunManager:
             self._enqueue_burst_topic(token_id, promote=promote)
             self._seen_self_sell_trade_keys.add(trade_key)
             self._seen_self_sell_tokens.add(token_id)
+            reentry_source = self._reentry_eligible_reasons.pop(token_id, "unknown")
+            self._reentry_eligible_tokens.discard(token_id)
             processed += 1
             print(
                 "[AGGRESSIVE][REENTRY] 检测到自有账户卖出成交，已加入burst队列: "
-                f"token={token_id} ts={ts} size={row.get('size')} price={row.get('price')}"
+                f"token={token_id} ts={ts} size={row.get('size')} price={row.get('price')} source={reentry_source}"
             )
 
         if max_seen > self._last_self_sell_trade_ts:
@@ -3401,6 +3440,11 @@ class AutoRunManager:
     ) -> None:
         if not token_id:
             return
+        if self._is_reentry_eligible_exit(exit_reason, exit_data):
+            self._mark_reentry_eligible_token(
+                token_id,
+                source=str(exit_reason or "").strip().upper(),
+            )
         
         # 【修改】使用文件锁保护，与清理器保持一致
         with self._file_io_lock:
@@ -3948,6 +3992,12 @@ class AutoRunManager:
             f"pending_base={len(self.pending_topics)} "
             f"pending_burst={len(self.pending_burst_topics)} "
             f"pending_exit={len(self.pending_exit_topics)}"
+        )
+        print(
+            "[STATUS] ws_reconnect_reasons="
+            f"{self._ws_reconnect_reason_counts} "
+            f"last={self._ws_last_reconnect_reason or '-'} "
+            f"reentry_eligible={len(self._reentry_eligible_tokens)}"
         )
         role_base: Dict[str, int] = {}
         for topic_id in self.pending_topics:
@@ -4505,6 +4555,11 @@ class AutoRunManager:
             exit_data = record.get("exit_data", {}) or {}
             has_position = exit_data.get("has_position", False)
             resume_drop_pct = exit_data.get("drop_pct_current")
+            if self._is_reentry_eligible_exit(exit_reason, exit_data):
+                self._mark_reentry_eligible_token(
+                    token_id,
+                    source=str(exit_reason or "").strip().upper(),
+                )
 
             # 增加重试计数
             self._refill_retry_counts[token_id] = self._refill_retry_counts.get(token_id, 0) + 1
@@ -4916,6 +4971,8 @@ class AutoRunManager:
             self._trigger_sell_exit(token_id, task)
 
     def _trigger_sell_exit(self, token_id: str, task: Optional[TopicTask]) -> None:
+        self._reentry_eligible_tokens.discard(token_id)
+        self._reentry_eligible_reasons.pop(token_id, None)
         self._update_sell_signal_event(token_id, status="processing")
         if token_id in self.pending_topics:
             self._remove_pending_topic(token_id)
@@ -5101,6 +5158,10 @@ class AutoRunManager:
         self._seen_self_sell_tokens.clear()
         self._process_started_at = time.time()
         self._last_self_sell_trade_ts = int(self._process_started_at)
+        self._reentry_eligible_tokens.clear()
+        self._reentry_eligible_reasons.clear()
+        self._ws_reconnect_reason_counts = {"closed": 0, "error": 0, "silence": 0}
+        self._ws_last_reconnect_reason = None
 
         self._ws_cache.clear()
         self._ws_token_ids = []
@@ -5237,6 +5298,33 @@ class AutoRunManager:
             except (TypeError, ValueError):
                 pass
 
+        reentry_eligible_tokens = payload.get("reentry_eligible_tokens") or []
+        self._reentry_eligible_tokens = {
+            str(token_id)
+            for token_id in reentry_eligible_tokens
+            if str(token_id).strip()
+        }
+        reentry_eligible_reasons = payload.get("reentry_eligible_reasons") or {}
+        if isinstance(reentry_eligible_reasons, dict):
+            self._reentry_eligible_reasons = {
+                str(k): str(v)
+                for k, v in reentry_eligible_reasons.items()
+                if str(k).strip()
+            }
+
+        ws_reconnect_reason_counts = payload.get("ws_reconnect_reason_counts") or {}
+        if isinstance(ws_reconnect_reason_counts, dict):
+            for reason in ("closed", "error", "silence"):
+                try:
+                    self._ws_reconnect_reason_counts[reason] = int(
+                        ws_reconnect_reason_counts.get(reason, 0) or 0
+                    )
+                except (TypeError, ValueError):
+                    self._ws_reconnect_reason_counts[reason] = 0
+        self._ws_last_reconnect_reason = str(
+            payload.get("ws_last_reconnect_reason") or ""
+        ).strip() or None
+
     def _dump_runtime_status(self) -> None:
         # GC: 清理 _completed_exit_cleanup_tokens 中不再活跃的条目
         # 仅保留仍在 sell 信号文件、pending 队列或 tasks 中的 token
@@ -5275,6 +5363,10 @@ class AutoRunManager:
                 self._completed_exit_cleanup_tokens
             ),
             "exit_cleanup_retry_counts": dict(self._exit_cleanup_retry_counts),
+            "reentry_eligible_tokens": sorted(self._reentry_eligible_tokens),
+            "reentry_eligible_reasons": dict(self._reentry_eligible_reasons),
+            "ws_reconnect_reason_counts": dict(self._ws_reconnect_reason_counts),
+            "ws_last_reconnect_reason": self._ws_last_reconnect_reason,
             "tasks": {},
             "topic_details": topic_details_export,  # 【修复】添加 topic_details 供子进程读取
         }
