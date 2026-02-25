@@ -3917,15 +3917,19 @@ class AutoRunManager:
         if not tokens_path.exists() and not signals_path.exists():
             return
 
-        copytrade_topics = {
-            topic_id
-            for topic_id in (
-                _topic_id_from_entry(item)
-                for item in self._load_copytrade_tokens()
-            )
-            if topic_id
-        }
-        sell_signals = self._load_copytrade_sell_signals()
+        try:
+            copytrade_topics = {
+                topic_id
+                for topic_id in (
+                    _topic_id_from_entry(item)
+                    for item in self._load_copytrade_tokens()
+                )
+                if topic_id
+            }
+            sell_signals = self._load_copytrade_sell_signals()
+        except Exception as exc:
+            print(f"[HANDLED][WARN] startup sync skipped due to copytrade read error: {exc}")
+            return
         copytrade_topics.update(sell_signals.keys())
         
         # 构建正在运行或等待中的任务集合
