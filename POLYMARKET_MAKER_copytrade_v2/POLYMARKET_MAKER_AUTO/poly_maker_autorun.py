@@ -3925,7 +3925,8 @@ class AutoRunManager:
             )
             if topic_id
         }
-        copytrade_topics.update(self._load_copytrade_sell_signals().keys())
+        sell_signals = self._load_copytrade_sell_signals()
+        copytrade_topics.update(sell_signals.keys())
         
         # 构建正在运行或等待中的任务集合
         active_tasks = set(self.tasks.keys()) | set(self.pending_topics) | set(self.pending_burst_topics) | set(self.pending_exit_topics)
@@ -3933,22 +3934,55 @@ class AutoRunManager:
         # 【关键修复】找出在 copytrade 中、在 handled 中，但没有活跃任务的 token
         # 这些token需要重新启动
         inactive_in_copytrade = (self.handled_topics & copytrade_topics) - active_tasks
-        if inactive_in_copytrade:
-            print(f"[HANDLED] 发现 {len(inactive_in_copytrade)} 个 copytrade token 无运行任务，将重新启动管理")
-            self.handled_topics -= inactive_in_copytrade
+        inactive_for_startup = set(inactive_in_copytrade)
         
         # 【修复】移除已不在 copytrade 中且无活跃任务的 stale 记录
+        to_reactivate: set[str] = set()
+        to_cleanup: set[str] = set()
+        to_liquidate: set[str] = set()
+        if inactive_for_startup:
+            pos_snapshot, pos_info = self._refresh_sell_position_snapshot()
+            if pos_info != "ok":
+                print(
+                    "[HANDLED][WARN] startup position snapshot unavailable, skip inactive split: "
+                    f"info={pos_info} count={len(inactive_for_startup)}"
+                )
+            else:
+                tokens_with_sell_signal = set(sell_signals.keys())
+                for token_id in inactive_for_startup:
+                    pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
+                    has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+                    has_sell_signal = token_id in tokens_with_sell_signal
+                    if has_sell_signal and has_position:
+                        to_liquidate.add(token_id)
+                    elif has_position:
+                        to_reactivate.add(token_id)
+                    else:
+                        to_cleanup.add(token_id)
+
+                for token_id in sorted(to_liquidate):
+                    self._trigger_sell_exit(token_id, task=None)
+
+                for token_id in sorted(to_cleanup):
+                    self._remove_token_from_copytrade_files(token_id)
+                    self._remove_from_handled_topics(token_id)
+
+                if to_reactivate:
+                    self.handled_topics -= to_reactivate
+
         stale_topics = self.handled_topics - copytrade_topics - active_tasks
         if stale_topics:
             self.handled_topics -= stale_topics
             
         # 如果 handled_topics 被修改，写回文件
-        if inactive_in_copytrade or stale_topics:
+        if to_reactivate or to_cleanup or to_liquidate or stale_topics:
             write_handled_topics(self.config.handled_topics_path, self.handled_topics)
             print(
                 "[HANDLED] 启动同步完成: "
                 f"total={len(self.handled_topics)} "
-                f"reactivated={len(inactive_in_copytrade)} "
+                f"reactivated={len(to_reactivate)} "
+                f"cleaned={len(to_cleanup)} "
+                f"liquidating={len(to_liquidate)} "
                 f"stale_removed={len(stale_topics)}"
             )
 

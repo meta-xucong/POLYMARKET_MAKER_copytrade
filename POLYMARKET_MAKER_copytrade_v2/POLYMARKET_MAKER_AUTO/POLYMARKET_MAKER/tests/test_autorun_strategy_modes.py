@@ -68,6 +68,7 @@ def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
     )
     manager = _build_manager(cfg)
     manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({}, "ok")  # type: ignore[assignment]
 
     manager._sync_handled_topics_on_startup()
 
@@ -76,6 +77,91 @@ def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
     assert manager.handled_topics == set()
     payload = json.loads(handled_path.read_text(encoding="utf-8"))
     assert payload.get("topics") == []
+
+
+def test_sync_startup_skips_destructive_changes_when_position_snapshot_unavailable(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": ["keep_token"]}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps({"updated_at": "", "tokens": [{"token_id": "keep_token"}]}),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps({"updated_at": "", "sell_tokens": []}),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({}, "api_unavailable")  # type: ignore[assignment]
+
+    manager._sync_handled_topics_on_startup()
+
+    assert manager.handled_topics == {"keep_token"}
+    payload = json.loads(handled_path.read_text(encoding="utf-8"))
+    assert payload.get("topics") == ["keep_token"]
+
+
+def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": ["t1"]}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps({"updated_at": "", "tokens": [{"token_id": "t1"}]}),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "sell_tokens": [
+                    {"token_id": "t1", "introduced_by_buy": True, "status": "pending"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({"t1": 1.0}, "ok")  # type: ignore[assignment]
+    captured = []
+    manager._trigger_sell_exit = lambda token_id, task=None: captured.append((token_id, task))  # type: ignore[assignment]
+
+    manager._sync_handled_topics_on_startup()
+
+    assert captured == [("t1", None)]
 
 
 def test_aggressive_mode_uses_burst_slots_and_queue_promotion():
