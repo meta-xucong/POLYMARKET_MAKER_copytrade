@@ -26,3 +26,8 @@ Thumbs.db
 # Local config
 *.local
 .env
+
+# Local runtime artifacts
+.venv-wsl/
+POLYMARKET_MAKER_copytrade_v2/POLYMARKET_MAKER_AUTO/data/
+*.broken_*.py
