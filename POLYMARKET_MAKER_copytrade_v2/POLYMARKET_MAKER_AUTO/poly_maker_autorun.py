@@ -130,7 +130,7 @@ DEFAULT_GLOBAL_CONFIG = {
     # 全局总清仓（默认关闭）
     "total_liquidation": {
         "enable_total_liquidation": False,
-        "execution_mode": "liquidate_then_restart",  # liquidate_then_restart: 清仓+可选硬重置+重启; restart_only: 仅重启
+        "execution_mode": "restart_only",  # liquidate_then_restart: 清仓+可选硬重置+重启; restart_only: 仅重启
         "min_interval_hours": 72.0,
         "trigger": {
             "idle_slot_ratio_threshold": 0.5,
@@ -151,9 +151,9 @@ DEFAULT_GLOBAL_CONFIG = {
             "taker_slippage_bps": 30.0,
         },
         "reset": {
-            "hard_reset_enabled": True,
-            "remove_logs": True,
-            "remove_json_state": True,
+            "hard_reset_enabled": False,
+            "remove_logs": False,
+            "remove_json_state": False,
         },
         "blacklist": {
             "enabled": True,

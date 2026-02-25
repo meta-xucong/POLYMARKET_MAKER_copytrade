@@ -39,9 +39,9 @@
         "taker_slippage_bps": 30.0
       },
       "reset": {
-        "hard_reset_enabled": true,
-        "remove_logs": true,
-        "remove_json_state": true
+        "hard_reset_enabled": false,
+        "remove_logs": false,
+        "remove_json_state": false
       },
       "execution_mode": "restart_only"
     },
