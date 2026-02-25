@@ -258,6 +258,7 @@ def test_poll_reentry_always_promotes_to_burst_front():
     manager._position_address = "0xabc"
     manager._process_started_at = 1.0
     manager._last_self_sell_trade_ts = 1
+    manager._mark_reentry_eligible_token("reentry_x", source="SELL_ABANDONED")
 
     import poly_maker_autorun as autorun
 
