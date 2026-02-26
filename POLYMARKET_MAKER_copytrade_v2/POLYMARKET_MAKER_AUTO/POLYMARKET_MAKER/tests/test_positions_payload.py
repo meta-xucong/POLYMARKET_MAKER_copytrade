@@ -310,3 +310,9 @@ def test_merge_remote_position_size_ignores_dust(monkeypatch):
     new_size, changed = _merge_remote_position_size(None, 2.0, dust_floor=5.0)
     assert new_size is None
     assert changed is False
+
+
+def test_merge_remote_position_size_keeps_floor_equal():
+    new_size, changed = _merge_remote_position_size(None, 5.0, dust_floor=5.0)
+    assert new_size == 5.0
+    assert changed is True

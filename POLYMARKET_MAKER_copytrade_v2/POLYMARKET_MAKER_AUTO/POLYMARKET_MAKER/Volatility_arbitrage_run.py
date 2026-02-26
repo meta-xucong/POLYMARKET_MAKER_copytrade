@@ -207,6 +207,8 @@ CLOB_API_HOST = "https://clob.polymarket.com"
 GAMMA_ROOT = os.getenv("POLY_GAMMA_ROOT", "https://gamma-api.polymarket.com")
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 API_MIN_ORDER_SIZE = 5.0
+_MIN_ORDER_SIZE_CACHE_TTL_SEC = 600.0
+_min_order_size_cache: Dict[str, Tuple[float, float]] = {}
 # 共享WS缓存过期阈值（秒）：
 # - 默认 180 秒，优先降低“低活跃市场正常无更新”导致的误判；
 # - 可通过环境变量 POLY_ORDERBOOK_STALE_AFTER_SEC 覆盖。
@@ -250,7 +252,66 @@ def _enforce_request_rate_limit() -> None:
         remaining = _REQUEST_RATE_LIMIT_SEC - elapsed
         if remaining > 0:
             time.sleep(remaining)
-        _last_request_ts = time.monotonic()
+    _last_request_ts = time.monotonic()
+
+
+def _extract_min_order_size_from_orderbook(payload: Any) -> Optional[float]:
+    if payload is None:
+        return None
+    if isinstance(payload, tuple) and len(payload) == 2:
+        payload = payload[1]
+    if isinstance(payload, dict) and {"data", "status"} <= set(payload.keys()):
+        payload = payload.get("data")
+    if isinstance(payload, dict):
+        return _coerce_float(payload.get("min_order_size"))
+    if hasattr(payload, "min_order_size"):
+        return _coerce_float(getattr(payload, "min_order_size"))
+    if hasattr(payload, "__dict__"):
+        try:
+            return _coerce_float(vars(payload).get("min_order_size"))
+        except Exception:
+            return None
+    return None
+
+
+def _fetch_min_order_size_from_orderbook(client: Any, token_id: str) -> Optional[float]:
+    method_candidates = (
+        ("get_order_book", {"token_id": token_id}),
+        ("get_orderbook", {"token_id": token_id}),
+        ("get_market_orderbook", {"token_id": token_id}),
+    )
+    last_error: Optional[str] = None
+    for name, kwargs in method_candidates:
+        fn = getattr(client, name, None)
+        if not callable(fn):
+            continue
+        try:
+            _enforce_request_rate_limit()
+            resp = fn(**kwargs)
+        except Exception as exc:
+            last_error = f"{name}: {type(exc).__name__} - {exc}"
+            continue
+        min_size = _extract_min_order_size_from_orderbook(resp)
+        if min_size is not None and min_size > 0:
+            return float(min_size)
+    if last_error and not hasattr(_fetch_min_order_size_from_orderbook, "_warned"):
+        print(f"[WARN] 无法获取 min_order_size，使用回退值：{last_error}")
+        _fetch_min_order_size_from_orderbook._warned = True
+    return None
+
+
+def _get_min_order_size(client: Any, token_id: str, *, force: bool = False) -> Optional[float]:
+    now = time.time()
+    cached = _min_order_size_cache.get(token_id)
+    if cached and not force and now - cached[1] < _MIN_ORDER_SIZE_CACHE_TTL_SEC:
+        return cached[0]
+    fetched = _fetch_min_order_size_from_orderbook(client, token_id)
+    if fetched is not None and fetched > 0:
+        _min_order_size_cache[token_id] = (fetched, now)
+        return fetched
+    if cached:
+        return cached[0]
+    return None
 
 
 def _safe_load_json(path: str) -> Dict[str, Any]:
@@ -1034,10 +1095,12 @@ def _merge_remote_position_size(
             normalized = float(value)
         except (TypeError, ValueError):
             return None
+        if normalized <= 0:
+            return None
         floor = eps
         if apply_dust and isinstance(dust_floor, (int, float)):
             floor = max(float(dust_floor), floor)
-        if normalized <= floor:
+        if normalized + eps < floor:
             return None
         return normalized
 
@@ -2131,6 +2194,35 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             "token_id": token_id
         })
         return
+
+    max_position_per_market: Optional[float] = _coerce_float(run_cfg.get("max_position_per_market"))
+    market_min_order_size = _get_min_order_size(client, token_id)
+    if market_min_order_size is not None and market_min_order_size > 0:
+        print(f"[INIT] 获取到市场 min_order_size={market_min_order_size:.4f}")
+    else:
+        print("[WARN] 未能获取市场 min_order_size，将使用回退最小下单量。")
+        market_min_order_size = None
+    effective_min_order_size = (
+        float(market_min_order_size)
+        if market_min_order_size is not None and market_min_order_size > 0
+        else float(API_MIN_ORDER_SIZE or 0.0)
+    )
+
+    if manual_order_size is not None and market_min_order_size is not None:
+        if manual_order_size < market_min_order_size:
+            print(
+                "[INIT] 手动份数低于市场最小下单量，已自动提升："
+                f"{manual_order_size:.4f} -> {market_min_order_size:.4f}"
+            )
+            manual_order_size = float(market_min_order_size)
+    if max_position_per_market is not None and market_min_order_size is not None:
+        if max_position_per_market < market_min_order_size:
+            print(
+                "[INIT] max_position_per_market 低于市场最小下单量，已自动提升："
+                f"{max_position_per_market:.4f} -> {market_min_order_size:.4f}"
+            )
+            max_position_per_market = float(market_min_order_size)
+
     if manual_order_size is not None:
         mode_note = "总持仓目标" if manual_size_is_target else "单笔下单量"
         print(
@@ -2323,6 +2415,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         disable_sell_signals=True,
         enable_incremental_drop_pct=enable_incremental_drop_pct,
         incremental_drop_pct_step=incremental_drop_pct_step,
+        min_market_order_size=effective_min_order_size,
     )
     strategy = VolArbStrategy(cfg)
     strategy_supports_total_position = _strategy_accepts_total_position(strategy)
@@ -3752,7 +3845,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     def _has_actionable_position(status_snapshot: Optional[Dict[str, Any]] = None) -> bool:
         status_snapshot = status_snapshot or strategy.status()
-        dust_floor = max(API_MIN_ORDER_SIZE or 0.0, 1e-4)
+        dust_floor = max(effective_min_order_size or 0.0, 1e-4)
         for candidate in (position_size, _extract_position_size(status_snapshot)):
             try:
                 if candidate is not None and float(candidate) > dust_floor:
@@ -3772,11 +3865,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         position_size = initial_pos
         last_order_size = initial_pos
     max_position_cap: Optional[float] = None
-    if manual_order_size is not None and manual_size_is_target:
+    if max_position_per_market is not None:
         try:
-            max_position_cap = max(float(manual_order_size), 0.0)
+            max_position_cap = max(float(max_position_per_market), 0.0)
         except (TypeError, ValueError):
             max_position_cap = None
+    if manual_order_size is not None and manual_size_is_target:
+        try:
+            target_cap = max(float(manual_order_size), 0.0)
+            max_position_cap = target_cap if max_position_cap is None else min(max_position_cap, target_cap)
+        except (TypeError, ValueError):
+            pass
     last_log: Optional[float] = None
     buy_cooldown_until: float = 0.0
     pending_buy: Optional[Action] = None
@@ -3847,7 +3946,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             awaiting_is_sell = awaiting_val == ActionType.SELL
         has_local_position = _extract_position_size(status_snapshot) > 0
         eps = 1e-6
-        dust_floor = max(API_MIN_ORDER_SIZE or 0.0, 1e-4)
+        dust_floor = max(effective_min_order_size or 0.0, 1e-4)
         new_size, changed = _merge_remote_position_size(
             position_size, total_pos, dust_floor=dust_floor
         )
@@ -4117,7 +4216,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 position_size=eff_qty,
                 floor_X=float(floor_price),
                 poll_sec=maker_poll_sec,
-                min_order_size=API_MIN_ORDER_SIZE,
+                min_order_size=effective_min_order_size,
                 best_ask_fn=_latest_best_ask,
                 stop_check=stop_event.is_set,
                 sell_mode=sell_mode,
@@ -4171,9 +4270,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         sell_avg = sell_resp.get("avg_price")
         eps = 1e-4
         sell_remaining = float(sell_resp.get("remaining") or 0.0)
-        dust_threshold = (
-            API_MIN_ORDER_SIZE if API_MIN_ORDER_SIZE and API_MIN_ORDER_SIZE > 0 else None
-        )
+        dust_threshold = effective_min_order_size if effective_min_order_size and effective_min_order_size > 0 else None
         treat_as_dust = False
         if dust_threshold is not None and sell_remaining > eps:
             if sell_remaining < dust_threshold - 1e-9:
@@ -4523,7 +4620,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         state = status.get("state")
                         awaiting = status.get("awaiting")
                         # 使用本地与策略两侧的持仓快照，避免残留仓位时误买
-                        dust_floor = max(API_MIN_ORDER_SIZE or 0.0, 1e-4)
+                        dust_floor = max(effective_min_order_size or 0.0, 1e-4)
                         strat_pos = status.get("position_size")
                         has_position = False
                         for pos in (position_size, strat_pos):
@@ -4950,7 +5047,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     continue
     
                 status = strategy.status()
-                dust_floor = max(API_MIN_ORDER_SIZE or 0.0, 1e-4)
+                dust_floor = max(effective_min_order_size or 0.0, 1e-4)
                 current_state = status.get("state")
                 awaiting = status.get("awaiting")
                 strat_pos = status.get("position_size")
@@ -5212,7 +5309,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         max_buy_price=max_buy_price,
                         poll_sec=maker_poll_sec,
                         min_quote_amt=1.0,
-                        min_order_size=API_MIN_ORDER_SIZE,
+                        min_order_size=effective_min_order_size,
                         best_bid_fn=_latest_best_bid,
                         stop_check=stop_event.is_set,
                         external_fill_probe=_buy_fill_delta_probe,
