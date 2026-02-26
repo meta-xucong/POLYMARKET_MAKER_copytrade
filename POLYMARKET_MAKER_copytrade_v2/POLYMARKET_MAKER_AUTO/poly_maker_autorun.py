@@ -2088,6 +2088,8 @@ class AutoRunManager:
         data = exit_data or {}
         if reason == "SELL_ABANDONED":
             return True
+        if reason == "REFILL_SKIP_GAP":
+            return True
         if reason == "LOW_BALANCE_PAUSE":
             return bool(data.get("has_position"))
         return False

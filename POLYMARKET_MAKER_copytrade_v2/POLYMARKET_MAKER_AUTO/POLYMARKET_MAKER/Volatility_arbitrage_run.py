@@ -4221,6 +4221,26 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     # 避免 _activate_sell_only → _maybe_refresh_position_size → _execute_sell
     # 在 _execute_sell 尚未定义时被调用导致 NameError。
 
+    def _log_fills(side: str, resp: Dict[str, Any]) -> None:
+        orders = resp.get("orders") if isinstance(resp, dict) else None
+        if not isinstance(orders, list):
+            return
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            filled = _coerce_float(order.get("filled")) or 0.0
+            if filled <= 0:
+                continue
+            price = _coerce_float(order.get("price"))
+            size = _coerce_float(order.get("size"))
+            avg_price = _coerce_float(order.get("avg_price"))
+            status_text = str(order.get("status") or "")
+            order_id = str(order.get("id") or "")
+            print(
+                f"[FILL][{side}] id={order_id} price={price} size={size} "
+                f"filled={filled} avg_price={avg_price} status={status_text}"
+            )
+
     def _execute_sell(
         order_qty: Optional[float],
         *,
@@ -4279,6 +4299,30 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(f"[WARN] {source} 无法计算卖出地板价，跳过卖出流程。")
             strategy.on_reject("missing sell trigger")
             return
+
+        # Refill 模式优化：若当前价与地板价差距过大，直接跳过以释放槽位
+        if "REFILL" in source.upper():
+            best_ask = _latest_best_ask()
+            if best_ask is not None and best_ask > 0 and floor_price > 0:
+                gap_ratio = (best_ask / floor_price) - 1.0
+                if gap_ratio >= 0.10:
+                    print(
+                        f"[REFILL][SKIP] 当前卖一 {best_ask:.4f} 与地板价 {floor_price:.4f} 差距过大 "
+                        f"({gap_ratio*100:.1f}%)，跳过挂单释放槽位。"
+                    )
+                    snap = latest.get(token_id) or {}
+                    _record_exit_token(token_id, "REFILL_SKIP_GAP", {
+                        "has_position": True,
+                        "position_size": float(eff_qty),
+                        "entry_price": strategy.status().get("entry_price"),
+                        "last_bid": float(snap.get("best_bid") or 0.0),
+                        "last_ask": float(best_ask),
+                        "sell_floor_price": float(floor_price),
+                        "gap_ratio": float(gap_ratio),
+                    })
+                    strategy.stop("refill skip gap")
+                    stop_event.set()
+                    return
 
         def _sell_progress_probe() -> None:
             snapshot = _fetch_position_snapshot(log_errors=True, force=True)
@@ -4343,6 +4387,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return
 
         print(f"[TRADE][SELL][MAKER] resp={sell_resp}")
+        _log_fills("SELL", sell_resp)
         sell_status = str(sell_resp.get("status") or "").upper()
         if sell_status == "ABANDONED":
             print(
@@ -5432,6 +5477,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     buy_cooldown_until = time.time() + short_buy_cooldown
                     continue
                 print(f"[TRADE][BUY][MAKER] resp={buy_resp}")
+                _log_fills("BUY", buy_resp)
                 buy_status = str(buy_resp.get("status") or "").upper()
                 filled_amt = float(buy_resp.get("filled") or 0.0)
                 avg_price = buy_resp.get("avg_price")
