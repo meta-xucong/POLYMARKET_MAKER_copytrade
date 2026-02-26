@@ -170,7 +170,7 @@ SHARED_WS_WAIT_ESCALATION_MIN_FAILURES = 2
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 CLOB_API_ROOT = os.getenv("POLY_CLOB_API_ROOT", "https://clob.polymarket.com")
-POSITION_CHECK_CACHE_TTL_SEC = 300.0
+POSITION_CHECK_CACHE_TTL_SEC = 600.0
 # 低余额筛查场景下：无持仓 token 启动时检查一次，之后每 30 分钟再复检，
 # 避免在 copytrade 轮询周期（30s）下重复高频查询。
 POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 1800.0
@@ -1329,6 +1329,8 @@ class AutoRunManager:
         self._buy_paused_due_to_balance: bool = False
         self._buy_pause_last_balance: Optional[float] = None
         self._buy_pause_deferred_tokens: set[str] = set()
+        self._buy_pause_keep_snapshot: set[str] = set()
+        self._log_throttle_ts: Dict[str, float] = {}
         self._total_liquidation = TotalLiquidationManager(self.config, PROJECT_ROOT)
         
         # =====================
@@ -1540,12 +1542,18 @@ class AutoRunManager:
         self.pending_topics.clear()
         
         # 保留有持仓的token在pending_topics中（允许启动卖出）
+        keep_set = set(base_to_keep)
+        new_keep = [token_id for token_id in base_to_keep if token_id not in self._buy_pause_keep_snapshot]
+        removed_keep = self._buy_pause_keep_snapshot - keep_set
+
         for token_id in base_to_keep:
             self.pending_topics.append(token_id)
-            print(f"[BUY_GATE] 保留有持仓token可卖出: {token_id[:20]}...")
+        for token_id in new_keep:
+            print(f"[BUY_GATE] keep token with position: {token_id[:20]}...")
         
         # defer所有需要买入的token
         to_defer = burst_to_defer + base_to_defer
+        new_defer_count = 0
         for token_id in to_defer:
             self._pending_first_seen.pop(token_id, None)
             self._shared_ws_wait_failures.pop(token_id, None)
@@ -1555,6 +1563,7 @@ class AutoRunManager:
             if token_id in self._buy_pause_deferred_tokens:
                 continue
             self._buy_pause_deferred_tokens.add(token_id)
+            new_defer_count += 1
             detail = self.topic_details.setdefault(token_id, {})
             detail["queue_role"] = "deferred_token"
             self._append_exit_token_record(
@@ -1567,10 +1576,20 @@ class AutoRunManager:
                 refillable=True,
             )
         
-        if to_defer:
-            print(f"[BUY_GATE] 低余额暂停中：已将 {len(to_defer)} 个无持仓token转入回填队列")
-        if base_to_keep:
-            print(f"[BUY_GATE] 低余额策略：保留 {len(base_to_keep)} 个有持仓token可启动卖出")
+        if new_defer_count > 0:
+            print(f"[BUY_GATE] low balance: deferred {new_defer_count} tokens without position")
+        if base_to_keep and (new_keep or removed_keep):
+            print(f"[BUY_GATE] low balance: keep {len(base_to_keep)} tokens with position")
+
+        self._buy_pause_keep_snapshot = keep_set
+
+    def _log_throttled(self, key: str, interval_sec: float, msg: str) -> None:
+        now = time.time()
+        last = self._log_throttle_ts.get(key, 0.0)
+        if now - last < max(0.0, float(interval_sec)):
+            return
+        self._log_throttle_ts[key] = now
+        print(msg)
 
     def _notify_all_tasks_low_balance(self) -> None:
         """向所有运行中的子进程发送低余额暂停买入信号"""
@@ -2991,9 +3010,10 @@ class AutoRunManager:
             running_total = sum(1 for t in self.tasks.values() if t.is_running())
             max_total = self._max_total_task_slots()
             if running_total >= max_total:
-                print(
-                    f"[SCHED][CAP] 达到总并发上限: running={running_total}/{max_total} "
-                    f"(base={base_limit}, burst={burst_limit})"
+                self._log_throttled(
+                    "sched_cap_total",
+                    30.0,
+                    f"[SCHED][CAP] max concurrency reached: running={running_total}/{max_total} (base={base_limit}, burst={burst_limit})",
                 )
                 break
             running_burst = self._running_burst_count()
@@ -4633,19 +4653,15 @@ class AutoRunManager:
 
         exit_records = self._load_exit_tokens()
         if not exit_records:
-            print("[REFILL] 无退出记录，跳过回填")
+            self._log_throttled("refill_no_records", 300.0, "[REFILL] no exit records, skip refill")
             return
 
         refillable = self._filter_refillable_tokens(exit_records)
         if not refillable:
             running = sum(1 for t in self.tasks.values() if t.is_running())
-            print(
-                "[REFILL] 无可回填token，记录="
-                f"{len(exit_records)} 运行={running} pending={len(self.pending_topics)+len(self.pending_burst_topics)}"
-            )
+            self._log_throttled("refill_none", 300.0, f"[REFILL] no refillable token: records={len(exit_records)} running={running} pending={len(self.pending_topics)+len(self.pending_burst_topics)}")
             return
 
-        # 计算可用slot数（仅用于日志展示）
         running = sum(1 for t in self.tasks.values() if t.is_running())
         available_slots = max(0, self.config.max_concurrent_tasks - running)
 
@@ -4833,7 +4849,7 @@ class AutoRunManager:
                 if added_topics:
                     self._update_handled_topics(added_topics)
             else:
-                print("[INCR] 无新增话题")
+                self._log_throttled("incr_none", 300.0, "[INCR] no new topics")
         except Exception as exc:  # pragma: no cover - 网络/外部依赖
             print(f"[ERROR] 读取 copytrade token 失败：{exc}")
             self.latest_topics = []
