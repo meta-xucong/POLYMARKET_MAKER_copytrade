@@ -1360,6 +1360,104 @@ def _fetch_positions_from_data_api(client) -> Tuple[List[dict], bool, str]:
     if not address:
         return [], False, origin_hint
 
+    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("POLY_DISABLE_POSITIONS_CACHE") == "1":
+        cache_disabled = True
+    else:
+        cache_disabled = False
+
+    cache_dir = Path(__file__).parent.parent / "data"
+    if cache_disabled:
+        cache_path = None
+        lock_path = None
+    else:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / "positions_cache.json"
+        lock_path = cache_dir / "positions_cache.lock"
+        cache_ttl_sec = 5.0
+        stale_ttl_sec = 20.0
+        lock_max_age_sec = 30.0
+
+    def _read_cache() -> Optional[Tuple[List[dict], float]]:
+        if cache_disabled:
+            return None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        ts = payload.get("ts")
+        positions = payload.get("positions")
+        if not isinstance(ts, (int, float)):
+            return None
+        if not isinstance(positions, list):
+            return None
+        return positions, float(ts)
+
+    def _write_cache(positions: List[dict]) -> None:
+        if cache_disabled:
+            return
+        try:
+            cache_path.write_text(
+                json.dumps({"ts": time.time(), "positions": positions}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _acquire_lock() -> bool:
+        if cache_disabled:
+            return False
+        try:
+            if lock_path.exists():
+                age = time.time() - lock_path.stat().st_mtime
+                if age > lock_max_age_sec:
+                    try:
+                        lock_path.unlink()
+                    except Exception:
+                        pass
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return True
+        except Exception:
+            return False
+
+    def _release_lock() -> None:
+        if cache_disabled:
+            return
+        try:
+            lock_path.unlink()
+        except Exception:
+            pass
+
+    cached = _read_cache()
+    if cached:
+        cached_positions, cached_ts = cached
+        if time.time() - cached_ts <= cache_ttl_sec:
+            origin_detail = f" via {origin_hint}" if origin_hint else ""
+            origin = f"data-api positions(cache, total={len(cached_positions)}){origin_detail}"
+            return cached_positions, True, origin
+
+    got_lock = _acquire_lock()
+    if not got_lock:
+        cached = _read_cache()
+        if cached:
+            cached_positions, cached_ts = cached
+            if time.time() - cached_ts <= stale_ttl_sec:
+                origin_detail = f" via {origin_hint}" if origin_hint else ""
+                origin = f"data-api positions(stale-cache, total={len(cached_positions)}){origin_detail}"
+                return cached_positions, True, origin
+        time.sleep(0.4)
+        cached = _read_cache()
+        if cached:
+            cached_positions, cached_ts = cached
+            if time.time() - cached_ts <= stale_ttl_sec:
+                origin_detail = f" via {origin_hint}" if origin_hint else ""
+                origin = f"data-api positions(stale-cache, total={len(cached_positions)}){origin_detail}"
+                return cached_positions, True, origin
+
+    error_prefix = "\u6570\u636e\u63a5\u53e3\u8bf7\u6c42\u5931\u8d25"
+
     url = f"{DATA_API_ROOT}/positions"
 
     limit = 500
@@ -1377,24 +1475,34 @@ def _fetch_positions_from_data_api(client) -> Tuple[List[dict], bool, str]:
             _enforce_request_rate_limit()
             resp = requests.get(url, params=params, timeout=10)
         except requests.RequestException as exc:
-            return [], False, f"数据接口请求失败：{exc}"
+            if got_lock:
+                _release_lock()
+            return [], False, f"{error_prefix}: {exc}"
 
         if resp.status_code == 404:
-            return [], False, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
+            if got_lock:
+                _release_lock()
+            return [], False, "data-api returned 404 (confirm Proxy/Deposit address in user param)"
 
         try:
             resp.raise_for_status()
         except requests.RequestException as exc:
-            return [], False, f"数据接口请求失败：{exc}"
+            if got_lock:
+                _release_lock()
+            return [], False, f"{error_prefix}: {exc}"
 
         try:
             payload = resp.json()
         except ValueError:
-            return [], False, "数据接口响应解析失败"
+            if got_lock:
+                _release_lock()
+            return [], False, "data-api response parse failed"
 
         positions = _extract_positions_from_data_api_response(payload)
         if positions is None:
-            return [], False, "数据接口返回格式异常：/positions 应返回列表。"
+            if got_lock:
+                _release_lock()
+            return [], False, "data-api response format invalid: positions must be a list"
 
         collected.extend(positions)
         if not positions:
@@ -1403,10 +1511,12 @@ def _fetch_positions_from_data_api(client) -> Tuple[List[dict], bool, str]:
         offset += len(positions)
 
     total = len(collected)
+    if got_lock:
+        _write_cache(collected)
+        _release_lock()
     origin_detail = f" via {origin_hint}" if origin_hint else ""
     origin = f"data-api positions(limit={limit}, total={total}, param=user){origin_detail}"
     return collected, True, origin
-
 
 def _coerce_float(value: Any) -> Optional[float]:
     if value is None:
