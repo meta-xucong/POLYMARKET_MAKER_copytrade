@@ -120,6 +120,23 @@
 | `pending_soft_eviction_check_interval_sec` | pending 淘汰检查间隔。 | 浮点（秒） | `60~600`。 |
 | `buy_pause_min_free_balance` | 买入硬性可用资金下限 M（USDC）。`<=0` 关闭此功能。余额低于 M 时不再启动新买入任务，只保留卖出路径。 | 浮点 | 建议与风控口径一致，如 `20`。 |
 | `buy_pause_balance_poll_interval_sec` | 低余额买入门禁的余额轮询间隔。 | 浮点（秒） | `30~300`。 |
+| `title_blacklist` | 标题关键词黑名单策略。命中后禁止继续买入；有仓位时可选“清仓”或“仅卖出 maker”。 | 对象 | 见下方 2.1.1。 |
+
+### 2.1.1 `scheduler.title_blacklist` 标题黑名单
+
+| 字段 | 含义 | 类型/格式 | 默认 | 建议 |
+| --- | --- | --- | --- | --- |
+| `enabled` | 是否启用标题黑名单。 | 布尔 | `false` | 生产环境先灰度开启。 |
+| `keywords` | 关键词数组（手工填写）。大小写不敏感。 | 字符串数组 | `[]` | 填较稳定的主题词。 |
+| `match_on_slug` | 是否将 slug 也纳入关键词匹配。 | 布尔 | `true` | 建议保持 `true`。 |
+| `action_with_position` | 命中黑名单且“有仓位”时的动作：`sell_only_maker` 或 `liquidate`。 | 枚举字符串 | `sell_only_maker` | 追求损失更小时用 `sell_only_maker`。 |
+
+行为说明：
+
+- 命中黑名单且**无仓位**：不买入，直接写入 EXIT（`TITLE_BLACKLIST_NO_POSITION`），并在当前运行周期内不再录用。
+- 命中黑名单且**有仓位**：
+  - `sell_only_maker`：启动仅卖出 maker（挂单卖出，不再买入）。
+  - `liquidate`：走清仓通道快速卖出。
 
 ### 2.2 `scheduler` aggressive 模式参数
 
