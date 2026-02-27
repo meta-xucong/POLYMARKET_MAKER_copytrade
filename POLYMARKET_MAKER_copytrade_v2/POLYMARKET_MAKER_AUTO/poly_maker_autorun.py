@@ -117,7 +117,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "ws_ready_confirm_grace_sec": 2.0,  # confirmed-ready 过渡窗口（秒）
     "ws_unsubscribe_grace_sec": 120.0,  # token离开调度后保留订阅宽限，降低订阅抖动
     "ws_ping_interval_sec": 30.0,  # WS协议层ping间隔
-    "ws_ping_timeout_sec": 40.0,  # WS协议层pong超时，放宽网络抖动容忍度
+    "ws_ping_timeout_sec": 20.0,  # WS协议层pong超时（必须小于ping间隔）
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 可选策略模式（classic/aggressive）
     "strategy_mode": "classic",
@@ -910,6 +910,39 @@ class GlobalConfig:
             or data_dir / "autorun_status.json"
         )
 
+        ws_ping_interval_sec = max(
+            5.0,
+            float(
+                scheduler.get(
+                    "ws_ping_interval_sec",
+                    merged.get(
+                        "ws_ping_interval_sec",
+                        cls.ws_ping_interval_sec,
+                    ),
+                )
+            ),
+        )
+        ws_ping_timeout_sec = max(
+            1.0,
+            float(
+                scheduler.get(
+                    "ws_ping_timeout_sec",
+                    merged.get(
+                        "ws_ping_timeout_sec",
+                        cls.ws_ping_timeout_sec,
+                    ),
+                )
+            ),
+        )
+        # websocket-client 要求 ping_interval > ping_timeout，否则 run_forever 直接抛错。
+        if ws_ping_timeout_sec >= ws_ping_interval_sec:
+            adjusted = max(1.0, ws_ping_interval_sec - 1.0)
+            print(
+                "[WS][CONFIG][WARN] ws_ping_timeout_sec 必须小于 ws_ping_interval_sec，"
+                f"已自动调整 timeout: {ws_ping_timeout_sec:.1f}s -> {adjusted:.1f}s"
+            )
+            ws_ping_timeout_sec = adjusted
+
         return cls(
             copytrade_poll_sec=float(
                 scheduler.get("copytrade_poll_seconds")
@@ -1091,30 +1124,8 @@ class GlobalConfig:
                     )
                 ),
             ),
-            ws_ping_interval_sec=max(
-                5.0,
-                float(
-                    scheduler.get(
-                        "ws_ping_interval_sec",
-                        merged.get(
-                            "ws_ping_interval_sec",
-                            cls.ws_ping_interval_sec,
-                        ),
-                    )
-                ),
-            ),
-            ws_ping_timeout_sec=max(
-                10.0,
-                float(
-                    scheduler.get(
-                        "ws_ping_timeout_sec",
-                        merged.get(
-                            "ws_ping_timeout_sec",
-                            cls.ws_ping_timeout_sec,
-                        ),
-                    )
-                ),
-            ),
+            ws_ping_interval_sec=ws_ping_interval_sec,
+            ws_ping_timeout_sec=ws_ping_timeout_sec,
             exit_start_stagger_sec=float(
                 merged.get("exit_start_stagger_sec", cls.exit_start_stagger_sec)
             ),
