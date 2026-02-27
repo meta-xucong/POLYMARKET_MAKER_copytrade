@@ -48,7 +48,15 @@
     "price_cap_refill_stuck_minutes": 120.0,
     "shock_refill_stuck_minutes": 45.0,
     "buy_pause_min_free_balance": 120.0,
-    "buy_pause_balance_poll_interval_sec": 120.0
+    "buy_pause_balance_poll_interval_sec": 120.0,
+    "title_blacklist": {
+      "enabled": true,
+      "keywords": [
+        "Iran"
+      ],
+      "match_on_slug": true,
+      "action_with_position": "sell_only_maker"
+    }
   },
   "maker": {
     "poll_sec": 15.0,

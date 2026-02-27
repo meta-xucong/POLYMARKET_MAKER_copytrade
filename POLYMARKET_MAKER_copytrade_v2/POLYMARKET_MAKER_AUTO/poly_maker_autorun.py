@@ -89,6 +89,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_cooldown_minutes": 5.0,  # 【修复】从30分钟缩短到5分钟，加快token复用
     "max_refill_retries": 3,
     "refill_check_interval_sec": 60.0,
+    "inactive_token_reconcile_interval_sec": 1200.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
     "enable_pending_soft_eviction": True,
     "pending_soft_eviction_minutes": 45.0,
@@ -114,6 +115,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "ws_subscribe_chunk_interval_ms": 150.0,  # WS分片发送间隔（毫秒）
     "ws_ready_use_confirmed": True,  # 允许以 WS confirmed 状态作为 ready 信号
     "ws_ready_confirm_grace_sec": 2.0,  # confirmed-ready 过渡窗口（秒）
+    "ws_unsubscribe_grace_sec": 120.0,  # token离开调度后保留订阅宽限，降低订阅抖动
+    "ws_ping_interval_sec": 30.0,  # WS协议层ping间隔
+    "ws_ping_timeout_sec": 40.0,  # WS协议层pong超时，放宽网络抖动容忍度
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 可选策略模式（classic/aggressive）
     "strategy_mode": "classic",
@@ -127,6 +131,14 @@ DEFAULT_GLOBAL_CONFIG = {
     "aggressive_sell_fill_poll_sec": 15.0,
     "aggressive_burst_slots": 10,
     "aggressive_enable_self_sell_reentry": False,
+    "title_blacklist": {
+        "enabled": False,
+        "keywords": [],
+        "match_on_slug": True,
+        # liquidate: 走清仓通道（快）
+        # sell_only_maker: 启动仅卖出 maker，不再买入（损失更小）
+        "action_with_position": "sell_only_maker",
+    },
     # 全局总清仓（默认关闭）
     "total_liquidation": {
         "enable_total_liquidation": False,
@@ -356,7 +368,7 @@ def _fetch_position_size_from_data_api(
                 return None, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
             resp.raise_for_status()
             payload = resp.json()
-        except requests.RequestException as exc:
+        except Exception as exc:
             return None, f"数据接口请求失败：{exc}"
         except ValueError:
             return None, "数据接口响应解析失败"
@@ -409,7 +421,7 @@ def _fetch_position_snapshot_map_from_data_api(
                 return {}, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
             resp.raise_for_status()
             payload = resp.json()
-        except requests.RequestException as exc:
+        except Exception as exc:
             return {}, f"数据接口请求失败：{exc}"
         except ValueError:
             return {}, "数据接口响应解析失败"
@@ -462,10 +474,11 @@ def _fetch_recent_trades_from_data_api(
                 return [], "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
             resp.raise_for_status()
             payload = resp.json()
-        except requests.Timeout as exc:
-            last_err = f"数据接口请求超时(attempt={attempt}/{attempts})：{exc}"
-        except requests.RequestException as exc:
-            last_err = f"数据接口请求失败(attempt={attempt}/{attempts})：{exc}"
+        except Exception as exc:
+            last_err = (
+                f"数据接口请求失败(attempt={attempt}/{attempts})："
+                f"{exc.__class__.__name__}: {exc}"
+            )
         except ValueError:
             last_err = f"数据接口响应解析失败(attempt={attempt}/{attempts})"
         else:
@@ -777,6 +790,9 @@ class GlobalConfig:
     ws_ready_confirm_grace_sec: float = float(
         DEFAULT_GLOBAL_CONFIG["ws_ready_confirm_grace_sec"]
     )
+    ws_unsubscribe_grace_sec: float = float(DEFAULT_GLOBAL_CONFIG["ws_unsubscribe_grace_sec"])
+    ws_ping_interval_sec: float = float(DEFAULT_GLOBAL_CONFIG["ws_ping_interval_sec"])
+    ws_ping_timeout_sec: float = float(DEFAULT_GLOBAL_CONFIG["ws_ping_timeout_sec"])
     exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
     strategy_mode: str = str(DEFAULT_GLOBAL_CONFIG["strategy_mode"])
     # 【重构】burst和reentry参数与mode解耦
@@ -798,11 +814,26 @@ class GlobalConfig:
     aggressive_enable_self_sell_reentry: bool = bool(
         DEFAULT_GLOBAL_CONFIG.get("aggressive_enable_self_sell_reentry", False)
     )
+    title_blacklist_enabled: bool = bool(
+        (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get("enabled", False)
+    )
+    title_blacklist_keywords: List[str] = field(default_factory=list)
+    title_blacklist_match_on_slug: bool = bool(
+        (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get("match_on_slug", True)
+    )
+    title_blacklist_action_with_position: str = str(
+        (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get(
+            "action_with_position", "sell_only_maker"
+        )
+    )
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
     max_refill_retries: int = DEFAULT_GLOBAL_CONFIG["max_refill_retries"]
     refill_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG["refill_check_interval_sec"]
+    inactive_token_reconcile_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "inactive_token_reconcile_interval_sec"
+    ]
     enable_pending_soft_eviction: bool = DEFAULT_GLOBAL_CONFIG[
         "enable_pending_soft_eviction"
     ]
@@ -838,6 +869,11 @@ class GlobalConfig:
         maker = data.get("maker") or {}
         flat_overrides = {k: v for k, v in data.items() if k not in {"scheduler", "paths", "maker"}}
         merged = {**DEFAULT_GLOBAL_CONFIG, **flat_overrides}
+        title_blacklist_cfg = scheduler.get("title_blacklist")
+        if not isinstance(title_blacklist_cfg, dict):
+            title_blacklist_cfg = merged.get("title_blacklist")
+        if not isinstance(title_blacklist_cfg, dict):
+            title_blacklist_cfg = {}
 
         log_dir = Path(
             paths.get("log_directory")
@@ -1043,6 +1079,42 @@ class GlobalConfig:
                     )
                 ),
             ),
+            ws_unsubscribe_grace_sec=max(
+                0.0,
+                float(
+                    scheduler.get(
+                        "ws_unsubscribe_grace_sec",
+                        merged.get(
+                            "ws_unsubscribe_grace_sec",
+                            cls.ws_unsubscribe_grace_sec,
+                        ),
+                    )
+                ),
+            ),
+            ws_ping_interval_sec=max(
+                5.0,
+                float(
+                    scheduler.get(
+                        "ws_ping_interval_sec",
+                        merged.get(
+                            "ws_ping_interval_sec",
+                            cls.ws_ping_interval_sec,
+                        ),
+                    )
+                ),
+            ),
+            ws_ping_timeout_sec=max(
+                10.0,
+                float(
+                    scheduler.get(
+                        "ws_ping_timeout_sec",
+                        merged.get(
+                            "ws_ping_timeout_sec",
+                            cls.ws_ping_timeout_sec,
+                        ),
+                    )
+                ),
+            ),
             exit_start_stagger_sec=float(
                 merged.get("exit_start_stagger_sec", cls.exit_start_stagger_sec)
             ),
@@ -1103,6 +1175,36 @@ class GlobalConfig:
                     ),
                 )
             ),
+            title_blacklist_enabled=bool(
+                title_blacklist_cfg.get(
+                    "enabled",
+                    (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get(
+                        "enabled", False
+                    ),
+                )
+            ),
+            title_blacklist_keywords=[
+                str(k).strip()
+                for k in (title_blacklist_cfg.get("keywords") or [])
+                if str(k).strip()
+            ],
+            title_blacklist_match_on_slug=bool(
+                title_blacklist_cfg.get(
+                    "match_on_slug",
+                    (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get(
+                        "match_on_slug", True
+                    ),
+                )
+            ),
+            title_blacklist_action_with_position=str(
+                title_blacklist_cfg.get(
+                    "action_with_position",
+                    (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get(
+                        "action_with_position", "sell_only_maker"
+                    ),
+                )
+                or "sell_only_maker"
+            ).strip().lower(),
             aggressive_reentry_source=str(
                 scheduler.get(
                     "aggressive_reentry_source",
@@ -1143,6 +1245,15 @@ class GlobalConfig:
             ),
             refill_check_interval_sec=float(
                 scheduler.get("refill_check_interval_sec", merged.get("refill_check_interval_sec", 60.0))
+            ),
+            inactive_token_reconcile_interval_sec=max(
+                60.0,
+                float(
+                    scheduler.get(
+                        "inactive_token_reconcile_interval_sec",
+                        merged.get("inactive_token_reconcile_interval_sec", 1200.0),
+                    )
+                ),
             ),
             enable_pending_soft_eviction=bool(
                 scheduler.get(
@@ -1268,6 +1379,7 @@ class AutoRunManager:
         self._ws_thread: Optional[threading.Thread] = None
         self._ws_thread_stop: Optional[threading.Event] = None
         self._ws_token_ids: List[str] = []
+        self._ws_recently_active_until: Dict[str, float] = {}
         self._ws_aggregator_thread: Optional[threading.Thread] = None
         self._ws_debug_raw = _env_flag("POLY_WS_DEBUG_RAW") or self.config.ws_debug_raw
         self._refill_debug = _env_flag("POLY_REFILL_DEBUG")
@@ -1279,6 +1391,7 @@ class AutoRunManager:
         self._exit_tokens_path = self.config.data_dir / "exit_tokens.json"
         self._refill_retry_counts: Dict[str, int] = {}  # token_id -> 已重试次数
         self._next_refill_check: float = 0.0
+        self._next_inactive_token_reconcile_check: float = 0.0
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
         # Shared WS 等待保护
         self._shared_ws_wait_failures: Dict[str, int] = {}
@@ -1330,6 +1443,7 @@ class AutoRunManager:
         self._buy_pause_last_balance: Optional[float] = None
         self._buy_pause_deferred_tokens: set[str] = set()
         self._buy_pause_keep_snapshot: set[str] = set()
+        self._title_blacklist_finalized_no_position: set[str] = set()
         self._log_throttle_ts: Dict[str, float] = {}
         self._total_liquidation = TotalLiquidationManager(self.config, PROJECT_ROOT)
         
@@ -1753,6 +1867,11 @@ class AutoRunManager:
                         # 清理 MARKET_CLOSED 的 token（从 copytrade 文件中移除）
                         self._cleanup_closed_market_tokens()
                         self._next_topics_refresh = now + self.config.copytrade_poll_sec
+                    if now >= self._next_inactive_token_reconcile_check:
+                        self._reconcile_inactive_copytrade_tokens()
+                        self._next_inactive_token_reconcile_check = now + float(
+                            self.config.inactive_token_reconcile_interval_sec
+                        )
                     # Slot回填检查
                     if self.config.enable_slot_refill and now >= self._next_refill_check:
                         self._schedule_refill()
@@ -1832,7 +1951,7 @@ class AutoRunManager:
 
     def _desired_ws_token_ids(self) -> List[str]:
         """获取需要订阅的token列表（包括运行中的和待启动的）"""
-        token_ids = []
+        token_ids: List[str] = []
 
         # 主线程会并发增删 self.tasks / self.pending_topics。
         # 使用 copy()+list() 先做快照，避免直接迭代共享容器导致并发迭代异常。
@@ -1859,7 +1978,30 @@ class AutoRunManager:
             if topic_id not in token_ids:
                 token_ids.append(topic_id)
 
-        return sorted({tid for tid in token_ids if tid})
+        now = time.time()
+        grace_sec = max(0.0, float(getattr(self.config, "ws_unsubscribe_grace_sec", 0.0) or 0.0))
+        active_set = {tid for tid in token_ids if tid}
+        if grace_sec <= 0:
+            self._ws_recently_active_until = {tid: now for tid in active_set}
+            return sorted(active_set)
+
+        # 为当前活跃 token 刷新保活窗口；短期抖动时不立刻退订，减少重订阅和断连风险。
+        for tid in active_set:
+            self._ws_recently_active_until[tid] = now + grace_sec
+
+        keep_set = set(active_set)
+        expired: List[str] = []
+        for tid, expire_at in self._ws_recently_active_until.items():
+            if tid in active_set:
+                continue
+            if expire_at > now:
+                keep_set.add(tid)
+            else:
+                expired.append(tid)
+        for tid in expired:
+            self._ws_recently_active_until.pop(tid, None)
+
+        return sorted(keep_set)
 
     def _ws_aggregator_loop(self) -> None:
         last_health_check = 0.0
@@ -2046,6 +2188,8 @@ class AutoRunManager:
                 auth=self._load_ws_auth(),
                 verbose=self._ws_debug_raw,
                 label="autorun-aggregator",
+                ping_interval_sec=float(self.config.ws_ping_interval_sec),
+                ping_timeout_sec=float(self.config.ws_ping_timeout_sec),
                 silence_timeout_sec=self.config.ws_silence_timeout_sec,
                 custom_feature_enabled=self.config.ws_custom_feature_enabled,
                 subscribe_chunk_size=self.config.ws_subscribe_chunk_size,
@@ -2977,7 +3121,7 @@ class AutoRunManager:
             )
             ok = resp.status_code == 200
             reason = f"status={resp.status_code}"
-        except requests.RequestException as exc:
+        except Exception as exc:
             ok = False
             reason = f"request_error:{exc.__class__.__name__}"
 
@@ -3674,6 +3818,8 @@ class AutoRunManager:
             merged["resume_state"] = resume_state
             refill_retry_count = topic_info.get("refill_retry_count", 0)
             merged["refill_retry_count"] = refill_retry_count
+        if topic_info.get("force_sell_only_on_startup"):
+            merged["force_sell_only_on_startup"] = True
 
         resume_drop_pct = topic_info.get("resume_drop_pct")
         if resume_drop_pct is not None:
@@ -3704,6 +3850,12 @@ class AutoRunManager:
         return merged
 
     def _start_topic_process(self, topic_id: str) -> bool:
+        blacklist_action = self._enforce_title_blacklist_policy(
+            topic_id, source="before_start"
+        )
+        if blacklist_action in {"blocked_no_position", "force_liquidate"}:
+            return False
+
         running = sum(1 for t in self.tasks.values() if t.is_running())
         max_total = self._max_total_task_slots()
         if running >= max_total:
@@ -4038,6 +4190,77 @@ class AutoRunManager:
             f"liquidating={len(to_liquidate)} "
             f"cleaned={len(to_cleanup)} "
             f"stale_removed={len(stale_topics)}"
+        )
+
+    def _build_copytrade_active_token_set(self) -> set[str]:
+        active: set[str] = set()
+        for item in self._load_copytrade_tokens():
+            token_id = _topic_id_from_entry(item)
+            if token_id:
+                active.add(token_id)
+        active.update(self._load_copytrade_sell_signals().keys())
+        return active
+
+    def _reconcile_inactive_copytrade_tokens(self) -> None:
+        """运行时查漏：本地活跃但不在 copytrade 的 token 立即分流处理。"""
+        local_active = (
+            set(self.tasks.keys())
+            | set(self.pending_topics)
+            | set(self.pending_burst_topics)
+        )
+        if not local_active:
+            return
+        try:
+            copytrade_active = self._build_copytrade_active_token_set()
+        except Exception as exc:
+            print(f"[RECONCILE][WARN] 运行时对账跳过，读取 copytrade 失败: {exc}")
+            return
+
+        leak_tokens = sorted(local_active - copytrade_active)
+        if not leak_tokens:
+            return
+
+        pos_snapshot, pos_info = self._refresh_sell_position_snapshot()
+        forced_exit = 0
+        purged = 0
+        skipped = 0
+
+        for token_id in leak_tokens:
+            task = self.tasks.get(token_id)
+            if token_id in self.pending_exit_topics:
+                skipped += 1
+                continue
+            if task and task.end_reason == "sell signal cleanup":
+                skipped += 1
+                continue
+
+            has_position = False
+            if pos_info == "ok":
+                pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
+                has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+
+            if has_position or pos_info != "ok":
+                self._remove_pending_topic(token_id)
+                self._trigger_sell_exit(token_id, task)
+                forced_exit += 1
+                continue
+
+            self._remove_pending_topic(token_id)
+            if task and task.is_running():
+                task.no_restart = True
+                task.end_reason = "inactive copytrade purge"
+                task.heartbeat("inactive copytrade token purged")
+                self._terminate_task(task, reason="inactive copytrade purge")
+            self.tasks.pop(token_id, None)
+            self._purge_token_runtime_state(token_id)
+            self._remove_from_handled_topics(token_id)
+            purged += 1
+
+        print(
+            "[RECONCILE] 运行时查漏完成: "
+            f"candidates={len(leak_tokens)} "
+            f"force_exit={forced_exit} purge={purged} skip={skipped} "
+            f"position_info={pos_info}"
         )
 
     def _update_handled_topics(self, new_topics: List[str]) -> None:
@@ -4541,11 +4764,7 @@ class AutoRunManager:
             # - NO_DATA_TIMEOUT: 最多2次，优先降低低活跃市场的误淘汰抖动
             # - SHARED_WS_UNAVAILABLE: 视为基础设施瞬态故障，不设置硬上限
             retry_count = self._refill_retry_counts.get(token_id, 0)
-            effective_max_retries = max_retries
-            if exit_reason == "NO_DATA_TIMEOUT":
-                effective_max_retries = 2
-            elif exit_reason in {"SHARED_WS_UNAVAILABLE", "LOW_BALANCE_PAUSE"}:
-                effective_max_retries = 10**9
+            effective_max_retries = self._effective_refill_retry_limit(exit_reason)
             if retry_count >= effective_max_retries:
                 skip_stats["max_retries"] = skip_stats.get("max_retries", 0) + 1
                 if exit_reason in PERMANENT_AFTER_MAX_RETRIES_REASONS:
@@ -4637,6 +4856,20 @@ class AutoRunManager:
 
         return refillable
 
+    def _effective_refill_retry_limit(self, exit_reason: str) -> int:
+        reason = str(exit_reason or "").strip().upper()
+        if reason == "NO_DATA_TIMEOUT":
+            return 2
+        if reason in {"SHARED_WS_UNAVAILABLE", "LOW_BALANCE_PAUSE"}:
+            return 10**9
+        return int(self.config.max_refill_retries)
+
+    @staticmethod
+    def _format_refill_retry_limit(limit: int) -> str:
+        if limit >= 10**8:
+            return "INF"
+        return str(int(limit))
+
     def _schedule_refill(self) -> None:
         """
         执行回填调度：从退出记录中选取可回填的token重新加入pending队列。
@@ -4677,6 +4910,13 @@ class AutoRunManager:
             token_id = record.get("token_id")
             exit_reason = record.get("exit_reason", "UNKNOWN")
             exit_data = record.get("exit_data", {}) or {}
+            if not token_id:
+                continue
+            title_policy = self._enforce_title_blacklist_policy(
+                token_id, source="refill"
+            )
+            if title_policy in {"blocked_no_position", "force_liquidate", "force_sell_only"}:
+                continue
             has_position = exit_data.get("has_position", False)
             resume_drop_pct = exit_data.get("drop_pct_current")
             if self._is_reentry_eligible_exit(exit_reason, exit_data):
@@ -4725,7 +4965,7 @@ class AutoRunManager:
             print(
                 f"[REFILL] + 回填 token={token_id[:20]}... "
                 f"原因={exit_reason} 状态={state_hint} "
-                f"重试={retry_count}/{self.config.max_refill_retries}"
+                f"重试={retry_count}/{self._format_refill_retry_limit(self._effective_refill_retry_limit(exit_reason))}"
             )
 
         print(f"[REFILL] 已添加 {len(to_refill)} 个token到pending队列")
@@ -4814,6 +5054,11 @@ class AutoRunManager:
                 added_topics: List[str] = []
                 defer_new_topics = self._is_buy_paused_by_balance()
                 for topic_id in new_topics:
+                    title_policy = self._enforce_title_blacklist_policy(
+                        topic_id, source="refresh_new_topic"
+                    )
+                    if title_policy != "not_matched":
+                        continue
                     if topic_id in self.pending_topics:
                         continue
                     if topic_id in self.pending_burst_topics:
@@ -4873,11 +5118,18 @@ class AutoRunManager:
             if not token_id:
                 continue
             market_slug = item.get("market_slug") or item.get("slug")
+            market_title = (
+                item.get("title")
+                or item.get("question")
+                or item.get("market_title")
+                or item.get("topic_name")
+            )
             topics.append(
                 {
                     "topic_id": str(token_id),
                     "token_id": str(token_id),
                     "slug": market_slug,
+                    "title": market_title,
                     "last_seen": item.get("last_seen"),
                 }
             )
@@ -4940,6 +5192,150 @@ class AutoRunManager:
             if token_id is not None and str(token_id).strip():
                 out.add(str(token_id).strip())
         return out
+
+    def _match_title_blacklist(
+        self, token_id: str
+    ) -> tuple[bool, Optional[str], Optional[str]]:
+        if not bool(getattr(self.config, "title_blacklist_enabled", False)):
+            return False, None, None
+        keywords = list(getattr(self.config, "title_blacklist_keywords", []) or [])
+        if not keywords:
+            return False, None, None
+        detail = self.topic_details.get(token_id) or {}
+        title = str(
+            detail.get("title")
+            or detail.get("question")
+            or detail.get("topic_name")
+            or detail.get("market_title")
+            or ""
+        ).strip()
+        slug = str(detail.get("slug") or "").strip()
+        candidates: List[str] = []
+        if title:
+            candidates.append(title)
+        if bool(getattr(self.config, "title_blacklist_match_on_slug", True)) and slug:
+            candidates.append(slug)
+        if not candidates:
+            return False, None, title or None
+
+        haystack = "\n".join(candidates).lower()
+        for keyword in keywords:
+            kw = str(keyword or "").strip().lower()
+            if not kw:
+                continue
+            if kw in haystack:
+                return True, str(keyword), title or None
+        return False, None, title or None
+
+    def _remove_pending_exit_topic(self, token_id: str) -> None:
+        if token_id in self.pending_exit_topics:
+            try:
+                self.pending_exit_topics.remove(token_id)
+            except ValueError:
+                pass
+
+    def _enforce_title_blacklist_policy(self, token_id: str, *, source: str) -> str:
+        matched, matched_keyword, matched_title = self._match_title_blacklist(token_id)
+        if not matched:
+            return "not_matched"
+
+        detail = self.topic_details.setdefault(token_id, {})
+        has_position = self._has_account_position(token_id)
+        action = str(
+            getattr(self.config, "title_blacklist_action_with_position", "sell_only_maker")
+            or "sell_only_maker"
+        ).strip().lower()
+        task = self.tasks.get(token_id)
+
+        if not has_position:
+            self._remove_pending_topic(token_id)
+            self._remove_pending_exit_topic(token_id)
+            if task and task.is_running():
+                task.no_restart = True
+                task.end_reason = "title blacklist no position"
+                self._terminate_task(task, reason="title blacklist no position")
+                self.tasks.pop(token_id, None)
+            if token_id not in self._title_blacklist_finalized_no_position:
+                self._append_exit_token_record(
+                    token_id,
+                    "TITLE_BLACKLIST_NO_POSITION",
+                    exit_data={
+                        "source": source,
+                        "has_position": False,
+                        "matched_keyword": matched_keyword,
+                        "title": matched_title,
+                    },
+                    refillable=False,
+                )
+                self._title_blacklist_finalized_no_position.add(token_id)
+            self._update_handled_topics([token_id])
+            print(
+                "[BLACKLIST][TITLE] 命中且无仓位，跳过交易: "
+                f"token={token_id[:20]}... keyword={matched_keyword} source={source}"
+            )
+            return "blocked_no_position"
+
+        if action == "liquidate":
+            self._remove_pending_topic(token_id)
+            self._trigger_sell_exit(token_id, task)
+            if not detail.get("blacklist_with_position_recorded"):
+                self._append_exit_token_record(
+                    token_id,
+                    "TITLE_BLACKLIST_WITH_POSITION",
+                    exit_data={
+                        "source": source,
+                        "has_position": True,
+                        "mode": "liquidate",
+                        "matched_keyword": matched_keyword,
+                        "title": matched_title,
+                    },
+                    refillable=False,
+                )
+                detail["blacklist_with_position_recorded"] = True
+            self._update_handled_topics([token_id])
+            print(
+                "[BLACKLIST][TITLE] 命中且有仓位，走清仓通道: "
+                f"token={token_id[:20]}... keyword={matched_keyword} source={source}"
+            )
+            return "force_liquidate"
+
+        # 默认：sell_only_maker。若当前是普通 maker，先重启为仅卖出。
+        self._remove_pending_exit_topic(token_id)
+        detail["force_sell_only_on_startup"] = True
+        detail["queue_role"] = "title_blacklist_sell_only"
+        detail["schedule_lane"] = "base"
+        if task and task.is_running() and source != "before_start":
+            task.no_restart = True
+            task.end_reason = "title blacklist switch to sell_only"
+            self._terminate_task(task, reason="title blacklist switch to sell_only")
+            self.tasks.pop(token_id, None)
+        if (
+            source != "before_start"
+            and token_id not in self.pending_topics
+            and token_id not in self.pending_burst_topics
+            and not (task and task.is_running())
+        ):
+            self._enqueue_pending_topic(token_id)
+        if not detail.get("blacklist_with_position_recorded"):
+            self._append_exit_token_record(
+                token_id,
+                "TITLE_BLACKLIST_WITH_POSITION",
+                exit_data={
+                    "source": source,
+                    "has_position": True,
+                    "mode": "sell_only_maker",
+                    "matched_keyword": matched_keyword,
+                    "title": matched_title,
+                },
+                refillable=True,
+            )
+            detail["blacklist_with_position_recorded"] = True
+        self._update_handled_topics([token_id])
+        print(
+            "[BLACKLIST][TITLE] 命中且有仓位，切换仅卖出 maker: "
+            f"token={token_id[:20]}... keyword={matched_keyword} source={source}"
+        )
+        return "force_sell_only"
 
     def _exit_signal_path(self, token_id: str) -> Path:
         safe_id = _safe_topic_filename(token_id)
@@ -5280,6 +5676,7 @@ class AutoRunManager:
         self._pending_first_seen.clear()
         self._refilled_tokens.clear()
         self._refill_retry_counts.clear()
+        self._title_blacklist_finalized_no_position.clear()
 
         self._shared_ws_wait_failures.clear()
         self._shared_ws_paused_until.clear()

@@ -2552,6 +2552,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         "last_error": "",
     }
     exit_only = bool(run_cfg.get("exit_only", False))
+    force_sell_only_on_startup = bool(run_cfg.get("force_sell_only_on_startup", False))
     stale_awaiting_sell_seconds = max(
         float(run_cfg.get("stale_awaiting_sell_seconds", 900.0) or 900.0),
         30.0,
@@ -2566,6 +2567,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print(f"[INIT] Maker 配置: poll_sec={maker_poll_sec}s, position_sync_interval={maker_position_sync_interval}s")
     if keep_sell_orders_on_timeout:
         print("[INIT] 已启用激进模式：时间阈值退出时保留卖单")
+    if force_sell_only_on_startup:
+        print("[INIT] 已启用黑名单仅卖出模式：启动后直接进入 SELL-ONLY")
 
     def _exit_cleanup_only(reason: str) -> None:
         """
@@ -4646,6 +4649,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     # --- 所有内部函数已定义，安全执行 sell_only / countdown 初始化 ---
     print(f"[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts={sell_only_start_ts}, market_deadline_ts={market_deadline_ts})")
+
+    if force_sell_only_on_startup:
+        _activate_sell_only("title blacklist policy")
 
     if sell_only_start_ts and time.time() >= sell_only_start_ts:
         print("[INIT][TRACE] 6. 调用_activate_sell_only()...")
