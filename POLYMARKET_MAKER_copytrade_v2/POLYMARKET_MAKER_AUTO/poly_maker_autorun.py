@@ -15,6 +15,7 @@ import math
 import os
 import random
 import queue
+import re
 import requests
 import select
 import signal
@@ -26,7 +27,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from total_liquidation_manager import TotalLiquidationManager
 
@@ -179,6 +180,7 @@ DEFAULT_GLOBAL_CONFIG = {
 # Shared WS 等待防抖参数（写死，避免依赖外部 JSON）
 SHARED_WS_WAIT_ESCALATION_WINDOW_SEC = 240.0
 SHARED_WS_WAIT_ESCALATION_MIN_FAILURES = 2
+PRICE_CAP_FLAT_STUCK_LIMIT_SEC = 600.0
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 CLOB_API_ROOT = os.getenv("POLY_CLOB_API_ROOT", "https://clob.polymarket.com")
@@ -1419,7 +1421,9 @@ class AutoRunManager:
         self._seen_self_sell_trade_keys: set[str] = set()
         self._seen_self_sell_tokens: set[str] = set()
         self._price_cap_stuck_since: Dict[str, float] = {}
+        self._price_cap_flat_stuck_since: Dict[str, float] = {}
         self._shock_stuck_since: Dict[str, float] = {}
+        self._task_run_config_cache: Dict[str, Tuple[str, float, Dict[str, Any]]] = {}
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
         self._handled_sell_signals: set[str] = set()
@@ -2843,6 +2847,8 @@ class AutoRunManager:
                 self._update_log_excerpt(task)
                 if self._check_stuck_and_refill(task, now):
                     continue
+                if self._check_flat_price_cap_stuck_and_refill(task, now):
+                    continue
                 if self._log_indicates_market_end(task):
                     task.status = "ended"
                     task.no_restart = True
@@ -2892,6 +2898,68 @@ class AutoRunManager:
                 return True
         return False
 
+    def _get_task_run_config(self, task: TopicTask) -> Dict[str, Any]:
+        path = task.config_path
+        if not path or not path.exists():
+            return {}
+        try:
+            mtime = float(path.stat().st_mtime)
+        except OSError:
+            return {}
+        cache = self._task_run_config_cache.get(task.topic_id)
+        if cache and cache[0] == str(path) and abs(cache[1] - mtime) < 1e-9:
+            return cache[2]
+        data = _load_json_file(path)
+        cfg = data if isinstance(data, dict) else {}
+        self._task_run_config_cache[task.topic_id] = (str(path), mtime, cfg)
+        return cfg
+
+    def _task_buy_price_cap(self, task: TopicTask) -> float:
+        cfg = self._get_task_run_config(task)
+        cap = _coerce_float(cfg.get("max_buy_price"))
+        if cap is None:
+            cap = 0.98
+        return float(cap)
+
+    @staticmethod
+    def _extract_flat_bid_from_excerpt(log_excerpt: str) -> Optional[float]:
+        if not log_excerpt:
+            return None
+        for raw_line in reversed(log_excerpt.splitlines()):
+            line = str(raw_line or "").strip()
+            if "state=FLAT" not in line or "bid=" not in line:
+                continue
+            match = re.search(r"bid=([0-9]+(?:\.[0-9]+)?)", line)
+            if not match:
+                continue
+            try:
+                return float(match.group(1))
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _check_flat_price_cap_stuck_and_refill(self, task: TopicTask, now: float) -> bool:
+        topic_id = task.topic_id
+        cfg = self._get_task_run_config(task)
+        if bool(cfg.get("exit_only")) or bool(cfg.get("force_sell_only_on_startup")):
+            self._price_cap_flat_stuck_since.pop(topic_id, None)
+            return False
+        bid = self._extract_flat_bid_from_excerpt(task.log_excerpt)
+        if bid is None:
+            self._price_cap_flat_stuck_since.pop(topic_id, None)
+            return False
+        cap = self._task_buy_price_cap(task)
+        if bid < cap - 1e-12:
+            self._price_cap_flat_stuck_since.pop(topic_id, None)
+            return False
+        since = self._price_cap_flat_stuck_since.setdefault(topic_id, now)
+        stuck_sec = now - since
+        if stuck_sec < PRICE_CAP_FLAT_STUCK_LIMIT_SEC:
+            return False
+        last_line = (task.log_excerpt.splitlines() or [""])[-1].strip()
+        self._force_stuck_refill(task, "PRICE_CAP_FLAT_STUCK", last_line, stuck_sec)
+        return True
+
     def _force_stuck_refill(
         self,
         task: TopicTask,
@@ -2928,6 +2996,7 @@ class AutoRunManager:
         task.end_reason = exit_reason.lower()
         self._terminate_task(task, reason=f"{exit_reason} -> refill")
         self._price_cap_stuck_since.pop(token_id, None)
+        self._price_cap_flat_stuck_since.pop(token_id, None)
         self._shock_stuck_since.pop(token_id, None)
         print(
             f"[REFILL][STUCK] token={token_id[:20]}... reason={exit_reason} "
@@ -2936,6 +3005,7 @@ class AutoRunManager:
 
     def _handle_process_exit(self, task: TopicTask, rc: int) -> None:
         self._price_cap_stuck_since.pop(task.topic_id, None)
+        self._price_cap_flat_stuck_since.pop(task.topic_id, None)
         self._shock_stuck_since.pop(task.topic_id, None)
         task.process = None
         if task.status not in {"stopped", "exited", "error", "ended"}:
@@ -4379,8 +4449,30 @@ class AutoRunManager:
             print("[RUN] 当前无运行中的话题")
             return
 
+        mode_counts: Dict[str, int] = {}
+        for task in running_tasks:
+            detail = self.topic_details.get(task.topic_id) or {}
+            mode = self._task_runtime_mode(task, detail)
+            mode_counts[mode] = mode_counts.get(mode, 0) + 1
+        print(f"[STATUS] task_modes={mode_counts}")
         for idx, task in enumerate(running_tasks, 1):
             self._print_single_task(task, idx)
+
+    def _task_runtime_mode(self, task: TopicTask, detail: Dict[str, Any]) -> str:
+        role = self._queue_role(detail)
+        cfg = self._get_task_run_config(task)
+        if bool(cfg.get("exit_only")) or (
+            task.log_path and task.log_path.name.startswith("autorun_exit_")
+        ):
+            return "清仓状态"
+        if detail.get("blacklist_keyword") or role.startswith("title_blacklist"):
+            return "黑名单"
+        if (
+            str(detail.get("refill_exit_reason") or "").upper() == "LOW_BALANCE_PAUSE"
+            and bool(cfg.get("force_sell_only_on_startup"))
+        ):
+            return "余额不足只卖出"
+        return "正常波段"
 
     def _print_single_task(self, task: TopicTask, index: Optional[int] = None) -> None:
         hb = task.last_heartbeat
@@ -4393,9 +4485,10 @@ class AutoRunManager:
         detail = self.topic_details.get(task.topic_id) or {}
         lane = detail.get("schedule_lane") or "-"
         role = self._queue_role(detail)
+        mode = self._task_runtime_mode(task, detail)
         print(
             f"{prefix} topic={task.topic_id} status={task.status} "
-            f"lane={lane} role={role} "
+            f"lane={lane} role={role} mode={mode} "
             f"start={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(task.start_time))} "
             f"pid={pid_text} hb={hb_text} notes={len(task.notes)} "
             f"log={log_name} last_line={log_hint or '-'}"
@@ -5694,6 +5787,10 @@ class AutoRunManager:
         self._shared_ws_wait_timeout_events.clear()
         self._clob_book_probe_cache.clear()
         self._shared_ws_pending_since.clear()
+        self._price_cap_stuck_since.clear()
+        self._price_cap_flat_stuck_since.clear()
+        self._shock_stuck_since.clear()
+        self._task_run_config_cache.clear()
         self._seen_self_sell_trade_keys.clear()
         self._seen_self_sell_tokens.clear()
         self._process_started_at = time.time()
