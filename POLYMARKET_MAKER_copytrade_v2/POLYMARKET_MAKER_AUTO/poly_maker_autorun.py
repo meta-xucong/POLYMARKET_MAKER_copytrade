@@ -4571,7 +4571,6 @@ class AutoRunManager:
         print(f"[STATUS] task_modes={mode_counts}")
         for idx, task in enumerate(running_tasks, 1):
             self._print_single_task(task, idx)
-
     def _task_runtime_mode(self, task: TopicTask, detail: Dict[str, Any]) -> str:
         role = self._queue_role(detail)
         cfg = self._get_task_run_config(task)
@@ -4581,6 +4580,12 @@ class AutoRunManager:
             return "清仓状态"
         if detail.get("blacklist_keyword") or role.startswith("title_blacklist"):
             return "黑名单"
+        low_balance_sell_only = bool(cfg.get("force_sell_only_on_startup")) or role in {
+            "refill_with_position",
+            "startup_reconcile_position",
+        }
+        if self._buy_paused_due_to_balance and low_balance_sell_only:
+            return "余额不足只卖出"
         if (
             str(detail.get("refill_exit_reason") or "").upper() == "LOW_BALANCE_PAUSE"
             and bool(cfg.get("force_sell_only_on_startup"))

@@ -418,6 +418,7 @@ def test_hot_reload_updates_title_blacklist_keywords(tmp_path):
         ),
         encoding="utf-8",
     )
+    manager._config_mtime_ns = 0
     manager._hot_reload_runtime_config()
 
     assert manager.config.title_blacklist_keywords == ["Russia", "Iran"]
@@ -811,3 +812,27 @@ def test_evict_stale_pending_topics_requires_ws_unconfirmed_and_book_unavailable
     assert "t1" not in manager.pending_topics
     assert "t2" in manager.pending_topics
     assert "t3" in manager.pending_topics
+
+
+def test_task_runtime_mode_low_balance_refill_with_position():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._buy_paused_due_to_balance = True
+    manager._get_task_run_config = lambda _task: {}  # type: ignore[assignment]
+    task = TopicTask(topic_id="t1")
+
+    mode = manager._task_runtime_mode(task, {"queue_role": "refill_with_position"})
+
+    assert mode == "余额不足只卖出"
+
+
+def test_task_runtime_mode_blacklist_has_priority_over_low_balance():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._buy_paused_due_to_balance = True
+    manager._get_task_run_config = lambda _task: {"force_sell_only_on_startup": True}  # type: ignore[assignment]
+    task = TopicTask(topic_id="t1")
+
+    mode = manager._task_runtime_mode(task, {"queue_role": "title_blacklist_sell_only"})
+
+    assert mode == "黑名单"
