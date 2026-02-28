@@ -307,6 +307,124 @@ def test_startup_full_reconcile_moves_position_token_to_base_pending(tmp_path):
     assert manager._startup_sync_retry_needed is False
 
 
+def test_startup_reconcile_applies_title_blacklist_with_position(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": []}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [
+                    {
+                        "token_id": "hold_token",
+                        "title": "US strikes Iran by March 31, 2026?",
+                        "slug": "us-strikes-iran-by-march-31-2026",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps({"updated_at": "", "sell_tokens": []}),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+            "scheduler": {
+                "title_blacklist": {
+                    "enabled": True,
+                    "keywords": ["Iran"],
+                    "match_on_slug": True,
+                    "action_with_position": "sell_only_maker",
+                }
+            },
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({"hold_token": 1.2}, "ok")  # type: ignore[assignment]
+    manager._has_account_position = lambda token_id: token_id == "hold_token"  # type: ignore[assignment]
+
+    manager._sync_handled_topics_on_startup()
+
+    assert "hold_token" in manager.pending_topics
+    detail = manager.topic_details.get("hold_token") or {}
+    assert detail.get("queue_role") == "title_blacklist_sell_only"
+    assert detail.get("force_sell_only_on_startup") is True
+    assert manager._startup_sync_retry_needed is False
+
+
+def test_hot_reload_updates_title_blacklist_keywords(tmp_path):
+    cfg_file = tmp_path / "global_config.json"
+    cfg_file.write_text(
+        json.dumps(
+            {
+                "scheduler": {
+                    "title_blacklist": {
+                        "enabled": True,
+                        "keywords": ["Iran"],
+                        "match_on_slug": True,
+                        "action_with_position": "sell_only_maker",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "scheduler": {
+                "title_blacklist": {
+                    "enabled": True,
+                    "keywords": ["Iran"],
+                    "match_on_slug": True,
+                    "action_with_position": "sell_only_maker",
+                }
+            }
+        }
+    )
+    cfg.global_config_path = cfg_file
+    manager = _build_manager(cfg)
+
+    assert manager.config.title_blacklist_keywords == ["Iran"]
+    manager._next_config_reload_check = 0.0
+
+    cfg_file.write_text(
+        json.dumps(
+            {
+                "scheduler": {
+                    "title_blacklist": {
+                        "enabled": True,
+                        "keywords": ["Russia", "Iran"],
+                        "match_on_slug": True,
+                        "action_with_position": "sell_only_maker",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager._hot_reload_runtime_config()
+
+    assert manager.config.title_blacklist_keywords == ["Russia", "Iran"]
+    assert manager.config.title_blacklist_enabled is True
+    assert manager.config.title_blacklist_action_with_position == "sell_only_maker"
+
+
 def test_aggressive_mode_uses_burst_slots_and_queue_promotion():
     cfg = GlobalConfig.from_dict(
         {

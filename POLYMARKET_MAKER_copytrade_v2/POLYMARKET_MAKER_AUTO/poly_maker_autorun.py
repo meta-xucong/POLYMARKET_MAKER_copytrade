@@ -743,6 +743,7 @@ class GlobalConfig:
     copytrade_blacklist_path: Path = field(
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["copytrade_blacklist_path"])
     )
+    global_config_path: Optional[Path] = None
     process_start_retries: int = DEFAULT_GLOBAL_CONFIG["process_start_retries"]
     process_retry_delay_sec: float = DEFAULT_GLOBAL_CONFIG["process_retry_delay_sec"]
     process_graceful_timeout_sec: float = DEFAULT_GLOBAL_CONFIG[
@@ -1381,6 +1382,8 @@ class AutoRunManager:
         self._next_topics_refresh: float = 0.0
         self._next_status_dump: float = 0.0
         self._next_topic_start_at: float = 0.0
+        self._next_config_reload_check: float = 0.0
+        self._config_mtime_ns: Optional[int] = None
         self.status_path = self.config.runtime_status_path
         self._ws_cache_path = self.config.data_dir / "ws_cache.json"
         self._ws_cache_lock = threading.Lock()
@@ -1484,6 +1487,94 @@ class AutoRunManager:
                 self._market_closed_cleaner = None
         else:
             print("[INIT] 市场状态检测器不可用（模块导入失败）")
+
+        if self.config.global_config_path:
+            try:
+                self._config_mtime_ns = self.config.global_config_path.stat().st_mtime_ns
+            except OSError:
+                self._config_mtime_ns = None
+
+    @staticmethod
+    def _parse_title_blacklist_settings(config_payload: Dict[str, Any]) -> tuple[bool, List[str], bool, str]:
+        scheduler = (
+            config_payload.get("scheduler")
+            if isinstance(config_payload, dict)
+            else {}
+        )
+        scheduler = scheduler if isinstance(scheduler, dict) else {}
+        title_cfg = scheduler.get("title_blacklist")
+        if not isinstance(title_cfg, dict):
+            title_cfg = config_payload.get("title_blacklist") if isinstance(config_payload, dict) else {}
+        if not isinstance(title_cfg, dict):
+            title_cfg = {}
+
+        enabled = bool(
+            title_cfg.get(
+                "enabled",
+                (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get("enabled", False),
+            )
+        )
+        keywords = [
+            str(k).strip()
+            for k in (title_cfg.get("keywords") or [])
+            if str(k).strip()
+        ]
+        match_on_slug = bool(
+            title_cfg.get(
+                "match_on_slug",
+                (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get("match_on_slug", True),
+            )
+        )
+        action = str(
+            title_cfg.get(
+                "action_with_position",
+                (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get(
+                    "action_with_position", "sell_only_maker"
+                ),
+            )
+            or "sell_only_maker"
+        ).strip().lower()
+        return enabled, keywords, match_on_slug, action
+
+    def _hot_reload_runtime_config(self) -> None:
+        config_path = self.config.global_config_path
+        if not config_path:
+            return
+        now = time.time()
+        if now < self._next_config_reload_check:
+            return
+        self._next_config_reload_check = now + max(2.0, float(self.config.command_poll_sec))
+        try:
+            mtime_ns = config_path.stat().st_mtime_ns
+        except OSError:
+            return
+        if self._config_mtime_ns is not None and mtime_ns == self._config_mtime_ns:
+            return
+        try:
+            payload = _load_json_file(config_path)
+            enabled, keywords, match_on_slug, action = self._parse_title_blacklist_settings(payload)
+        except Exception as exc:
+            print(f"[CONFIG][HOT_RELOAD][WARN] reload failed: {exc}")
+            return
+        self._config_mtime_ns = mtime_ns
+        old_state = (
+            bool(self.config.title_blacklist_enabled),
+            list(self.config.title_blacklist_keywords),
+            bool(self.config.title_blacklist_match_on_slug),
+            str(self.config.title_blacklist_action_with_position or "").strip().lower(),
+        )
+        new_state = (enabled, keywords, match_on_slug, action)
+        if old_state == new_state:
+            return
+        self.config.title_blacklist_enabled = enabled
+        self.config.title_blacklist_keywords = keywords
+        self.config.title_blacklist_match_on_slug = match_on_slug
+        self.config.title_blacklist_action_with_position = action
+        print(
+            "[CONFIG][HOT_RELOAD] title_blacklist updated: "
+            f"enabled={enabled} keywords={len(keywords)} "
+            f"match_on_slug={match_on_slug} action={action}"
+        )
 
     def _manual_intervention_path(self) -> Path:
         return self.config.copytrade_sell_signals_path.parent / "manual_intervention_tokens.json"
@@ -1871,6 +1962,7 @@ class AutoRunManager:
             while not self.stop_event.is_set():
                 try:
                     now = time.time()
+                    self._hot_reload_runtime_config()
                     self._normalize_pending_queues_for_mode()
                     self._process_commands()
                     self._poll_tasks()
@@ -4173,14 +4265,20 @@ class AutoRunManager:
             return
 
         try:
+            copytrade_entries = self._load_copytrade_tokens()
             copytrade_topics = {
                 topic_id
                 for topic_id in (
                     _topic_id_from_entry(item)
-                    for item in self._load_copytrade_tokens()
+                    for item in copytrade_entries
                 )
                 if topic_id
             }
+            copytrade_entry_map: Dict[str, Dict[str, Any]] = {}
+            for item in copytrade_entries:
+                token_id = _topic_id_from_entry(item)
+                if token_id and isinstance(item, dict):
+                    copytrade_entry_map[token_id] = item
             sell_signals = self._load_copytrade_sell_signals()
         except Exception as exc:
             print(f"[HANDLED][WARN] startup sync skipped due to copytrade read error: {exc}")
@@ -4239,6 +4337,22 @@ class AutoRunManager:
                 self._remove_pending_topic(token_id)
             if token_id not in self.pending_topics:
                 detail = self.topic_details.setdefault(token_id, {})
+                copytrade_detail = copytrade_entry_map.get(token_id) or {}
+                if copytrade_detail.get("title") and not detail.get("title"):
+                    detail["title"] = copytrade_detail.get("title")
+                if copytrade_detail.get("slug") and not detail.get("slug"):
+                    detail["slug"] = copytrade_detail.get("slug")
+
+                title_policy = self._enforce_title_blacklist_policy(
+                    token_id, source="startup_reconcile"
+                )
+                if title_policy in {
+                    "blocked_no_position",
+                    "force_liquidate",
+                    "force_sell_only",
+                }:
+                    continue
+
                 detail["queue_role"] = "startup_reconcile_position"
                 detail["schedule_lane"] = "base"
                 self._enqueue_pending_topic(token_id)
@@ -6109,8 +6223,10 @@ def load_configs(
     global_conf_raw = _load_json_file(args.global_config)
     strategy_conf_raw = _load_json_file(args.strategy_config)
     run_params_template = _load_json_file(args.run_config_template)
+    global_conf = GlobalConfig.from_dict(global_conf_raw)
+    global_conf.global_config_path = args.global_config
     return (
-        GlobalConfig.from_dict(global_conf_raw),
+        global_conf,
         strategy_conf_raw,
         run_params_template,
     )
