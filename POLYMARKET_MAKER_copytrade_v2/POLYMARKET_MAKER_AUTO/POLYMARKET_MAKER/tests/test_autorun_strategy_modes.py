@@ -426,6 +426,66 @@ def test_hot_reload_updates_title_blacklist_keywords(tmp_path):
     assert manager.config.title_blacklist_action_with_position == "sell_only_maker"
 
 
+def test_start_process_hydrates_title_before_blacklist_check(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+    handled_path = copytrade_dir / "handled_topics.json"
+
+    token_id = "hold_token"
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [
+                    {
+                        "token_id": token_id,
+                        "title": "US strikes Iran by March 31, 2026?",
+                        "slug": "us-strikes-iran-by-march-31-2026",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sell_path.write_text(json.dumps({"updated_at": "", "sell_tokens": []}), encoding="utf-8")
+    handled_path.write_text(json.dumps({"updated_at": "", "topics": []}), encoding="utf-8")
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+            "scheduler": {
+                "title_blacklist": {
+                    "enabled": True,
+                    "keywords": ["Iran"],
+                    "match_on_slug": True,
+                    "action_with_position": "sell_only_maker",
+                }
+            },
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.topic_details[token_id] = {"queue_role": "restored_token"}
+    seen = {}
+
+    def _fake_enforce(tid: str, *, source: str) -> str:
+        seen["title"] = (manager.topic_details.get(tid) or {}).get("title")
+        seen["source"] = source
+        return "blocked_no_position"
+
+    manager._enforce_title_blacklist_policy = _fake_enforce  # type: ignore[assignment]
+
+    ok = manager._start_topic_process(token_id)
+
+    assert ok is False
+    assert seen.get("source") == "before_start"
+    assert "Iran" in str(seen.get("title") or "")
+
+
 def test_aggressive_mode_uses_burst_slots_and_queue_promotion():
     cfg = GlobalConfig.from_dict(
         {

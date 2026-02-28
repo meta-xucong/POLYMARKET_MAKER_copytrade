@@ -4022,7 +4022,48 @@ class AutoRunManager:
 
         return merged
 
+    def _hydrate_topic_metadata_for_blacklist(self, token_id: str) -> None:
+        if not token_id:
+            return
+        detail = self.topic_details.setdefault(token_id, {})
+        title = str(detail.get("title") or "").strip()
+        slug = str(detail.get("slug") or "").strip()
+        if title and slug:
+            return
+
+        for entry in self.latest_topics:
+            if _topic_id_from_entry(entry) != token_id or not isinstance(entry, dict):
+                continue
+            if not title:
+                candidate_title = str(entry.get("title") or "").strip()
+                if candidate_title:
+                    detail["title"] = candidate_title
+                    title = candidate_title
+            if not slug:
+                candidate_slug = str(entry.get("slug") or "").strip()
+                if candidate_slug:
+                    detail["slug"] = candidate_slug
+                    slug = candidate_slug
+            if title and slug:
+                return
+
+        for entry in self._load_copytrade_tokens():
+            if _topic_id_from_entry(entry) != token_id or not isinstance(entry, dict):
+                continue
+            if not title:
+                candidate_title = str(entry.get("title") or "").strip()
+                if candidate_title:
+                    detail["title"] = candidate_title
+                    title = candidate_title
+            if not slug:
+                candidate_slug = str(entry.get("slug") or "").strip()
+                if candidate_slug:
+                    detail["slug"] = candidate_slug
+                    slug = candidate_slug
+            return
+
     def _start_topic_process(self, topic_id: str) -> bool:
+        self._hydrate_topic_metadata_for_blacklist(topic_id)
         blacklist_action = self._enforce_title_blacklist_policy(
             topic_id, source="before_start"
         )
