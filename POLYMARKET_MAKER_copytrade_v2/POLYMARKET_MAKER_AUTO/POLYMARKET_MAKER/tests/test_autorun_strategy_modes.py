@@ -21,7 +21,7 @@ if "requests" not in sys.modules:
         exceptions=types.SimpleNamespace(RequestException=Exception),
     )
 
-from poly_maker_autorun import AutoRunManager, GlobalConfig, TopicTask
+from poly_maker_autorun import AutoRunManager, GlobalConfig, TopicTask, compute_new_topics
 
 
 def _build_manager(cfg: GlobalConfig) -> AutoRunManager:
@@ -36,6 +36,16 @@ def test_default_mode_is_classic():
     manager = _build_manager(cfg)
     assert manager._is_aggressive_mode() is False
     assert manager._burst_slots() == 10
+
+
+def test_compute_new_topics_dedupes_token_ids():
+    latest = [
+        {"topic_id": "t1"},
+        {"token_id": "t1"},
+        {"topic_id": "t2"},
+    ]
+    got = compute_new_topics(latest, handled={"t2"})
+    assert got == ["t1"]
 
 
 def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
@@ -470,6 +480,13 @@ def test_start_process_hydrates_title_before_blacklist_check(tmp_path):
     )
     manager = _build_manager(cfg)
     manager.topic_details[token_id] = {"queue_role": "restored_token"}
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (  # type: ignore[assignment]
+        {
+            "question": "US strikes Iran by March 31, 2026?",
+            "slug": "us-strikes-iran-by-march-31-2026",
+        },
+        "stub",
+    )
     seen = {}
 
     def _fake_enforce(tid: str, *, source: str) -> str:
@@ -536,6 +553,13 @@ def test_start_process_hydrates_title_from_positions_cache(tmp_path):
     )
     manager = _build_manager(cfg)
     manager.topic_details[token_id] = {"queue_role": "restored_token"}
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (  # type: ignore[assignment]
+        {
+            "question": "US strikes Iran by March 31, 2026?",
+            "slug": "us-strikes-iran-by-march-31-2026",
+        },
+        "stub",
+    )
     seen = {}
 
     def _fake_enforce(tid: str, *, source: str) -> str:
@@ -583,11 +607,87 @@ def test_restore_runtime_status_sets_restored_role_for_task_snapshot(tmp_path):
     )
     manager = _build_manager(cfg)
     manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (None, "stub")  # type: ignore[assignment]
 
     manager._restore_runtime_status()
 
     detail = manager.topic_details.get("task_token") or {}
     assert detail.get("queue_role") == "restored_token"
+
+
+def test_start_process_blocks_when_metadata_unverified_without_position():
+    cfg = GlobalConfig.from_dict(
+        {
+            "scheduler": {
+                "title_blacklist": {
+                    "enabled": True,
+                    "keywords": ["Iran"],
+                }
+            }
+        }
+    )
+    manager = _build_manager(cfg)
+    token_id = "unverified_x"
+    manager.topic_details[token_id] = {}
+    manager._has_account_position = lambda _tid: False  # type: ignore[assignment]
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (None, "request_error")  # type: ignore[assignment]
+    captured = []
+    manager._append_exit_token_record = lambda token, reason, **kwargs: captured.append((token, reason, kwargs))  # type: ignore[assignment]
+    manager._enforce_title_blacklist_policy = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not reach enforce"))  # type: ignore[assignment]
+
+    ok = manager._start_topic_process(token_id)
+
+    assert ok is False
+    assert captured
+    assert captured[0][1] == "TITLE_BLACKLIST_METADATA_UNVERIFIED_NO_POSITION"
+
+
+def test_hydrate_force_official_check_not_short_circuited_by_local_metadata():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "force_meta_token"
+    manager.topic_details[token_id] = {
+        "title": "local title",
+        "slug": "local-slug",
+    }
+    calls = {"n": 0}
+
+    def _fake_fetch(_tid: str):
+        calls["n"] += 1
+        return (
+            {"question": "official title", "slug": "official-slug"},
+            "stub",
+        )
+
+    manager._fetch_market_metadata_from_gamma_by_token_id = _fake_fetch  # type: ignore[assignment]
+
+    manager._hydrate_topic_metadata_for_blacklist(token_id, force_official_check=True)
+
+    assert calls["n"] == 1
+    detail = manager.topic_details[token_id]
+    assert detail["title"] == "official title"
+    assert detail["slug"] == "official-slug"
+    assert detail.get("blacklist_metadata_verified") is True
+
+
+def test_hydrate_calls_official_fetch_when_positions_cache_missing():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "no_cache_token"
+    calls = {"n": 0}
+
+    def _fake_fetch(_tid: str):
+        calls["n"] += 1
+        return (None, "stub_error")
+
+    manager._fetch_market_metadata_from_gamma_by_token_id = _fake_fetch  # type: ignore[assignment]
+
+    manager._hydrate_topic_metadata_for_blacklist(token_id, force_official_check=True)
+
+    assert calls["n"] == 1
+    detail = manager.topic_details[token_id]
+    assert detail.get("blacklist_metadata_verified") is False
+    assert detail.get("blacklist_metadata_source") == "stub_error"
 
 
 def test_aggressive_mode_uses_burst_slots_and_queue_promotion():

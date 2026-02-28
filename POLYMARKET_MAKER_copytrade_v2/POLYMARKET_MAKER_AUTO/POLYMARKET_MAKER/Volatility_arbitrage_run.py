@@ -4250,7 +4250,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         floor_hint: Optional[float],
         source: str,
     ) -> None:
-        nonlocal position_size, last_order_size, position_sync_block_until, next_position_sync, next_loop_after
+        nonlocal position_size, last_order_size, position_sync_block_until, next_position_sync, next_loop_after, market_closed_detected
 
         position_snapshot_cache: Optional[
             Tuple[Optional[float], Optional[float], Optional[str]]
@@ -4386,6 +4386,27 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             )
         except Exception as exc:
             print(f"[ERR] {source} 卖出挂单异常：{exc}")
+            err_text = str(exc or "")
+            err_text_lower = err_text.lower()
+            missing_orderbook = (
+                "no orderbook exists for the requested token id" in err_text_lower
+                or ("orderbook" in err_text_lower and "does not exist" in err_text_lower)
+            )
+            if missing_orderbook:
+                now_ts = time.time()
+                refreshed_meta = _refresh_market_meta()
+                if _market_has_ended(refreshed_meta, now_ts):
+                    print("[MARKET] sell flow sees missing orderbook and ended market, exit token")
+                    market_closed_detected = True
+                    _cancel_open_buy_orders_before_exit("MARKET_CLOSED")
+                    _record_exit_token(token_id, "MARKET_CLOSED", {
+                        "detected_at": "sell_flow_orderbook_missing",
+                        "has_position": _has_actionable_position(),
+                        "error": err_text[:500],
+                    })
+                    strategy.stop("market closed")
+                    stop_event.set()
+                    return
             strategy.on_reject(str(exc))
             return
 
