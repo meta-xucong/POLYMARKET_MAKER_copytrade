@@ -4060,6 +4060,37 @@ class AutoRunManager:
                 if candidate_slug:
                     detail["slug"] = candidate_slug
                     slug = candidate_slug
+            if title or slug:
+                return
+            break
+
+        # Fallback: positions cache from data-api includes title/slug for held tokens.
+        positions_cache_path = self.config.data_dir / "positions_cache.json"
+        if not positions_cache_path.exists():
+            return
+        try:
+            payload = _load_json_file(positions_cache_path)
+            rows = payload.get("positions") if isinstance(payload, dict) else []
+        except Exception:
+            return
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            asset = str(row.get("asset") or "").strip()
+            if asset != token_id:
+                continue
+            if not title:
+                candidate_title = str(row.get("title") or row.get("question") or "").strip()
+                if candidate_title:
+                    detail["title"] = candidate_title
+                    title = candidate_title
+            if not slug:
+                candidate_slug = str(row.get("slug") or "").strip()
+                if candidate_slug:
+                    detail["slug"] = candidate_slug
+                    slug = candidate_slug
             return
 
     def _start_topic_process(self, topic_id: str) -> bool:
@@ -6028,6 +6059,8 @@ class AutoRunManager:
             # 即使在 handled 中也应恢复，以确保任务不丢失
             if topic_id not in self.pending_topics:
                 restored_topics.append(topic_id)
+                detail = self.topic_details.setdefault(topic_id, {})
+                detail["queue_role"] = "restored_token"
                 self._enqueue_pending_topic(topic_id)
 
             task = TopicTask(topic_id=topic_id)

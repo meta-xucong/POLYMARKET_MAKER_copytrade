@@ -486,6 +486,110 @@ def test_start_process_hydrates_title_before_blacklist_check(tmp_path):
     assert "Iran" in str(seen.get("title") or "")
 
 
+def test_start_process_hydrates_title_from_positions_cache(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+    handled_path = copytrade_dir / "handled_topics.json"
+
+    token_id = "hold_token"
+    tokens_path.write_text(
+        json.dumps({"updated_at": "", "tokens": [{"token_id": token_id}]}),
+        encoding="utf-8",
+    )
+    sell_path.write_text(json.dumps({"updated_at": "", "sell_tokens": []}), encoding="utf-8")
+    handled_path.write_text(json.dumps({"updated_at": "", "topics": []}), encoding="utf-8")
+    (data_dir / "positions_cache.json").write_text(
+        json.dumps(
+            {
+                "positions": [
+                    {
+                        "asset": token_id,
+                        "title": "US strikes Iran by March 31, 2026?",
+                        "slug": "us-strikes-iran-by-march-31-2026",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+            "scheduler": {
+                "title_blacklist": {
+                    "enabled": True,
+                    "keywords": ["Iran"],
+                    "match_on_slug": True,
+                    "action_with_position": "sell_only_maker",
+                }
+            },
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.topic_details[token_id] = {"queue_role": "restored_token"}
+    seen = {}
+
+    def _fake_enforce(tid: str, *, source: str) -> str:
+        seen["title"] = (manager.topic_details.get(tid) or {}).get("title")
+        seen["source"] = source
+        return "blocked_no_position"
+
+    manager._enforce_title_blacklist_policy = _fake_enforce  # type: ignore[assignment]
+
+    ok = manager._start_topic_process(token_id)
+
+    assert ok is False
+    assert seen.get("source") == "before_start"
+    assert "Iran" in str(seen.get("title") or "")
+
+
+def test_restore_runtime_status_sets_restored_role_for_task_snapshot(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    status_path = data_dir / "autorun_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "pending_topics": [],
+                "pending_exit_topics": [],
+                "tasks": {
+                    "task_token": {
+                        "config_path": "",
+                        "log_path": "",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "runtime_status_path": str(status_path),
+            "handled_topics_path": str(data_dir / "handled_topics.json"),
+            "copytrade_tokens_path": str(data_dir / "tokens_from_copytrade.json"),
+            "copytrade_sell_signals_path": str(data_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(data_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+
+    manager._restore_runtime_status()
+
+    detail = manager.topic_details.get("task_token") or {}
+    assert detail.get("queue_role") == "restored_token"
+
+
 def test_aggressive_mode_uses_burst_slots_and_queue_promotion():
     cfg = GlobalConfig.from_dict(
         {
