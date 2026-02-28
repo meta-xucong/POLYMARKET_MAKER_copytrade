@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import fcntl
 import json
 import math
 import os
@@ -30,6 +29,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from total_liquidation_manager import TotalLiquidationManager
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    class _FcntlCompat:
+        LOCK_EX = 0
+        LOCK_UN = 0
+
+        @staticmethod
+        def flock(_fd: int, _op: int) -> None:
+            return
+
+    fcntl = _FcntlCompat()  # type: ignore[assignment]
 
 # =====================
 # 配置与常量
@@ -184,6 +196,7 @@ PRICE_CAP_FLAT_STUCK_LIMIT_SEC = 600.0
 ORDER_SIZE_DECIMALS = 4  # Polymarket 下单数量精度（按买单精度取整）
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 CLOB_API_ROOT = os.getenv("POLY_CLOB_API_ROOT", "https://clob.polymarket.com")
+GAMMA_API_ROOT = os.getenv("POLY_GAMMA_API_ROOT", "https://gamma-api.polymarket.com")
 POSITION_CHECK_CACHE_TTL_SEC = 600.0
 # 低余额筛查场景下：无持仓 token 启动时检查一次，之后每 30 分钟再复检，
 # 避免在 copytrade 轮询周期（30s）下重复高频查询。
@@ -198,6 +211,8 @@ _data_api_last_request_ts = 0.0
 _data_api_request_lock = threading.Lock()
 CLOB_BOOK_PROBE_TIMEOUT_SEC = 5.0
 CLOB_BOOK_PROBE_CACHE_TTL_SEC = 300.0
+GAMMA_MARKET_PROBE_TIMEOUT_SEC = 10.0
+GAMMA_MARKET_CACHE_TTL_SEC = 300.0
 
 
 class _TeeStream:
@@ -279,7 +294,8 @@ def _atomic_json_write(path: Path, data: Any) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.rename(tmp_path, str(path))
+        # Use replace for cross-platform atomic overwrite (Windows rename fails if target exists).
+        os.replace(tmp_path, str(path))
     except BaseException:
         try:
             os.unlink(tmp_path)
@@ -713,10 +729,12 @@ def compute_new_topics(latest: List[Any], handled: set[str]) -> List[str]:
     """从最新筛选结果中筛出尚未处理的话题列表。"""
 
     result: List[str] = []
+    seen: set[str] = set()
     for entry in latest:
         topic_id = _topic_id_from_entry(entry)
-        if topic_id and topic_id not in handled:
+        if topic_id and topic_id not in handled and topic_id not in seen:
             result.append(topic_id)
+            seen.add(topic_id)
     return result
 
 
@@ -1417,6 +1435,7 @@ class AutoRunManager:
         self._pending_first_seen: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._clob_book_probe_cache: Dict[str, Dict[str, Any]] = {}
+        self._gamma_market_probe_cache: Dict[str, Dict[str, Any]] = {}
         self._next_pending_eviction: float = 0.0
         self._last_sell_fill_poll_at: float = 0.0
         self._process_started_at: float = time.time()
@@ -4022,13 +4041,112 @@ class AutoRunManager:
 
         return merged
 
-    def _hydrate_topic_metadata_for_blacklist(self, token_id: str) -> None:
+    @staticmethod
+    def _normalize_market_token_ids(raw_value: Any) -> List[str]:
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, (list, tuple)):
+            return [str(item).strip() for item in raw_value if str(item).strip()]
+        if isinstance(raw_value, str):
+            trimmed = raw_value.strip()
+            if not trimmed:
+                return []
+            if trimmed.startswith("[") and trimmed.endswith("]"):
+                try:
+                    parsed = json.loads(trimmed)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [trimmed]
+        return [str(raw_value).strip()]
+
+    def _fetch_market_metadata_from_gamma_by_token_id(
+        self, token_id: str
+    ) -> tuple[Optional[Dict[str, Any]], str]:
+        if not token_id:
+            return None, "empty_token_id"
+        now = time.time()
+        cached = self._gamma_market_probe_cache.get(token_id)
+        if cached and (now - float(cached.get("ts", 0.0))) <= GAMMA_MARKET_CACHE_TTL_SEC:
+            cached_market = cached.get("market")
+            if isinstance(cached_market, dict):
+                return dict(cached_market), "cache"
+            return None, str(cached.get("reason") or "cache_miss")
+
+        last_reason = "gamma_not_found"
+        for param_name in ("clob_token_ids", "clobTokenIds", "clob_token_id", "clobTokenId"):
+            try:
+                resp = requests.get(
+                    f"{GAMMA_API_ROOT}/markets",
+                    params={param_name: str(token_id), "limit": 50},
+                    timeout=GAMMA_MARKET_PROBE_TIMEOUT_SEC,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+            except Exception as exc:
+                last_reason = f"{param_name}_request_error:{exc.__class__.__name__}"
+                continue
+
+            rows: List[Any]
+            if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+                rows = payload.get("data") or []
+            elif isinstance(payload, list):
+                rows = payload
+            else:
+                rows = []
+
+            token_str = str(token_id)
+            matches: List[Dict[str, Any]] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                token_ids = self._normalize_market_token_ids(
+                    row.get("clobTokenIds")
+                    or row.get("clob_token_ids")
+                    or row.get("clobTokenId")
+                    or row.get("clob_token_id")
+                )
+                if token_str in token_ids:
+                    matches.append(row)
+            if not matches:
+                last_reason = f"{param_name}_no_match"
+                continue
+
+            selected = None
+            for row in matches:
+                if row.get("active") is True and row.get("closed") is False:
+                    selected = row
+                    break
+            if selected is None:
+                selected = matches[0]
+            if isinstance(selected, dict):
+                self._gamma_market_probe_cache[token_id] = {
+                    "ts": now,
+                    "market": dict(selected),
+                    "reason": f"{param_name}_ok",
+                }
+                return dict(selected), param_name
+
+        self._gamma_market_probe_cache[token_id] = {
+            "ts": now,
+            "market": None,
+            "reason": last_reason,
+        }
+        return None, last_reason
+
+    def _hydrate_topic_metadata_for_blacklist(
+        self, token_id: str, *, force_official_check: bool = False
+    ) -> None:
         if not token_id:
             return
         detail = self.topic_details.setdefault(token_id, {})
         title = str(detail.get("title") or "").strip()
         slug = str(detail.get("slug") or "").strip()
-        if title and slug:
+        if title and slug and not force_official_check:
+            detail["blacklist_metadata_verified"] = bool(
+                detail.get("blacklist_metadata_verified", True)
+            )
             return
 
         for entry in self.latest_topics:
@@ -4044,7 +4162,7 @@ class AutoRunManager:
                 if candidate_slug:
                     detail["slug"] = candidate_slug
                     slug = candidate_slug
-            if title and slug:
+            if title and slug and not force_official_check:
                 return
 
         for entry in self._load_copytrade_tokens():
@@ -4060,41 +4178,119 @@ class AutoRunManager:
                 if candidate_slug:
                     detail["slug"] = candidate_slug
                     slug = candidate_slug
-            if title or slug:
+            if (title or slug) and not force_official_check:
                 return
             break
 
         # Fallback: positions cache from data-api includes title/slug for held tokens.
         positions_cache_path = self.config.data_dir / "positions_cache.json"
-        if not positions_cache_path.exists():
-            return
-        try:
-            payload = _load_json_file(positions_cache_path)
-            rows = payload.get("positions") if isinstance(payload, dict) else []
-        except Exception:
-            return
-        if not isinstance(rows, list):
-            return
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            asset = str(row.get("asset") or "").strip()
-            if asset != token_id:
-                continue
-            if not title:
-                candidate_title = str(row.get("title") or row.get("question") or "").strip()
-                if candidate_title:
-                    detail["title"] = candidate_title
-                    title = candidate_title
-            if not slug:
-                candidate_slug = str(row.get("slug") or "").strip()
-                if candidate_slug:
-                    detail["slug"] = candidate_slug
-                    slug = candidate_slug
+        if positions_cache_path.exists():
+            try:
+                payload = _load_json_file(positions_cache_path)
+                rows = payload.get("positions") if isinstance(payload, dict) else []
+            except Exception:
+                rows = []
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    asset = str(row.get("asset") or "").strip()
+                    if asset != token_id:
+                        continue
+                    if not title:
+                        candidate_title = str(
+                            row.get("title") or row.get("question") or ""
+                        ).strip()
+                        if candidate_title:
+                            detail["title"] = candidate_title
+                            title = candidate_title
+                    if not slug:
+                        candidate_slug = str(row.get("slug") or "").strip()
+                        if candidate_slug:
+                            detail["slug"] = candidate_slug
+                            slug = candidate_slug
+                    break
+
+        if (title or slug) and not force_official_check:
+            detail["blacklist_metadata_verified"] = bool(
+                detail.get("blacklist_metadata_verified", True)
+            )
             return
 
+        market, source = self._fetch_market_metadata_from_gamma_by_token_id(token_id)
+        if not isinstance(market, dict):
+            detail["blacklist_metadata_verified"] = False
+            detail["blacklist_metadata_source"] = source
+            detail["blacklist_metadata_unverified_reason"] = source
+            print(
+                "[BLACKLIST][META] official metadata fetch failed "
+                f"token={token_id[:20]}... source={source}"
+            )
+            return
+
+        official_title = str(market.get("question") or market.get("title") or "").strip()
+        official_slug = str(market.get("slug") or "").strip()
+        if title and official_title and title != official_title:
+            print(
+                "[BLACKLIST][META] title mismatch corrected "
+                f"token={token_id[:20]}... local={title[:60]} official={official_title[:60]}"
+            )
+        if slug and official_slug and slug != official_slug:
+            print(
+                "[BLACKLIST][META] slug mismatch corrected "
+                f"token={token_id[:20]}... local={slug} official={official_slug}"
+            )
+        if official_title:
+            detail["title"] = official_title
+        if official_slug:
+            detail["slug"] = official_slug
+        detail["blacklist_metadata_verified"] = bool(official_title or official_slug)
+        detail["blacklist_metadata_source"] = f"gamma:{source}"
+        detail.pop("blacklist_metadata_unverified_reason", None)
+        if not detail["blacklist_metadata_verified"]:
+            detail["blacklist_metadata_unverified_reason"] = "official_empty_title_and_slug"
+
+    def _apply_metadata_unverified_guard(self, token_id: str, *, source: str) -> str:
+        detail = self.topic_details.setdefault(token_id, {})
+        if bool(detail.get("blacklist_metadata_verified", True)):
+            return "verified"
+        reason = str(detail.get("blacklist_metadata_unverified_reason") or "unknown")
+        has_position = self._has_account_position(token_id)
+        if not has_position:
+            self._remove_pending_topic(token_id)
+            self._remove_pending_exit_topic(token_id)
+            self._append_exit_token_record(
+                token_id,
+                "TITLE_BLACKLIST_METADATA_UNVERIFIED_NO_POSITION",
+                exit_data={
+                    "source": source,
+                    "reason": reason,
+                    "has_position": False,
+                },
+                refillable=False,
+            )
+            self._update_handled_topics([token_id])
+            print(
+                "[BLACKLIST][META] metadata unverified, blocked start(no position) "
+                f"token={token_id[:20]}... source={source} reason={reason}"
+            )
+            return "blocked_no_position"
+        detail["force_sell_only_on_startup"] = True
+        detail["queue_role"] = "title_blacklist_sell_only"
+        detail["schedule_lane"] = "base"
+        print(
+            "[BLACKLIST][META] metadata unverified, force sell_only guard "
+            f"token={token_id[:20]}... source={source} reason={reason}"
+        )
+        return "force_sell_only"
+
     def _start_topic_process(self, topic_id: str) -> bool:
-        self._hydrate_topic_metadata_for_blacklist(topic_id)
+        self._hydrate_topic_metadata_for_blacklist(topic_id, force_official_check=True)
+        metadata_guard = self._apply_metadata_unverified_guard(
+            topic_id, source="before_start"
+        )
+        if metadata_guard == "blocked_no_position":
+            return False
         blacklist_action = self._enforce_title_blacklist_policy(
             topic_id, source="before_start"
         )
@@ -4415,6 +4611,7 @@ class AutoRunManager:
                 if copytrade_detail.get("slug") and not detail.get("slug"):
                     detail["slug"] = copytrade_detail.get("slug")
 
+                self._hydrate_topic_metadata_for_blacklist(token_id)
                 title_policy = self._enforce_title_blacklist_policy(
                     token_id, source="startup_reconcile"
                 )
@@ -5207,6 +5404,7 @@ class AutoRunManager:
             exit_data = record.get("exit_data", {}) or {}
             if not token_id:
                 continue
+            self._hydrate_topic_metadata_for_blacklist(token_id)
             title_policy = self._enforce_title_blacklist_policy(
                 token_id, source="refill"
             )
@@ -5349,6 +5547,7 @@ class AutoRunManager:
                 added_topics: List[str] = []
                 defer_new_topics = self._is_buy_paused_by_balance()
                 for topic_id in new_topics:
+                    self._hydrate_topic_metadata_for_blacklist(topic_id)
                     title_policy = self._enforce_title_blacklist_policy(
                         topic_id, source="refresh_new_topic"
                     )
@@ -5531,10 +5730,28 @@ class AutoRunManager:
 
     def _enforce_title_blacklist_policy(self, token_id: str, *, source: str) -> str:
         matched, matched_keyword, matched_title = self._match_title_blacklist(token_id)
-        if not matched:
-            return "not_matched"
-
         detail = self.topic_details.setdefault(token_id, {})
+        detail["blacklist_last_checked_at"] = time.time()
+        detail["blacklist_last_check_source"] = source
+        if not matched:
+            detail["blacklist_last_result"] = "not_matched"
+            if not str(
+                detail.get("title")
+                or detail.get("question")
+                or detail.get("topic_name")
+                or detail.get("market_title")
+                or detail.get("slug")
+                or ""
+            ).strip():
+                detail["blacklist_check_skipped_reason"] = (
+                    "no_title_or_slug_after_metadata_hydration"
+                )
+            return "not_matched"
+        detail.pop("blacklist_check_skipped_reason", None)
+        detail["blacklist_last_result"] = "matched"
+        detail["blacklist_keyword"] = matched_keyword
+        detail["blacklist_matched_title"] = matched_title
+
         has_position = self._has_account_position(token_id)
         action = str(
             getattr(self.config, "title_blacklist_action_with_position", "sell_only_maker")
@@ -5977,6 +6194,7 @@ class AutoRunManager:
         self._shared_ws_paused_until.clear()
         self._shared_ws_wait_timeout_events.clear()
         self._clob_book_probe_cache.clear()
+        self._gamma_market_probe_cache.clear()
         self._shared_ws_pending_since.clear()
         self._price_cap_stuck_since.clear()
         self._price_cap_flat_stuck_since.clear()
@@ -6042,6 +6260,12 @@ class AutoRunManager:
             # 因为保存的 pending_topics 代表"还未完成的任务"，即使在 handled 中也应恢复
             if topic_id in self.pending_topics:
                 continue
+            self._hydrate_topic_metadata_for_blacklist(topic_id)
+            title_policy = self._enforce_title_blacklist_policy(
+                topic_id, source="restore_runtime"
+            )
+            if title_policy in {"blocked_no_position", "force_liquidate", "force_sell_only"}:
+                continue
             restored_topics.append(topic_id)
             # 【修复】设置 queue_role 以便状态显示
             detail = self.topic_details.setdefault(topic_id, {})
@@ -6058,6 +6282,16 @@ class AutoRunManager:
             # 不检查 handled_topics，因为保存的 tasks 代表"上次运行中的任务"
             # 即使在 handled 中也应恢复，以确保任务不丢失
             if topic_id not in self.pending_topics:
+                self._hydrate_topic_metadata_for_blacklist(topic_id)
+                title_policy = self._enforce_title_blacklist_policy(
+                    topic_id, source="restore_runtime"
+                )
+                if title_policy in {
+                    "blocked_no_position",
+                    "force_liquidate",
+                    "force_sell_only",
+                }:
+                    continue
                 restored_topics.append(topic_id)
                 detail = self.topic_details.setdefault(topic_id, {})
                 detail["queue_role"] = "restored_token"
@@ -6096,6 +6330,16 @@ class AutoRunManager:
             if not topic_id:
                 continue
             if topic_id in dead_tokens:
+                continue
+            self._hydrate_topic_metadata_for_blacklist(topic_id)
+            title_policy = self._enforce_title_blacklist_policy(
+                topic_id, source="restore_runtime"
+            )
+            if title_policy in {
+                "blocked_no_position",
+                "force_liquidate",
+                "force_sell_only",
+            }:
                 continue
             # 避免历史残留 burst 队列在重启后直接把额外槽位占满。
             # 【修复】设置 queue_role 以便状态显示
