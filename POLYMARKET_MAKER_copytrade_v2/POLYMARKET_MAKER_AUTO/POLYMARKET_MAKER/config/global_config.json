@@ -24,7 +24,7 @@
         "idle_slot_ratio_threshold": 0.7,
         "idle_slot_duration_minutes": 240.0,
         "no_trade_duration_minutes": 240.0,
-        "min_free_balance": 20.0,
+        "min_free_balance": 10.0,
         "enable_low_balance_force_trigger": false,
         "low_balance_force_hours": 6.0,
         "require_conditions": 2,
@@ -47,7 +47,7 @@
     },
     "price_cap_refill_stuck_minutes": 120.0,
     "shock_refill_stuck_minutes": 45.0,
-    "buy_pause_min_free_balance": 120.0,
+    "buy_pause_min_free_balance": 10.0,
     "buy_pause_balance_poll_interval_sec": 120.0,
     "title_blacklist": {
       "enabled": true,
@@ -66,3 +66,4 @@
     "ws_debug_raw": false
   }
 }
+
