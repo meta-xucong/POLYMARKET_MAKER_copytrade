@@ -52,7 +52,7 @@
     "title_blacklist": {
       "enabled": true,
       "keywords": [
-        "Iran"
+        "vs"
       ],
       "match_on_slug": true,
       "action_with_position": "sell_only_maker"
@@ -66,4 +66,5 @@
     "ws_debug_raw": false
   }
 }
+
 
