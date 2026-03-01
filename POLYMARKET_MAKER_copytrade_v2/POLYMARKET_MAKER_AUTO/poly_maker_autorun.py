@@ -96,6 +96,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "topic_start_cooldown_sec": 5.0,
     "log_excerpt_interval_sec": 15.0,
     "runtime_status_path": str(PROJECT_ROOT / "data" / "autorun_status.json"),
+    "token_cycle_state_path": str(PROJECT_ROOT / "data" / "token_cycle_gate.json"),
     "ws_debug_raw": False,
     # Slot refill (回填) 配置
     "enable_slot_refill": True,
@@ -773,6 +774,9 @@ class GlobalConfig:
     runtime_status_path: Path = field(
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["runtime_status_path"])
     )
+    token_cycle_state_path: Path = field(
+        default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["token_cycle_state_path"])
+    )
     ws_debug_raw: bool = bool(DEFAULT_GLOBAL_CONFIG["ws_debug_raw"])
     # Shared WS 等待配置
     shared_ws_max_pending_wait_sec: float = DEFAULT_GLOBAL_CONFIG[
@@ -930,6 +934,11 @@ class GlobalConfig:
             or paths.get("run_state_file")
             or data_dir / "autorun_status.json"
         )
+        token_cycle_state_path = Path(
+            paths.get("token_cycle_state_file")
+            or flat_overrides.get("token_cycle_state_path")
+            or data_dir / "token_cycle_gate.json"
+        )
 
         ws_ping_interval_sec = max(
             5.0,
@@ -1020,6 +1029,7 @@ class GlobalConfig:
                 merged.get("log_excerpt_interval_sec", cls.log_excerpt_interval_sec)
             ),
             runtime_status_path=runtime_status_path,
+            token_cycle_state_path=token_cycle_state_path,
             ws_debug_raw=bool(
                 debug.get("ws_debug_raw")
                 or debug.get("ws_raw")
@@ -1423,6 +1433,8 @@ class AutoRunManager:
         self._ws_updates_suspended: bool = False
         # Slot refill (回填) 相关
         self._exit_tokens_path = self.config.data_dir / "exit_tokens.json"
+        self._token_cycle_state_path = self.config.token_cycle_state_path
+        self._token_cycle_states: Dict[str, Dict[str, Any]] = {}
         self._refill_retry_counts: Dict[str, int] = {}  # token_id -> 已重试次数
         self._next_refill_check: float = 0.0
         self._next_inactive_token_reconcile_check: float = 0.0
@@ -1490,6 +1502,7 @@ class AutoRunManager:
         self._market_state_checker: Optional[MarketStateChecker] = None
         self._market_closed_cleaner: Optional[MarketClosedCleaner] = None
         self._file_io_lock = threading.RLock()  # 文件操作锁（共享给检测器和清理器）
+        self._load_token_cycle_states()
         
         if MARKET_STATE_CHECKER_AVAILABLE:
             try:
@@ -1512,6 +1525,192 @@ class AutoRunManager:
                 self._config_mtime_ns = self.config.global_config_path.stat().st_mtime_ns
             except OSError:
                 self._config_mtime_ns = None
+
+    @staticmethod
+    def _normalize_ratio_value(raw_value: Any) -> Optional[float]:
+        value = _coerce_float(raw_value)
+        if value is None:
+            return None
+        if value > 1:
+            value = value / 100.0
+        return max(0.0, float(value))
+
+    @staticmethod
+    def _normalize_cycle_state_record(raw: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(raw, dict):
+            return None
+        try:
+            cycle_round = max(0, int(raw.get("cycle_round", 0) or 0))
+        except (TypeError, ValueError):
+            cycle_round = 0
+        try:
+            next_buy_allowed_ts = max(0.0, float(raw.get("next_buy_allowed_ts", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            next_buy_allowed_ts = 0.0
+        next_drop_pct = AutoRunManager._normalize_ratio_value(raw.get("next_drop_pct"))
+        try:
+            last_cycle_completed_ts = max(
+                0.0, float(raw.get("last_cycle_completed_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            last_cycle_completed_ts = 0.0
+        normalized = {
+            "cycle_round": cycle_round,
+            "next_buy_allowed_ts": next_buy_allowed_ts,
+            "last_cycle_completed_ts": last_cycle_completed_ts,
+        }
+        if next_drop_pct is not None:
+            normalized["next_drop_pct"] = next_drop_pct
+        return normalized
+
+    def _load_token_cycle_states(self) -> None:
+        with self._file_io_lock:
+            if not self._token_cycle_state_path.exists():
+                self._token_cycle_states = {}
+                return
+            try:
+                with self._token_cycle_state_path.open("r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            except (json.JSONDecodeError, OSError) as exc:
+                print(f"[CYCLE_GATE][WARN] 读取状态失败: {exc}")
+                self._token_cycle_states = {}
+                return
+            token_states = payload.get("token_states") if isinstance(payload, dict) else {}
+            if not isinstance(token_states, dict):
+                self._token_cycle_states = {}
+                return
+            normalized: Dict[str, Dict[str, Any]] = {}
+            for token_id, raw_record in token_states.items():
+                token = str(token_id).strip()
+                if not token:
+                    continue
+                record = self._normalize_cycle_state_record(raw_record)
+                if record is None:
+                    continue
+                normalized[token] = record
+            self._token_cycle_states = normalized
+        if self._token_cycle_states:
+            print(f"[CYCLE_GATE] 已加载 {len(self._token_cycle_states)} 条 token 周期状态")
+
+    def _save_token_cycle_states(self) -> None:
+        with self._file_io_lock:
+            payload = {
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "token_states": self._token_cycle_states,
+            }
+            try:
+                _atomic_json_write(self._token_cycle_state_path, payload)
+            except OSError as exc:
+                print(f"[CYCLE_GATE][WARN] 写入状态失败: {exc}")
+
+    @staticmethod
+    def _config_requires_buy_stage(run_cfg: Dict[str, Any]) -> bool:
+        if bool(run_cfg.get("exit_only")):
+            return False
+        if bool(run_cfg.get("force_sell_only_on_startup")):
+            return False
+        resume_state = run_cfg.get("resume_state")
+        if isinstance(resume_state, dict) and bool(resume_state.get("skip_buy")):
+            return False
+        return True
+
+    @staticmethod
+    def _resolve_drop_step_and_cap(run_cfg: Dict[str, Any]) -> tuple[float, Optional[float]]:
+        enabled = bool(run_cfg.get("enable_incremental_drop_pct", False))
+        if not enabled:
+            return 0.0, AutoRunManager._normalize_ratio_value(
+                run_cfg.get("incremental_drop_pct_cap")
+            )
+        step = AutoRunManager._normalize_ratio_value(run_cfg.get("incremental_drop_pct_step"))
+        if step is None:
+            step = 0.0
+        cap = AutoRunManager._normalize_ratio_value(run_cfg.get("incremental_drop_pct_cap"))
+        return max(0.0, step), cap
+
+    def _resolve_current_drop_pct_for_cycle(
+        self, token_id: str, run_cfg: Dict[str, Any]
+    ) -> Optional[float]:
+        state = self._token_cycle_states.get(token_id) or {}
+        state_drop = self._normalize_ratio_value(state.get("next_drop_pct"))
+        base_drop = self._normalize_ratio_value(run_cfg.get("drop_pct"))
+        resume_drop = self._normalize_ratio_value(run_cfg.get("resume_drop_pct"))
+        candidates = [v for v in (state_drop, base_drop, resume_drop) if v is not None]
+        if not candidates:
+            return None
+        return max(candidates)
+
+    def _advance_token_cycle_state_on_cleanup(self, token_id: str, run_cfg: Dict[str, Any]) -> None:
+        if not token_id:
+            return
+        now = time.time()
+        current = self._token_cycle_states.get(token_id) or {}
+        current_round = max(0, int(current.get("cycle_round", 0) or 0))
+        next_round = current_round + 1
+        cooldown_minutes = float(2 ** max(next_round - 1, 0))
+        next_buy_allowed_ts = now + cooldown_minutes * 60.0
+        current_drop = self._resolve_current_drop_pct_for_cycle(token_id, run_cfg)
+        step, cap = self._resolve_drop_step_and_cap(run_cfg)
+        next_drop: Optional[float] = current_drop
+        if current_drop is not None and step > 0:
+            next_drop = current_drop + step
+            if cap is not None:
+                next_drop = min(next_drop, max(cap, current_drop))
+        record: Dict[str, Any] = {
+            "cycle_round": next_round,
+            "next_buy_allowed_ts": next_buy_allowed_ts,
+            "last_cycle_completed_ts": now,
+        }
+        if next_drop is not None:
+            record["next_drop_pct"] = next_drop
+        self._token_cycle_states[token_id] = record
+        self._save_token_cycle_states()
+        next_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(next_buy_allowed_ts))
+        if next_drop is not None:
+            print(
+                f"[CYCLE_GATE] token={token_id[:16]}... round={next_round} "
+                f"next_buy_after={next_text} next_drop_pct={next_drop:.6f}"
+            )
+        else:
+            print(
+                f"[CYCLE_GATE] token={token_id[:16]}... round={next_round} "
+                f"next_buy_after={next_text}"
+            )
+
+    def _apply_token_cycle_buy_gate_and_drop_override(
+        self, token_id: str, run_cfg: Dict[str, Any]
+    ) -> bool:
+        state = self._token_cycle_states.get(token_id)
+        if not state:
+            return True
+        if not self._config_requires_buy_stage(run_cfg):
+            return True
+        now = time.time()
+        next_buy_allowed_ts = max(0.0, float(state.get("next_buy_allowed_ts", 0.0) or 0.0))
+        if next_buy_allowed_ts > now:
+            remaining = int(max(0.0, next_buy_allowed_ts - now))
+            target_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(next_buy_allowed_ts))
+            self._log_throttled(
+                f"cycle_gate_wait_{token_id}",
+                20.0,
+                f"[CYCLE_GATE] token={token_id[:16]}... 买入闸门未到期，剩余={remaining}s until {target_text}",
+            )
+            return False
+        next_drop = self._normalize_ratio_value(state.get("next_drop_pct"))
+        if next_drop is None:
+            return True
+        drop_base = self._normalize_ratio_value(run_cfg.get("drop_pct")) or 0.0
+        effective_drop = max(next_drop, drop_base)
+        _, cap = self._resolve_drop_step_and_cap(run_cfg)
+        if cap is not None:
+            effective_drop = min(effective_drop, max(cap, drop_base))
+        old_resume = self._normalize_ratio_value(run_cfg.get("resume_drop_pct"))
+        if old_resume is None or abs(old_resume - effective_drop) > 1e-12:
+            run_cfg["resume_drop_pct"] = effective_drop
+            print(
+                f"[CYCLE_GATE] token={token_id[:16]}... 覆盖下一轮买入阈值 "
+                f"{old_resume if old_resume is not None else 'None'} -> {effective_drop:.6f}"
+            )
+        return True
 
     @staticmethod
     def _parse_title_blacklist_settings(config_payload: Dict[str, Any]) -> tuple[bool, List[str], bool, str]:
@@ -3175,6 +3374,8 @@ class AutoRunManager:
                         f"retry={retry_count}/{EXIT_CLEANUP_MAX_RETRIES}"
                     )
             if rc == 0:
+                task_run_cfg = self._get_task_run_config(task)
+                self._advance_token_cycle_state_on_cleanup(task.topic_id, task_run_cfg)
                 # 仅在清仓成功后才释放 token 周期锁并清理 copytrade 文件记录：
                 # - handled_topics: 允许后续新一轮买入
                 # - tokens/sell_signals: 完成本轮生命周期闭环
@@ -4307,6 +4508,8 @@ class AutoRunManager:
             return False
 
         config_data = self._build_run_config(topic_id)
+        if not self._apply_token_cycle_buy_gate_and_drop_override(topic_id, config_data):
+            return False
         cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(topic_id)}.json"
         _dump_json_file(cfg_path, config_data)
 
@@ -6441,6 +6644,7 @@ class AutoRunManager:
             "reentry_eligible_reasons": dict(self._reentry_eligible_reasons),
             "ws_reconnect_reason_counts": dict(self._ws_reconnect_reason_counts),
             "ws_last_reconnect_reason": self._ws_last_reconnect_reason,
+            "token_cycle_state_total": len(self._token_cycle_states),
             "tasks": {},
             "topic_details": topic_details_export,  # 【修复】添加 topic_details 供子进程读取
         }

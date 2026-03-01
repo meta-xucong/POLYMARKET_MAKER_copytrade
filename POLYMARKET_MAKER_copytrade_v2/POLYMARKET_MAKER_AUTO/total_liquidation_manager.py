@@ -1226,7 +1226,7 @@ class TotalLiquidationManager:
                     continue
 
         if self.cfg.remove_json_state and autorun.config.data_dir.exists():
-            keep_names = {"total_liquidation_state.json"}
+            keep_names = {"total_liquidation_state.json", "token_cycle_gate.json"}
             for path in autorun.config.data_dir.glob("*.json"):
                 if path.name in keep_names:
                     continue

@@ -1,6 +1,7 @@
 import sys
 import types
 import json
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1100,3 +1101,76 @@ def test_task_runtime_mode_blacklist_has_priority_over_low_balance():
     mode = manager._task_runtime_mode(task, {"queue_role": "title_blacklist_sell_only"})
 
     assert mode == "黑名单"
+
+
+def test_cycle_gate_blocks_buy_before_allowed_ts(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(data_dir)}})
+    manager = _build_manager(cfg)
+    manager._token_cycle_states = {
+        "t1": {
+            "cycle_round": 1,
+            "next_buy_allowed_ts": time.time() + 90.0,
+            "next_drop_pct": 0.08,
+        }
+    }
+    run_cfg = {"drop_pct": 0.05}
+
+    allowed = manager._apply_token_cycle_buy_gate_and_drop_override("t1", run_cfg)
+
+    assert allowed is False
+    assert "resume_drop_pct" not in run_cfg
+
+
+def test_cycle_gate_applies_drop_override_when_cooldown_elapsed(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(data_dir)}})
+    manager = _build_manager(cfg)
+    manager._token_cycle_states = {
+        "t1": {
+            "cycle_round": 3,
+            "next_buy_allowed_ts": time.time() - 1.0,
+            "next_drop_pct": 0.08,
+        }
+    }
+    run_cfg = {
+        "drop_pct": 0.05,
+        "resume_drop_pct": 0.03,
+        "enable_incremental_drop_pct": True,
+        "incremental_drop_pct_cap": 0.20,
+    }
+
+    allowed = manager._apply_token_cycle_buy_gate_and_drop_override("t1", run_cfg)
+
+    assert allowed is True
+    assert run_cfg.get("resume_drop_pct") == 0.08
+
+
+def test_advance_cycle_state_updates_round_cooldown_and_drop(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(data_dir)}})
+    manager = _build_manager(cfg)
+    run_cfg = {
+        "drop_pct": 0.05,
+        "enable_incremental_drop_pct": True,
+        "incremental_drop_pct_step": 0.002,
+        "incremental_drop_pct_cap": 0.20,
+    }
+
+    before = time.time()
+    manager._advance_token_cycle_state_on_cleanup("t1", run_cfg)
+    state1 = manager._token_cycle_states["t1"]
+    after = time.time()
+
+    assert state1["cycle_round"] == 1
+    assert abs(float(state1.get("next_drop_pct")) - 0.052) < 1e-9
+    assert before + 60.0 <= float(state1["next_buy_allowed_ts"]) <= after + 60.0
+
+    manager._advance_token_cycle_state_on_cleanup("t1", run_cfg)
+    state2 = manager._token_cycle_states["t1"]
+
+    assert state2["cycle_round"] == 2
+    assert abs(float(state2.get("next_drop_pct")) - 0.054) < 1e-9
