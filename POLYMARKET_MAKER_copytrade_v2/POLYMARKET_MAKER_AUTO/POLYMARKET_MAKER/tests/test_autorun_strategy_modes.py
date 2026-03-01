@@ -61,7 +61,12 @@ def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
         encoding="utf-8",
     )
     tokens_path.write_text(
-        json.dumps({"updated_at": "", "tokens": [{"token_id": "keep_token"}]}),
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "keep_token", "introduced_by_buy": True}],
+            }
+        ),
         encoding="utf-8",
     )
     sell_path.write_text(
@@ -102,7 +107,12 @@ def test_sync_startup_skips_destructive_changes_when_position_snapshot_unavailab
         encoding="utf-8",
     )
     tokens_path.write_text(
-        json.dumps({"updated_at": "", "tokens": [{"token_id": "keep_token"}]}),
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "keep_token", "introduced_by_buy": True}],
+            }
+        ),
         encoding="utf-8",
     )
     sell_path.write_text(
@@ -143,7 +153,12 @@ def test_refresh_topics_retries_startup_sync_and_purges_runtime_state(tmp_path):
         encoding="utf-8",
     )
     tokens_path.write_text(
-        json.dumps({"updated_at": "", "tokens": [{"token_id": "keep_token"}]}),
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "keep_token", "introduced_by_buy": True}],
+            }
+        ),
         encoding="utf-8",
     )
     sell_path.write_text(
@@ -200,7 +215,12 @@ def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
         encoding="utf-8",
     )
     tokens_path.write_text(
-        json.dumps({"updated_at": "", "tokens": [{"token_id": "t1"}]}),
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "t1", "introduced_by_buy": True}],
+            }
+        ),
         encoding="utf-8",
     )
     sell_path.write_text(
@@ -246,7 +266,12 @@ def test_startup_full_reconcile_cleans_copytrade_token_when_handled_missing(tmp_
         encoding="utf-8",
     )
     tokens_path.write_text(
-        json.dumps({"updated_at": "", "tokens": [{"token_id": "ghost_token"}]}),
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "ghost_token", "introduced_by_buy": True}],
+            }
+        ),
         encoding="utf-8",
     )
     sell_path.write_text(
@@ -288,7 +313,12 @@ def test_startup_full_reconcile_moves_position_token_to_base_pending(tmp_path):
         encoding="utf-8",
     )
     tokens_path.write_text(
-        json.dumps({"updated_at": "", "tokens": [{"token_id": "hold_token"}]}),
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "hold_token", "introduced_by_buy": True}],
+            }
+        ),
         encoding="utf-8",
     )
     sell_path.write_text(
@@ -336,6 +366,7 @@ def test_startup_reconcile_applies_title_blacklist_with_position(tmp_path):
                 "tokens": [
                     {
                         "token_id": "hold_token",
+                        "introduced_by_buy": True,
                         "title": "US strikes Iran by March 31, 2026?",
                         "slug": "us-strikes-iran-by-march-31-2026",
                     }
@@ -1174,3 +1205,60 @@ def test_advance_cycle_state_updates_round_cooldown_and_drop(tmp_path):
 
     assert state2["cycle_round"] == 2
     assert abs(float(state2.get("next_drop_pct")) - 0.054) < 1e-9
+
+
+def test_load_copytrade_tokens_skips_non_buy_introduced(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [
+                    {"token_id": "buy_token", "introduced_by_buy": True},
+                    {"token_id": "sell_only_token", "introduced_by_buy": False},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(copytrade_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+
+    topics = manager._load_copytrade_tokens()
+
+    assert [t["topic_id"] for t in topics] == ["buy_token"]
+
+
+def test_apply_sell_signals_requires_position_even_with_history(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    manager._sell_bootstrap_done = True
+    manager._next_sell_full_recheck_at = time.time() + 3600.0
+    manager._sell_position_snapshot = {"t1": 0.0}
+    manager._sell_position_snapshot_info = "ok"
+    manager.handled_topics.add("t1")
+
+    triggered = []
+    manager._trigger_sell_exit = lambda token_id, task: triggered.append((token_id, task))  # type: ignore[assignment]
+
+    manager._apply_sell_signals(
+        {
+            "t1": {
+                "token_id": "t1",
+                "introduced_by_buy": True,
+                "status": "pending",
+            }
+        }
+    )
+
+    assert triggered == []
+    assert "t1" in manager._handled_sell_signals

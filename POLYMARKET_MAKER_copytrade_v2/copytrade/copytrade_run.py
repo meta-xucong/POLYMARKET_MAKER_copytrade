@@ -228,7 +228,10 @@ def _write_tokens(path: Path, mapping: Dict[str, Dict[str, Any]]) -> None:
         ts = _parse_last_seen(entry.get("last_seen"))
         return ts.timestamp() if ts else 0.0
 
-    tokens = sorted(mapping.values(), key=_sort_key, reverse=True)
+    tokens = [
+        entry for entry in mapping.values() if bool(entry.get("introduced_by_buy", False))
+    ]
+    tokens = sorted(tokens, key=_sort_key, reverse=True)
     payload = {
         "updated_at": _utc_now_iso(),
         "tokens": tokens,
@@ -322,7 +325,8 @@ def run_once(
     sell_changed = False
 
     for token_id in list(token_map.keys()):
-        if token_id in blacklist_tokens:
+        entry = token_map.get(token_id) or {}
+        if token_id in blacklist_tokens or not bool(entry.get("introduced_by_buy", False)):
             del token_map[token_id]
             changed = True
 
@@ -370,6 +374,7 @@ def run_once(
             token_id = action.get("token_id")
             if not token_id:
                 continue
+            side = str(action.get("side") or "").upper()
             key = str(token_id)
             if key in blacklist_tokens:
                 logger.info("skip blacklisted token action: account=%s token=%s side=%s", account, key, action.get("side"))
@@ -379,6 +384,14 @@ def run_once(
                 "+00:00", "Z"
             )
             existing = token_map.get(key)
+            existing_intro = bool(existing and existing.get("introduced_by_buy", False))
+            if side == "SELL" and not existing_intro:
+                logger.info(
+                    "skip sell signal before buy introduction: account=%s token=%s",
+                    account,
+                    token_id,
+                )
+                continue
             new_entry = {
                 "token_id": token_id,
                 "source_account": account,
@@ -403,14 +416,7 @@ def run_once(
                     token_map[key]["introduced_by_buy"] = True
                     changed = True
 
-            if action.get("side") == "SELL":
-                if not token_map.get(key, {}).get("introduced_by_buy", False):
-                    logger.info(
-                        "skip sell signal before buy introduction: account=%s token=%s",
-                        account,
-                        token_id,
-                    )
-                    continue
+            if side == "SELL":
                 sell_entry = {
                     "token_id": token_id,
                     "source_account": account,

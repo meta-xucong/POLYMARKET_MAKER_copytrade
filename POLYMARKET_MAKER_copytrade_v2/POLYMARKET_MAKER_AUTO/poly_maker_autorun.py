@@ -5808,8 +5808,12 @@ class AutoRunManager:
             print(f"[WARN] copytrade token 文件格式异常：{path}")
             return []
         topics: List[Dict[str, Any]] = []
+        skipped_not_buy = 0
         for item in raw_tokens:
             if not isinstance(item, dict):
+                continue
+            if not bool(item.get("introduced_by_buy", False)):
+                skipped_not_buy += 1
                 continue
             token_id = item.get("token_id") or item.get("tokenId")
             if not token_id:
@@ -5831,6 +5835,8 @@ class AutoRunManager:
                 }
             )
         print(f"[COPYTRADE] 已读取 token {len(topics)} 条 | {path}")
+        if skipped_not_buy:
+            print(f"[COPYTRADE] 已跳过非BUY引入 token {skipped_not_buy} 条")
         return topics
 
     def _load_copytrade_sell_signals(self) -> Dict[str, Dict[str, Any]]:
@@ -6109,6 +6115,22 @@ class AutoRunManager:
         }
         return has_position
 
+    def _has_position_for_sell_signal(
+        self,
+        token_id: str,
+        snapshot: Dict[str, float],
+        snapshot_info: str,
+    ) -> tuple[bool, str]:
+        pos_size = float(snapshot.get(token_id, 0.0) or 0.0)
+        if pos_size > POSITION_CLEANUP_DUST_THRESHOLD:
+            return True, "snapshot"
+        if snapshot_info == "ok":
+            return False, "snapshot_no_position"
+        has_position = self._has_account_position(token_id)
+        if has_position:
+            return True, f"fallback_has_position:{snapshot_info}"
+        return False, f"snapshot_unavailable:{snapshot_info}"
+
     def _apply_sell_signals(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
         if not sell_signals:
             return
@@ -6138,7 +6160,6 @@ class AutoRunManager:
         for token_id in new_signals:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
-            has_history = token_id in self.handled_topics
 
             if token_id in self._completed_exit_cleanup_tokens:
                 self._handled_sell_signals.add(token_id)
@@ -6148,25 +6169,23 @@ class AutoRunManager:
                 self._handled_sell_signals.add(token_id)
                 continue
 
-            if not has_running_task and not has_history:
-                pos_size = float(self._sell_position_snapshot.get(token_id, 0.0) or 0.0)
-                has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
-                if not has_position:
-                    info = self._sell_position_snapshot_info
-                    if info == "ok":
-                        info = "未找到持仓记录"
-                    print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={info}")
-                    print(
-                        "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
-                        f"token_id={token_id}"
-                    )
-                    # 新增 SELL 信号仅做一次校验，避免同一 token 高频重复查询。
-                    self._handled_sell_signals.add(token_id)
-                    continue
+            has_position, reason = self._has_position_for_sell_signal(
+                token_id,
+                self._sell_position_snapshot,
+                self._sell_position_snapshot_info,
+            )
+            if not has_position:
+                print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={reason}")
                 print(
-                    "[COPYTRADE] SELL 信号触发持仓清仓: "
+                    "[COPYTRADE] 忽略 sell 信号（强约束：无持仓不清仓）: "
                     f"token_id={token_id}"
                 )
+                self._handled_sell_signals.add(token_id)
+                continue
+            print(
+                "[COPYTRADE] SELL 信号触发持仓清仓: "
+                f"token_id={token_id} reason={reason}"
+            )
             self._trigger_sell_exit(token_id, task)
 
     def _run_full_sell_signal_recheck(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
@@ -6185,7 +6204,6 @@ class AutoRunManager:
         for token_id in signal_tokens:
             task = self.tasks.get(token_id)
             has_running_task = bool(task and task.is_running())
-            has_history = token_id in self.handled_topics
 
             if token_id in self._completed_exit_cleanup_tokens:
                 self._handled_sell_signals.add(token_id)
@@ -6195,23 +6213,23 @@ class AutoRunManager:
                 self._handled_sell_signals.add(token_id)
                 continue
 
-            if not has_running_task and not has_history:
-                pos_size = float(snapshot.get(token_id, 0.0) or 0.0)
-                has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
-                if not has_position:
-                    reason = "未找到持仓记录" if info == "ok" else info
-                    print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={reason}")
-                    print(
-                        "[COPYTRADE] 忽略 sell 信号，未进入 maker 队列: "
-                        f"token_id={token_id}"
-                    )
-                    # 全量复检也打 handled 标记，避免在下次普通轮询时再次重复检查。
-                    self._handled_sell_signals.add(token_id)
-                    continue
+            has_position, reason = self._has_position_for_sell_signal(
+                token_id,
+                snapshot,
+                info,
+            )
+            if not has_position:
+                print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={reason}")
                 print(
-                    "[COPYTRADE] SELL 信号触发持仓清仓: "
+                    "[COPYTRADE] 忽略 sell 信号（强约束：无持仓不清仓）: "
                     f"token_id={token_id}"
                 )
+                self._handled_sell_signals.add(token_id)
+                continue
+            print(
+                "[COPYTRADE] SELL 信号触发持仓清仓: "
+                f"token_id={token_id} reason={reason}"
+            )
             self._trigger_sell_exit(token_id, task)
 
     def _trigger_sell_exit(self, token_id: str, task: Optional[TopicTask]) -> None:
