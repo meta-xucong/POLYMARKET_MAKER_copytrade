@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
+from urllib.parse import urlencode
+from urllib.request import urlopen
 from typing import Any, Dict, List
-
-import requests
 
 from .models import Trade
 
@@ -54,11 +55,9 @@ class DataApiClient:
     def __init__(
         self,
         host: str = "https://data-api.polymarket.com",
-        session: requests.Session | None = None,
         timeout: float = 15.0,
     ) -> None:
         self.host = host.rstrip("/")
-        self.session = session or requests.Session()
         self.timeout = timeout
 
     def fetch_trades(
@@ -91,9 +90,9 @@ class DataApiClient:
                 "end": end_ts,
             }
             try:
-                resp = self.session.get(url, params=params, timeout=self.timeout)
-                resp.raise_for_status()
-                payload = resp.json()
+                query = urlencode(params)
+                with urlopen(f"{url}?{query}", timeout=self.timeout) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
             except Exception as exc:
                 logger.warning(
                     "fetch_trades request failed: user=%s offset=%s page_size=%s error=%s",
