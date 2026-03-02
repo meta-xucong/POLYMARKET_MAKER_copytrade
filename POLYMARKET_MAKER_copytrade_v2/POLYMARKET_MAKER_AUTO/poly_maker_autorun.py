@@ -3381,6 +3381,7 @@ class AutoRunManager:
                 # - tokens/sell_signals: 完成本轮生命周期闭环
                 self._remove_from_handled_topics(task.topic_id)
                 self._remove_token_from_copytrade_files(task.topic_id)
+                self._remove_exit_token_records(task.topic_id)
 
         if task.no_restart:
             return
@@ -4045,6 +4046,26 @@ class AutoRunManager:
                     json.dump(records, f, ensure_ascii=False, indent=2)
             except OSError as exc:  # pragma: no cover - 文件系统异常
                 print(f"[WARN] 写入 exit_tokens.json 失败: {exc}")
+
+    def _remove_exit_token_records(self, token_id: str) -> None:
+        if not token_id:
+            return
+        with self._file_io_lock:
+            records = self._load_exit_tokens()
+            if not isinstance(records, list) or not records:
+                return
+            kept = [r for r in records if str(r.get("token_id") or "") != token_id]
+            if len(kept) == len(records):
+                return
+            try:
+                self._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._exit_tokens_path.open("w", encoding="utf-8") as f:
+                    json.dump(kept, f, ensure_ascii=False, indent=2)
+                print(
+                    f"[REFILL] cleaned exit history: token={token_id[:20]}... removed={len(records) - len(kept)}"
+                )
+            except OSError as exc:
+                print(f"[WARN] failed to clean exit_tokens.json: {exc}")
 
     def _evict_stale_pending_topics(self) -> None:
         if not self.config.enable_pending_soft_eviction:
@@ -5391,6 +5412,12 @@ class AutoRunManager:
         PERMANENT_AFTER_MAX_RETRIES_REASONS = {
             "PRICE_NONE_STREAK",
         }
+        POSITION_REQUIRED_REASONS = {
+            "SELL_ABANDONED",
+            "BUY_BLOCK_ENTRY_SYNC_FAILED",
+            "BUY_BLOCK_TRIGGER_UNAVAILABLE",
+            "TITLE_BLACKLIST_WITH_POSITION",
+        }
 
         now = time.time()
         cooldown_seconds = self.config.refill_cooldown_minutes * 60.0
@@ -5449,6 +5476,24 @@ class AutoRunManager:
                 effective_cooldown_seconds = 0.0
             else:
                 effective_cooldown_seconds = cooldown_seconds
+
+            exit_data = dict(record.get("exit_data") or {})
+            if bool(exit_data.get("has_position", False)):
+                if not self._has_account_position(token_id):
+                    exit_data["has_position"] = False
+                    exit_data["position_size"] = 0.0
+                    record["exit_data"] = exit_data
+                    if exit_reason in POSITION_REQUIRED_REASONS:
+                        skip_stats["stale_position_record"] = (
+                            skip_stats.get("stale_position_record", 0) + 1
+                        )
+                        print(
+                            f"[REFILL] skip stale position refill: token={token_id[:20]}... reason={exit_reason}"
+                        )
+                        continue
+                    skip_stats["downgraded_to_no_position"] = (
+                        skip_stats.get("downgraded_to_no_position", 0) + 1
+                    )
 
             # 检查冷却时间（exit_ts 到现在的时间间隔）
             if exit_ts > 0 and (now - exit_ts) < effective_cooldown_seconds:
