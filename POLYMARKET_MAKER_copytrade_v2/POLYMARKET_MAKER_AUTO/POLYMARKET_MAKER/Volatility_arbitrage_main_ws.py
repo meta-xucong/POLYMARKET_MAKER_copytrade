@@ -82,9 +82,9 @@ class WSAggregatorClient:
         verbose: bool = False,
         label: str = "aggregator",
         flush_interval_sec: float = 0.5,
-        ping_interval_sec: float = 25.0,
-        ping_timeout_sec: float = 20.0,
-        enable_text_ping: bool = False,
+        ping_interval_sec: float = 20.0,
+        ping_timeout_sec: float = 10.0,
+        enable_text_ping: bool = True,
         silence_timeout_sec: float = 1200.0,
         custom_feature_enabled: bool = True,
         subscribe_chunk_size: int = 30,
@@ -125,6 +125,8 @@ class WSAggregatorClient:
         self._ping_interval = max(1.0, float(ping_interval_sec))
         self._ping_timeout = max(1.0, float(ping_timeout_sec))
         self._enable_text_ping = bool(enable_text_ping)
+        # Polymarket docs require application-level PING every 10s for market/user channels.
+        self._text_ping_interval = min(10.0, max(1.0, self._ping_interval / 2.0))
         self._custom_feature_enabled = bool(custom_feature_enabled)
         self._subscribe_chunk_size = max(1, int(subscribe_chunk_size))
         self._subscribe_chunk_interval_sec = max(0.0, float(subscribe_chunk_interval_sec))
@@ -391,7 +393,7 @@ class WSAggregatorClient:
                         ws.send("PING")
                     except Exception:
                         break
-                    time.sleep(max(1.0, self._ping_interval / 2.0))
+                    time.sleep(self._text_ping_interval)
 
             self._ping_thread = threading.Thread(target=ping_loop, daemon=True)
             self._ping_thread.start()
@@ -589,9 +591,9 @@ def ws_watch_by_ids(
     on_state: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     verbose: bool = False,
     stop_event: Optional[threading.Event] = None,
-    ping_interval_sec: float = 25.0,
-    ping_timeout_sec: float = 20.0,
-    enable_text_ping: bool = False,
+    ping_interval_sec: float = 20.0,
+    ping_timeout_sec: float = 10.0,
+    enable_text_ping: bool = True,
 ):
     """
     只负责：连接 → 订阅 → 将 WS 事件回调给 on_event（逐条 dict）。
@@ -618,6 +620,7 @@ def ws_watch_by_ids(
     silence_timeout = 600  # 秒，超过则主动重连以避免卡死
     ping_interval = max(1.0, float(ping_interval_sec))
     ping_timeout = max(1.0, float(ping_timeout_sec))
+    text_ping_interval = min(10.0, max(1.0, ping_interval / 2.0))
 
     headers = [
         "Origin: https://polymarket.com",
@@ -655,7 +658,7 @@ def ws_watch_by_ids(
                     while not ping_stop["v"] and not stop_event.is_set():
                         try:
                             ws.send("PING")
-                            time.sleep(max(1.0, ping_interval / 2.0))
+                            time.sleep(text_ping_interval)
                         except Exception:
                             break
 

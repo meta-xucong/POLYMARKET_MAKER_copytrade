@@ -130,8 +130,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "ws_ready_use_confirmed": True,  # 允许以 WS confirmed 状态作为 ready 信号
     "ws_ready_confirm_grace_sec": 2.0,  # confirmed-ready 过渡窗口（秒）
     "ws_unsubscribe_grace_sec": 120.0,  # token离开调度后保留订阅宽限，降低订阅抖动
-    "ws_ping_interval_sec": 30.0,  # WS协议层ping间隔
-    "ws_ping_timeout_sec": 20.0,  # WS协议层pong超时（必须小于ping间隔）
+    "ws_ping_interval_sec": 20.0,  # WS协议层ping间隔（应用层PING会按 interval/2 发送）
+    "ws_ping_timeout_sec": 10.0,  # WS协议层pong超时（必须小于ping间隔）
+    "ws_enable_text_ping": True,  # 应用层文本 PING（Polymarket 官方建议每 10 秒）
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 可选策略模式（classic/aggressive）
     "strategy_mode": "classic",
@@ -818,6 +819,7 @@ class GlobalConfig:
     ws_unsubscribe_grace_sec: float = float(DEFAULT_GLOBAL_CONFIG["ws_unsubscribe_grace_sec"])
     ws_ping_interval_sec: float = float(DEFAULT_GLOBAL_CONFIG["ws_ping_interval_sec"])
     ws_ping_timeout_sec: float = float(DEFAULT_GLOBAL_CONFIG["ws_ping_timeout_sec"])
+    ws_enable_text_ping: bool = bool(DEFAULT_GLOBAL_CONFIG["ws_enable_text_ping"])
     exit_start_stagger_sec: float = DEFAULT_GLOBAL_CONFIG["exit_start_stagger_sec"]
     strategy_mode: str = str(DEFAULT_GLOBAL_CONFIG["strategy_mode"])
     # 【重构】burst和reentry参数与mode解耦
@@ -1157,6 +1159,12 @@ class GlobalConfig:
             ),
             ws_ping_interval_sec=ws_ping_interval_sec,
             ws_ping_timeout_sec=ws_ping_timeout_sec,
+            ws_enable_text_ping=bool(
+                scheduler.get(
+                    "ws_enable_text_ping",
+                    merged.get("ws_enable_text_ping", cls.ws_enable_text_ping),
+                )
+            ),
             exit_start_stagger_sec=float(
                 merged.get("exit_start_stagger_sec", cls.exit_start_stagger_sec)
             ),
@@ -2515,6 +2523,7 @@ class AutoRunManager:
                 label="autorun-aggregator",
                 ping_interval_sec=float(self.config.ws_ping_interval_sec),
                 ping_timeout_sec=float(self.config.ws_ping_timeout_sec),
+                enable_text_ping=bool(self.config.ws_enable_text_ping),
                 silence_timeout_sec=self.config.ws_silence_timeout_sec,
                 custom_feature_enabled=self.config.ws_custom_feature_enabled,
                 subscribe_chunk_size=self.config.ws_subscribe_chunk_size,
@@ -5420,6 +5429,7 @@ class AutoRunManager:
         }
         STALE_POSITION_DOWNGRADE_REASONS = {
             "SELL_ABANDONED",
+            "BUY_BLOCK_ENTRY_SYNC_FAILED",
         }
 
         now = time.time()
