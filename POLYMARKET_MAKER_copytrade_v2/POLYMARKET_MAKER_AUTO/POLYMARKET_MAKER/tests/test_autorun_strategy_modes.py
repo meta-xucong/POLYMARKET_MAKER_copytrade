@@ -952,6 +952,62 @@ def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_
     assert released[0]["token_id"] == "x"
 
 
+def test_sell_abandoned_stale_position_is_downgraded_and_persisted(tmp_path):
+    cfg = GlobalConfig.from_dict({"data_dir": str(tmp_path / "data")})
+    manager = _build_manager(cfg)
+    manager._has_account_position = lambda _token_id: False  # type: ignore[assignment]
+    record = {
+        "token_id": "stale_sell",
+        "exit_reason": "SELL_ABANDONED",
+        "exit_ts": 1.0,
+        "exit_data": {"has_position": True, "position_size": 11.0},
+        "refillable": True,
+    }
+    manager._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
+    manager._exit_tokens_path.write_text(
+        json.dumps([record], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    loaded = manager._load_exit_tokens()
+    refillable = manager._filter_refillable_tokens(loaded)
+
+    assert len(refillable) == 1
+    assert refillable[0]["token_id"] == "stale_sell"
+    assert refillable[0]["exit_data"]["has_position"] is False
+    assert refillable[0]["exit_data"]["position_size"] == 0.0
+
+    persisted = manager._load_exit_tokens()
+    assert persisted[0]["exit_data"]["has_position"] is False
+    assert persisted[0]["exit_data"]["position_size"] == 0.0
+
+
+def test_title_blacklist_with_position_stale_record_remains_blocked(tmp_path):
+    cfg = GlobalConfig.from_dict({"data_dir": str(tmp_path / "data")})
+    manager = _build_manager(cfg)
+    manager._has_account_position = lambda _token_id: False  # type: ignore[assignment]
+    record = {
+        "token_id": "blocked_token",
+        "exit_reason": "TITLE_BLACKLIST_WITH_POSITION",
+        "exit_ts": 1.0,
+        "exit_data": {"has_position": True, "position_size": 2.0},
+        "refillable": True,
+    }
+    manager._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
+    manager._exit_tokens_path.write_text(
+        json.dumps([record], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    loaded = manager._load_exit_tokens()
+    refillable = manager._filter_refillable_tokens(loaded)
+
+    assert refillable == []
+    persisted = manager._load_exit_tokens()
+    assert persisted[0]["exit_data"]["has_position"] is True
+    assert persisted[0]["exit_data"]["position_size"] == 2.0
+
+
 def test_fetch_recent_trades_retries_after_timeout():
     import poly_maker_autorun as autorun
 

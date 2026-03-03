@@ -5418,6 +5418,9 @@ class AutoRunManager:
             "BUY_BLOCK_TRIGGER_UNAVAILABLE",
             "TITLE_BLACKLIST_WITH_POSITION",
         }
+        STALE_POSITION_DOWNGRADE_REASONS = {
+            "SELL_ABANDONED",
+        }
 
         now = time.time()
         cooldown_seconds = self.config.refill_cooldown_minutes * 60.0
@@ -5426,6 +5429,7 @@ class AutoRunManager:
         refillable: List[Dict[str, Any]] = []
         seen_tokens: set[str] = set()  # 避免重复
         skip_stats: Dict[str, int] = {}
+        stale_position_downgraded = 0
 
         # 按退出时间倒序处理（最新的优先，避免处理过期记录）
         sorted_records = sorted(
@@ -5480,20 +5484,30 @@ class AutoRunManager:
             exit_data = dict(record.get("exit_data") or {})
             if bool(exit_data.get("has_position", False)):
                 if not self._has_account_position(token_id):
+                    if exit_reason in POSITION_REQUIRED_REASONS:
+                        if exit_reason not in STALE_POSITION_DOWNGRADE_REASONS:
+                            skip_stats["stale_position_record"] = (
+                                skip_stats.get("stale_position_record", 0) + 1
+                            )
+                            print(
+                                f"[REFILL] skip stale position refill: token={token_id[:20]}... reason={exit_reason}"
+                            )
+                            continue
+                        skip_stats["stale_position_downgraded"] = (
+                            skip_stats.get("stale_position_downgraded", 0) + 1
+                        )
+                        print(
+                            "[REFILL] stale position downgraded to no-position: "
+                            f"token={token_id[:20]}... reason={exit_reason}"
+                        )
+                    else:
+                        skip_stats["downgraded_to_no_position"] = (
+                            skip_stats.get("downgraded_to_no_position", 0) + 1
+                        )
                     exit_data["has_position"] = False
                     exit_data["position_size"] = 0.0
                     record["exit_data"] = exit_data
-                    if exit_reason in POSITION_REQUIRED_REASONS:
-                        skip_stats["stale_position_record"] = (
-                            skip_stats.get("stale_position_record", 0) + 1
-                        )
-                        print(
-                            f"[REFILL] skip stale position refill: token={token_id[:20]}... reason={exit_reason}"
-                        )
-                        continue
-                    skip_stats["downgraded_to_no_position"] = (
-                        skip_stats.get("downgraded_to_no_position", 0) + 1
-                    )
+                    stale_position_downgraded += 1
 
             # 检查冷却时间（exit_ts 到现在的时间间隔）
             if exit_ts > 0 and (now - exit_ts) < effective_cooldown_seconds:
@@ -5572,6 +5586,17 @@ class AutoRunManager:
                             print(f"[WARNING] 回填前市场状态检测失败: {token_id[:16]}..., error={e}")
 
             refillable.append(record)
+
+        if stale_position_downgraded > 0:
+            try:
+                with self._file_io_lock:
+                    _atomic_json_write(self._exit_tokens_path, exit_records)
+                print(
+                    "[REFILL] synced stale position downgrade to exit_tokens.json: "
+                    f"updated={stale_position_downgraded}"
+                )
+            except Exception as exc:
+                print(f"[WARN] failed to sync stale position downgrade: {exc}")
 
         # 排序优先级：
         # 1. 有持仓的优先（需要尽快卖出）
@@ -6863,3 +6888,4 @@ def main(argv: Optional[List[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
+
