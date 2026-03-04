@@ -100,8 +100,10 @@ DEFAULT_GLOBAL_CONFIG = {
     "ws_debug_raw": False,
     # Slot refill (回填) 配置
     "enable_slot_refill": True,
-    "refill_cooldown_minutes": 5.0,  # 【修复】从30分钟缩短到5分钟，加快token复用
-    "max_refill_retries": 3,
+    "refill_cooldown_minutes": 5.0,  # 兼容旧配置：等价于有持仓冷却
+    "refill_cooldown_minutes_with_position": 5.0,
+    "refill_cooldown_minutes_no_position": 20.0,
+    "max_refill_retries": 6,
     "refill_check_interval_sec": 60.0,
     "inactive_token_reconcile_interval_sec": 1200.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
@@ -146,6 +148,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "aggressive_sell_fill_poll_sec": 15.0,
     "aggressive_burst_slots": 10,
     "aggressive_enable_self_sell_reentry": False,
+    "classic_keep_orders_price_threshold": 0.8,
     "title_blacklist": {
         "enabled": False,
         "keywords": [],
@@ -205,6 +208,7 @@ POSITION_CHECK_CACHE_TTL_SEC = 600.0
 POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 1800.0
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
+SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC = 45.0
 DATA_API_RATE_LIMIT_SEC = 1.0
 DATA_API_TIMEOUT_SEC = 10.0
 DATA_API_TRADE_RETRY_ATTEMPTS = 3
@@ -841,6 +845,9 @@ class GlobalConfig:
     aggressive_enable_self_sell_reentry: bool = bool(
         DEFAULT_GLOBAL_CONFIG.get("aggressive_enable_self_sell_reentry", False)
     )
+    classic_keep_orders_price_threshold: float = float(
+        DEFAULT_GLOBAL_CONFIG.get("classic_keep_orders_price_threshold", 0.8)
+    )
     title_blacklist_enabled: bool = bool(
         (DEFAULT_GLOBAL_CONFIG.get("title_blacklist") or {}).get("enabled", False)
     )
@@ -856,6 +863,12 @@ class GlobalConfig:
     # Slot refill (回填) 配置
     enable_slot_refill: bool = bool(DEFAULT_GLOBAL_CONFIG["enable_slot_refill"])
     refill_cooldown_minutes: float = DEFAULT_GLOBAL_CONFIG["refill_cooldown_minutes"]
+    refill_cooldown_minutes_with_position: float = DEFAULT_GLOBAL_CONFIG[
+        "refill_cooldown_minutes_with_position"
+    ]
+    refill_cooldown_minutes_no_position: float = DEFAULT_GLOBAL_CONFIG[
+        "refill_cooldown_minutes_no_position"
+    ]
     max_refill_retries: int = DEFAULT_GLOBAL_CONFIG["max_refill_retries"]
     refill_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG["refill_check_interval_sec"]
     inactive_token_reconcile_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
@@ -1225,6 +1238,15 @@ class GlobalConfig:
                     ),
                 )
             ),
+            classic_keep_orders_price_threshold=float(
+                scheduler.get(
+                    "classic_keep_orders_price_threshold",
+                    merged.get(
+                        "classic_keep_orders_price_threshold",
+                        cls.classic_keep_orders_price_threshold,
+                    ),
+                )
+            ),
             title_blacklist_enabled=bool(
                 title_blacklist_cfg.get(
                     "enabled",
@@ -1288,10 +1310,37 @@ class GlobalConfig:
                 scheduler.get("enable_slot_refill", merged.get("enable_slot_refill", True))
             ),
             refill_cooldown_minutes=float(
-                scheduler.get("refill_cooldown_minutes", merged.get("refill_cooldown_minutes", 30.0))
+                scheduler.get(
+                    "refill_cooldown_minutes",
+                    merged.get("refill_cooldown_minutes", cls.refill_cooldown_minutes),
+                )
+            ),
+            refill_cooldown_minutes_with_position=float(
+                scheduler.get(
+                    "refill_cooldown_minutes_with_position",
+                    merged.get(
+                        "refill_cooldown_minutes_with_position",
+                        merged.get(
+                            "refill_cooldown_minutes",
+                            cls.refill_cooldown_minutes_with_position,
+                        ),
+                    ),
+                )
+            ),
+            refill_cooldown_minutes_no_position=float(
+                scheduler.get(
+                    "refill_cooldown_minutes_no_position",
+                    merged.get(
+                        "refill_cooldown_minutes_no_position",
+                        cls.refill_cooldown_minutes_no_position,
+                    ),
+                )
             ),
             max_refill_retries=int(
-                scheduler.get("max_refill_retries", merged.get("max_refill_retries", 3))
+                scheduler.get(
+                    "max_refill_retries",
+                    merged.get("max_refill_retries", cls.max_refill_retries),
+                )
             ),
             refill_check_interval_sec=float(
                 scheduler.get("refill_check_interval_sec", merged.get("refill_check_interval_sec", 60.0))
@@ -1469,6 +1518,7 @@ class AutoRunManager:
         # 已完成 exit-only cleanup 的 token（避免重复触发清仓）
         self._completed_exit_cleanup_tokens: set[str] = set()
         self._handled_sell_signals: set[str] = set()
+        self._sell_exit_deadlines: Dict[str, float] = {}
         self._position_snapshot_cache: Dict[str, Dict[str, Any]] = {}
         self._exit_cleanup_retry_counts: Dict[str, int] = {}
         self._startup_sync_retry_needed: bool = True
@@ -1556,6 +1606,7 @@ class AutoRunManager:
         except (TypeError, ValueError):
             next_buy_allowed_ts = 0.0
         next_drop_pct = AutoRunManager._normalize_ratio_value(raw.get("next_drop_pct"))
+        next_profit_pct = AutoRunManager._normalize_ratio_value(raw.get("next_profit_pct"))
         try:
             last_cycle_completed_ts = max(
                 0.0, float(raw.get("last_cycle_completed_ts", 0.0) or 0.0)
@@ -1569,6 +1620,8 @@ class AutoRunManager:
         }
         if next_drop_pct is not None:
             normalized["next_drop_pct"] = next_drop_pct
+        if next_profit_pct is not None:
+            normalized["next_profit_pct"] = next_profit_pct
         return normalized
 
     def _load_token_cycle_states(self) -> None:
@@ -1635,6 +1688,19 @@ class AutoRunManager:
         cap = AutoRunManager._normalize_ratio_value(run_cfg.get("incremental_drop_pct_cap"))
         return max(0.0, step), cap
 
+    @staticmethod
+    def _resolve_profit_step_and_cap(run_cfg: Dict[str, Any]) -> tuple[float, Optional[float]]:
+        enabled = bool(run_cfg.get("enable_incremental_profit_pct", False))
+        if not enabled:
+            return 0.0, AutoRunManager._normalize_ratio_value(
+                run_cfg.get("incremental_profit_pct_cap")
+            )
+        step = AutoRunManager._normalize_ratio_value(run_cfg.get("incremental_profit_pct_step"))
+        if step is None:
+            step = 0.0
+        cap = AutoRunManager._normalize_ratio_value(run_cfg.get("incremental_profit_pct_cap"))
+        return max(0.0, step), cap
+
     def _resolve_current_drop_pct_for_cycle(
         self, token_id: str, run_cfg: Dict[str, Any]
     ) -> Optional[float]:
@@ -1643,6 +1709,18 @@ class AutoRunManager:
         base_drop = self._normalize_ratio_value(run_cfg.get("drop_pct"))
         resume_drop = self._normalize_ratio_value(run_cfg.get("resume_drop_pct"))
         candidates = [v for v in (state_drop, base_drop, resume_drop) if v is not None]
+        if not candidates:
+            return None
+        return max(candidates)
+
+    def _resolve_current_profit_pct_for_cycle(
+        self, token_id: str, run_cfg: Dict[str, Any]
+    ) -> Optional[float]:
+        state = self._token_cycle_states.get(token_id) or {}
+        state_profit = self._normalize_ratio_value(state.get("next_profit_pct"))
+        base_profit = self._normalize_ratio_value(run_cfg.get("profit_pct"))
+        resume_profit = self._normalize_ratio_value(run_cfg.get("resume_profit_pct"))
+        candidates = [v for v in (state_profit, base_profit, resume_profit) if v is not None]
         if not candidates:
             return None
         return max(candidates)
@@ -1663,6 +1741,13 @@ class AutoRunManager:
             next_drop = current_drop + step
             if cap is not None:
                 next_drop = min(next_drop, max(cap, current_drop))
+        current_profit = self._resolve_current_profit_pct_for_cycle(token_id, run_cfg)
+        profit_step, profit_cap = self._resolve_profit_step_and_cap(run_cfg)
+        next_profit: Optional[float] = current_profit
+        if current_profit is not None and profit_step > 0:
+            next_profit = current_profit + profit_step
+            if profit_cap is not None:
+                next_profit = min(next_profit, max(profit_cap, current_profit))
         record: Dict[str, Any] = {
             "cycle_round": next_round,
             "next_buy_allowed_ts": next_buy_allowed_ts,
@@ -1670,13 +1755,18 @@ class AutoRunManager:
         }
         if next_drop is not None:
             record["next_drop_pct"] = next_drop
+        if next_profit is not None:
+            record["next_profit_pct"] = next_profit
         self._token_cycle_states[token_id] = record
         self._save_token_cycle_states()
         next_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(next_buy_allowed_ts))
-        if next_drop is not None:
+        if next_drop is not None or next_profit is not None:
+            drop_text = f"{next_drop:.6f}" if next_drop is not None else "None"
+            profit_text = f"{next_profit:.6f}" if next_profit is not None else "None"
             print(
                 f"[CYCLE_GATE] token={token_id[:16]}... round={next_round} "
-                f"next_buy_after={next_text} next_drop_pct={next_drop:.6f}"
+                f"next_buy_after={next_text} next_drop_pct={drop_text} "
+                f"next_profit_pct={profit_text}"
             )
         else:
             print(
@@ -1700,24 +1790,39 @@ class AutoRunManager:
             self._log_throttled(
                 f"cycle_gate_wait_{token_id}",
                 20.0,
-                f"[CYCLE_GATE] token={token_id[:16]}... 买入闸门未到期，剩余={remaining}s until {target_text}",
+                f"[CYCLE_GATE] token={token_id[:16]}... buy gate not reached, remaining={remaining}s until {target_text}",
             )
             return False
+
         next_drop = self._normalize_ratio_value(state.get("next_drop_pct"))
-        if next_drop is None:
-            return True
-        drop_base = self._normalize_ratio_value(run_cfg.get("drop_pct")) or 0.0
-        effective_drop = max(next_drop, drop_base)
-        _, cap = self._resolve_drop_step_and_cap(run_cfg)
-        if cap is not None:
-            effective_drop = min(effective_drop, max(cap, drop_base))
-        old_resume = self._normalize_ratio_value(run_cfg.get("resume_drop_pct"))
-        if old_resume is None or abs(old_resume - effective_drop) > 1e-12:
-            run_cfg["resume_drop_pct"] = effective_drop
-            print(
-                f"[CYCLE_GATE] token={token_id[:16]}... 覆盖下一轮买入阈值 "
-                f"{old_resume if old_resume is not None else 'None'} -> {effective_drop:.6f}"
-            )
+        if next_drop is not None:
+            drop_base = self._normalize_ratio_value(run_cfg.get("drop_pct")) or 0.0
+            effective_drop = max(next_drop, drop_base)
+            _, cap = self._resolve_drop_step_and_cap(run_cfg)
+            if cap is not None:
+                effective_drop = min(effective_drop, max(cap, drop_base))
+            old_resume = self._normalize_ratio_value(run_cfg.get("resume_drop_pct"))
+            if old_resume is None or abs(old_resume - effective_drop) > 1e-12:
+                run_cfg["resume_drop_pct"] = effective_drop
+                print(
+                    f"[CYCLE_GATE] token={token_id[:16]}... override next drop threshold: "
+                    f"{old_resume if old_resume is not None else 'None'} -> {effective_drop:.6f}"
+                )
+
+        next_profit = self._normalize_ratio_value(state.get("next_profit_pct"))
+        if next_profit is not None:
+            profit_base = self._normalize_ratio_value(run_cfg.get("profit_pct")) or 0.0
+            effective_profit = max(next_profit, profit_base)
+            _, profit_cap = self._resolve_profit_step_and_cap(run_cfg)
+            if profit_cap is not None:
+                effective_profit = min(effective_profit, max(profit_cap, profit_base))
+            old_resume_profit = self._normalize_ratio_value(run_cfg.get("resume_profit_pct"))
+            if old_resume_profit is None or abs(old_resume_profit - effective_profit) > 1e-12:
+                run_cfg["resume_profit_pct"] = effective_profit
+                print(
+                    f"[CYCLE_GATE] token={token_id[:16]}... override next profit threshold: "
+                    f"{old_resume_profit if old_resume_profit is not None else 'None'} -> {effective_profit:.6f}"
+                )
         return True
 
     @staticmethod
@@ -2192,6 +2297,7 @@ class AutoRunManager:
                     self._normalize_pending_queues_for_mode()
                     self._process_commands()
                     self._poll_tasks()
+                    self._enforce_sell_exit_deadlines()
                     self._schedule_pending_exit_cleanup()
                     self._schedule_pending_topics()
                     self._purge_inactive_tasks()
@@ -3184,6 +3290,33 @@ class AutoRunManager:
 
         self._purge_inactive_tasks()
 
+    def _enforce_sell_exit_deadlines(self) -> None:
+        if not self._sell_exit_deadlines:
+            return
+        now = time.time()
+        for token_id, deadline in list(self._sell_exit_deadlines.items()):
+            if now < float(deadline):
+                continue
+            task = self.tasks.get(token_id)
+            if not (task and task.is_running() and task.end_reason == "sell signal"):
+                self._sell_exit_deadlines.pop(token_id, None)
+                continue
+
+            print(
+                "[COPYTRADE][WARN] sell signal grace timeout, force terminate and "
+                f"fallback to exit-only cleanup: token_id={token_id}"
+            )
+            detail = self.topic_details.setdefault(token_id, {})
+            detail["sell_exit_phase"] = "forced_cleanup"
+            self._terminate_task(task, reason="sell signal grace timeout -> force cleanup")
+            self._sell_exit_deadlines.pop(token_id, None)
+            if (
+                token_id not in self.pending_exit_topics
+                and token_id not in self.pending_topics
+                and token_id not in self.pending_burst_topics
+            ):
+                self.pending_exit_topics.append(token_id)
+
     def _check_stuck_and_refill(self, task: TopicTask, now: float) -> bool:
         """检测长期卡顿话题：触发后终止并立即回填。"""
         last_line = (task.log_excerpt.splitlines() or [""])[-1].strip()
@@ -3323,6 +3456,11 @@ class AutoRunManager:
         )
 
     def _handle_process_exit(self, task: TopicTask, rc: int) -> None:
+        self._sell_exit_deadlines.pop(task.topic_id, None)
+        if task.topic_id in self.topic_details:
+            self.topic_details[task.topic_id].pop("sell_exit_requested_at", None)
+            self.topic_details[task.topic_id].pop("sell_exit_deadline_at", None)
+            self.topic_details[task.topic_id].pop("sell_exit_phase", None)
         self._price_cap_stuck_since.pop(task.topic_id, None)
         self._price_cap_flat_stuck_since.pop(task.topic_id, None)
         self._shock_stuck_since.pop(task.topic_id, None)
@@ -4247,6 +4385,9 @@ class AutoRunManager:
         resume_drop_pct = topic_info.get("resume_drop_pct")
         if resume_drop_pct is not None:
             merged["resume_drop_pct"] = resume_drop_pct
+        resume_profit_pct = topic_info.get("resume_profit_pct")
+        if resume_profit_pct is not None:
+            merged["resume_profit_pct"] = resume_profit_pct
 
         # Maker 子进程配置（从 global_config 传递）
         merged["maker_poll_sec"] = self.config.maker_poll_sec
@@ -4258,9 +4399,32 @@ class AutoRunManager:
         max_retries = self.config.max_refill_retries
         is_exhausted = retry_count >= max_retries and max_retries > 0
         
-        # 默认：aggressive模式保留卖单，classic模式撤卖单
-        # 【新功能】exhausted状态可覆盖此行为
+        # 默认：aggressive模式保留卖单，classic模式撤卖单。
+        # classic模式可按价格阈值切换为“保留卖单”。
         base_keep_orders = bool(self._is_aggressive_mode())
+        if not base_keep_orders:
+            threshold = float(
+                max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(
+                            getattr(
+                                self.config,
+                                "classic_keep_orders_price_threshold",
+                                0.8,
+                            )
+                            or 0.8
+                        ),
+                    ),
+                )
+            )
+            price_hint = self._topic_price_hint(topic_id, topic_info)
+            if price_hint is not None and price_hint >= threshold:
+                base_keep_orders = True
+                merged["classic_keep_orders_by_price"] = True
+                merged["classic_keep_orders_price_hint"] = round(float(price_hint), 6)
+                merged["classic_keep_orders_price_threshold"] = threshold
         if is_exhausted and self.config.exhausted_keep_orders:
             # 3次refill后，强制保留卖单（临终关怀模式）
             base_keep_orders = True
@@ -4271,6 +4435,43 @@ class AutoRunManager:
         merged["is_exhausted_token"] = is_exhausted
 
         return merged
+
+    def _topic_price_hint(
+        self, topic_id: str, topic_info: Optional[Dict[str, Any]] = None
+    ) -> Optional[float]:
+        info = topic_info or {}
+        candidates: List[Any] = []
+
+        with self._ws_cache_lock:
+            ws_snap = dict(self._ws_cache.get(topic_id) or {})
+        candidates.extend(
+            [
+                ws_snap.get("best_ask"),
+                ws_snap.get("price"),
+                ws_snap.get("best_bid"),
+            ]
+        )
+        candidates.extend(
+            [
+                info.get("best_ask"),
+                info.get("last_ask"),
+                info.get("ask"),
+                info.get("price"),
+                info.get("last_price"),
+                info.get("entry_price"),
+            ]
+        )
+        resume_state = info.get("resume_state") if isinstance(info.get("resume_state"), dict) else {}
+        if resume_state:
+            candidates.append(resume_state.get("entry_price"))
+
+        for raw in candidates:
+            px = _coerce_float(raw)
+            if px is None:
+                continue
+            if px > 0:
+                return float(px)
+        return None
 
     @staticmethod
     def _normalize_market_token_ids(raw_value: Any) -> List[str]:
@@ -4659,6 +4860,7 @@ class AutoRunManager:
         self._completed_exit_cleanup_tokens.discard(topic_id)
         self._handled_sell_signals.discard(topic_id)
         self._exit_cleanup_retry_counts.pop(topic_id, None)
+        self._sell_exit_deadlines.pop(topic_id, None)
         self._seen_self_sell_tokens.discard(topic_id)
         # 检查是否是回填启动。
         # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
@@ -4676,6 +4878,9 @@ class AutoRunManager:
         if topic_id in self.topic_details:
             self.topic_details[topic_id].pop("resume_state", None)
             self.topic_details[topic_id].pop("refill_retry_count", None)
+            self.topic_details[topic_id].pop("sell_exit_requested_at", None)
+            self.topic_details[topic_id].pop("sell_exit_deadline_at", None)
+            self.topic_details[topic_id].pop("sell_exit_phase", None)
         self._clear_reentry_eligible_token(topic_id, reason="maker_started")
         print(f"[START] topic={topic_id} pid={proc.pid} log={log_path}")
         return True
@@ -4684,6 +4889,11 @@ class AutoRunManager:
         task = self.tasks.get(token_id)
         if task and task.is_running():
             return
+        self._sell_exit_deadlines.pop(token_id, None)
+        detail = self.topic_details.setdefault(token_id, {})
+        detail.pop("sell_exit_requested_at", None)
+        detail.pop("sell_exit_deadline_at", None)
+        detail["sell_exit_phase"] = "forced_cleanup"
         if token_id in self.pending_topics or token_id in self.pending_burst_topics:
             self._remove_pending_topic(token_id)
         if token_id in self.pending_exit_topics:
@@ -5057,6 +5267,7 @@ class AutoRunManager:
             role_burst[role] = role_burst.get(role, 0) + 1
         if role_base or role_burst:
             print(f"[STATUS] pending_base_roles={role_base} pending_burst_roles={role_burst}")
+        self._print_cycle_threshold_status()
         if not self.tasks:
             print("[RUN] 当前无运行中的话题")
             return
@@ -5073,6 +5284,45 @@ class AutoRunManager:
         print(f"[STATUS] task_modes={mode_counts}")
         for idx, task in enumerate(running_tasks, 1):
             self._print_single_task(task, idx)
+
+    def _print_cycle_threshold_status(self) -> None:
+        active_tokens = (
+            set(self.tasks.keys())
+            | set(self.pending_topics)
+            | set(self.pending_burst_topics)
+            | set(self.pending_exit_topics)
+        )
+        if not active_tokens or not self._token_cycle_states:
+            return
+
+        now = time.time()
+        rows: List[str] = []
+        for token_id in sorted(active_tokens):
+            state = self._token_cycle_states.get(token_id)
+            if not state:
+                continue
+            cycle_round = int(state.get("cycle_round", 0) or 0)
+            next_buy_ts = float(state.get("next_buy_allowed_ts", 0.0) or 0.0)
+            wait_sec = int(max(0.0, next_buy_ts - now)) if next_buy_ts > now else 0
+            drop_pct = self._normalize_ratio_value(state.get("next_drop_pct"))
+            profit_pct = self._normalize_ratio_value(state.get("next_profit_pct"))
+            drop_text = f"{drop_pct * 100:.3f}%" if drop_pct is not None else "-"
+            profit_text = f"{profit_pct * 100:.3f}%" if profit_pct is not None else "-"
+            rows.append(
+                f"token={token_id[:16]}... round={cycle_round} wait={wait_sec}s "
+                f"next_drop={drop_text} next_profit={profit_text}"
+            )
+
+        if not rows:
+            return
+
+        print(
+            f"[CYCLE][STATUS] active_with_cycle_state={len(rows)} "
+            f"cycle_state_total={len(self._token_cycle_states)}"
+        )
+        for line in rows[:8]:
+            print(f"[CYCLE][STATUS] {line}")
+
     def _task_runtime_mode(self, task: TopicTask, detail: Dict[str, Any]) -> str:
         role = self._queue_role(detail)
         cfg = self._get_task_run_config(task)
@@ -5433,7 +5683,12 @@ class AutoRunManager:
         }
 
         now = time.time()
-        cooldown_seconds = self.config.refill_cooldown_minutes * 60.0
+        cooldown_with_position_seconds = (
+            self.config.refill_cooldown_minutes_with_position * 60.0
+        )
+        cooldown_no_position_seconds = (
+            self.config.refill_cooldown_minutes_no_position * 60.0
+        )
         max_retries = self.config.max_refill_retries
 
         refillable: List[Dict[str, Any]] = []
@@ -5477,21 +5732,19 @@ class AutoRunManager:
             # 低余额暂停期间产生的 token：
             # - 无持仓：暂停状态下不参与回填
             # - 有持仓：允许回填并走“仅卖出”恢复路径，避免低余额死锁
+            exit_data = dict(record.get("exit_data") or {})
+
             if exit_reason == "LOW_BALANCE_PAUSE":
-                has_position_flag = bool((record.get("exit_data") or {}).get("has_position", False))
+                has_position_flag = bool(exit_data.get("has_position", False))
                 if self._buy_paused_due_to_balance and not has_position_flag:
                     # 兜底：若历史记录未标记 has_position，实时检查一次账户持仓
                     if token_id and self._has_account_position(token_id):
                         has_position_flag = True
-                        record.setdefault("exit_data", {})["has_position"] = True
+                        exit_data["has_position"] = True
+                        record["exit_data"] = exit_data
                     else:
                         skip_stats["low_balance_paused"] = skip_stats.get("low_balance_paused", 0) + 1
                         continue
-                effective_cooldown_seconds = 0.0
-            else:
-                effective_cooldown_seconds = cooldown_seconds
-
-            exit_data = dict(record.get("exit_data") or {})
             if bool(exit_data.get("has_position", False)):
                 if not self._has_account_position(token_id):
                     if exit_reason in POSITION_REQUIRED_REASONS:
@@ -5518,6 +5771,17 @@ class AutoRunManager:
                     exit_data["position_size"] = 0.0
                     record["exit_data"] = exit_data
                     stale_position_downgraded += 1
+
+            has_position_now = bool(exit_data.get("has_position", False))
+            if exit_reason == "LOW_BALANCE_PAUSE":
+                # 余额暂停恢复阶段允许立即重试，避免长时间卡住。
+                effective_cooldown_seconds = 0.0
+            else:
+                effective_cooldown_seconds = (
+                    cooldown_with_position_seconds
+                    if has_position_now
+                    else cooldown_no_position_seconds
+                )
 
             # 检查冷却时间（exit_ts 到现在的时间间隔）
             if exit_ts > 0 and (now - exit_ts) < effective_cooldown_seconds:
@@ -5624,7 +5888,9 @@ class AutoRunManager:
             print(
                 "[REFILL][DEBUG] 过滤结果: "
                 f"exit_records={len(exit_records)} refillable={len(refillable)} "
-                f"cooldown_sec={int(cooldown_seconds)} max_retries={max_retries}"
+                f"cooldown_pos_sec={int(cooldown_with_position_seconds)} "
+                f"cooldown_flat_sec={int(cooldown_no_position_seconds)} "
+                f"max_retries={max_retries}"
             )
             if skip_stats:
                 print(f"[REFILL][DEBUG] 跳过统计: {skip_stats}")
@@ -5774,6 +6040,7 @@ class AutoRunManager:
                     overlay["refill_retry_count"] = detail.get("refill_retry_count", 0)
                     overlay["refill_exit_reason"] = detail.get("refill_exit_reason")
                     overlay["resume_drop_pct"] = detail.get("resume_drop_pct")
+                    overlay["resume_profit_pct"] = detail.get("resume_profit_pct")
                 if detail.get("schedule_lane"):
                     overlay["schedule_lane"] = detail.get("schedule_lane")
                 if detail.get("queue_role"):
@@ -5799,6 +6066,8 @@ class AutoRunManager:
                         self.topic_details[tid]["refill_exit_reason"] = saved["refill_exit_reason"]
                     if saved.get("resume_drop_pct") is not None:
                         self.topic_details[tid]["resume_drop_pct"] = saved.get("resume_drop_pct")
+                    if saved.get("resume_profit_pct") is not None:
+                        self.topic_details[tid]["resume_profit_pct"] = saved.get("resume_profit_pct")
                 if saved.get("schedule_lane"):
                     self.topic_details[tid]["schedule_lane"] = saved["schedule_lane"]
                 if saved.get("queue_role"):
@@ -6150,20 +6419,21 @@ class AutoRunManager:
         }
         _dump_json_file(path, payload)
 
-    def _has_account_position(self, token_id: str) -> bool:
+    def _has_account_position(self, token_id: str, *, force_refresh: bool = False) -> bool:
         if not token_id:
             return False
         now = time.time()
-        cached = self._position_snapshot_cache.get(token_id)
-        if cached:
-            cached_has_position = bool(cached.get("has_position", False))
-            ttl = (
-                POSITION_CHECK_CACHE_TTL_SEC
-                if cached_has_position
-                else POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC
-            )
-            if now - cached.get("ts", 0.0) <= ttl:
-                return cached_has_position
+        if not force_refresh:
+            cached = self._position_snapshot_cache.get(token_id)
+            if cached:
+                cached_has_position = bool(cached.get("has_position", False))
+                ttl = (
+                    POSITION_CHECK_CACHE_TTL_SEC
+                    if cached_has_position
+                    else POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC
+                )
+                if now - cached.get("ts", 0.0) <= ttl:
+                    return cached_has_position
 
         if not self._position_address:
             address, origin = _resolve_position_address_from_env()
@@ -6205,7 +6475,10 @@ class AutoRunManager:
         if pos_size > POSITION_CLEANUP_DUST_THRESHOLD:
             return True, "snapshot"
         if snapshot_info == "ok":
-            return False, "snapshot_no_position"
+            has_position = self._has_account_position(token_id, force_refresh=True)
+            if has_position:
+                return True, "fallback_has_position_after_snapshot_miss"
+            return False, "snapshot_no_position_confirmed"
         has_position = self._has_account_position(token_id)
         if has_position:
             return True, f"fallback_has_position:{snapshot_info}"
@@ -6321,6 +6594,12 @@ class AutoRunManager:
             task.no_restart = True
             task.end_reason = "sell signal"
             task.heartbeat("sell signal received")
+            deadline = time.time() + SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC
+            self._sell_exit_deadlines[token_id] = deadline
+            detail = self.topic_details.setdefault(token_id, {})
+            detail["sell_exit_requested_at"] = time.time()
+            detail["sell_exit_deadline_at"] = deadline
+            detail["sell_exit_phase"] = "grace"
         self._issue_exit_signal(token_id)
         if not (task and task.is_running()):
             if (
@@ -6485,6 +6764,7 @@ class AutoRunManager:
         self._handled_sell_signals.clear()
         self._completed_exit_cleanup_tokens.clear()
         self._exit_cleanup_retry_counts.clear()
+        self._sell_exit_deadlines.clear()
 
         self._pending_first_seen.clear()
         self._refilled_tokens.clear()

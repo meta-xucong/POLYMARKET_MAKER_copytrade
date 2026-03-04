@@ -274,6 +274,56 @@ def _extract_min_order_size_from_orderbook(payload: Any) -> Optional[float]:
     return None
 
 
+def _extract_price_precision_from_orderbook(payload: Any) -> Optional[int]:
+    if payload is None:
+        return None
+    if isinstance(payload, tuple) and len(payload) == 2:
+        payload = payload[1]
+    if isinstance(payload, dict) and {"data", "status"} <= set(payload.keys()):
+        payload = payload.get("data")
+
+    def _read_tick_value(obj: Any) -> Optional[Any]:
+        keys = (
+            "tick_size",
+            "tickSize",
+            "price_tick",
+            "priceTick",
+            "minimum_tick_size",
+            "minimumTickSize",
+        )
+        if isinstance(obj, dict):
+            for key in keys:
+                if key in obj:
+                    return obj.get(key)
+            return None
+        for key in keys:
+            if hasattr(obj, key):
+                try:
+                    return getattr(obj, key)
+                except Exception:
+                    continue
+        if hasattr(obj, "__dict__"):
+            try:
+                d = vars(obj)
+                for key in keys:
+                    if key in d:
+                        return d.get(key)
+            except Exception:
+                return None
+        return None
+
+    tick_value = _read_tick_value(payload)
+    if tick_value is None:
+        return None
+    try:
+        tick = float(tick_value)
+    except Exception:
+        return None
+    if tick <= 0 or tick >= 1:
+        return None
+    return _count_decimal_places(tick)
+
+
 def _fetch_min_order_size_from_orderbook(client: Any, token_id: str) -> Optional[float]:
     method_candidates = (
         ("get_order_book", {"token_id": token_id}),
@@ -297,6 +347,27 @@ def _fetch_min_order_size_from_orderbook(client: Any, token_id: str) -> Optional
     if last_error and not hasattr(_fetch_min_order_size_from_orderbook, "_warned"):
         print(f"[WARN] 无法获取 min_order_size，使用回退值：{last_error}")
         _fetch_min_order_size_from_orderbook._warned = True
+    return None
+
+
+def _fetch_price_precision_from_orderbook(client: Any, token_id: str) -> Optional[int]:
+    method_candidates = (
+        ("get_order_book", {"token_id": token_id}),
+        ("get_orderbook", {"token_id": token_id}),
+        ("get_market_orderbook", {"token_id": token_id}),
+    )
+    for name, kwargs in method_candidates:
+        fn = getattr(client, name, None)
+        if not callable(fn):
+            continue
+        try:
+            _enforce_request_rate_limit()
+            resp = fn(**kwargs)
+        except Exception:
+            continue
+        precision = _extract_price_precision_from_orderbook(resp)
+        if precision is not None and precision >= 0:
+            return precision
     return None
 
 
@@ -897,9 +968,25 @@ def _infer_market_price_precision_from_raw(raw: Any) -> Optional[int]:
         if val is None:
             return None
         try:
-            if isinstance(val, (int, float)) and val > 0 and val < 1:
-                dp = _count_decimal_places(val)
-                return dp
+            if isinstance(val, str):
+                val = val.strip()
+                if not val:
+                    return None
+                # "0.01" / "0.001" style tick size strings
+                try:
+                    as_float = float(val)
+                except Exception:
+                    as_float = None
+                if as_float is not None and 0 < as_float < 1:
+                    return _count_decimal_places(as_float)
+                cand_int = int(val)
+                if cand_int >= 0:
+                    return cand_int
+                return None
+
+            if isinstance(val, (int, float)) and 0 < val < 1:
+                return _count_decimal_places(val)
+
             cand_int = int(val)
             if cand_int >= 0:
                 return cand_int
@@ -924,13 +1011,18 @@ def _infer_market_price_precision_from_raw(raw: Any) -> Optional[int]:
     tick_keys = (
         "priceTick",
         "tickSize",
+        "tick_size",
         "tick",
         "priceIncrement",
         "minimumPriceIncrement",
+        "minimum_tick_size",
+        "minimumTickSize",
+        "minTickSize",
+        "min_tick_size",
     )
     for key in tick_keys:
         candidate = _normalize_candidate(raw.get(key))
-        if candidate:
+        if candidate is not None:
             return candidate
 
     nested_lists = ("outcomes", "tokens", "clobTokens", "clobTokenIds")
@@ -942,7 +1034,7 @@ def _infer_market_price_precision_from_raw(raw: Any) -> Optional[int]:
             if not isinstance(item, dict):
                 continue
             nested_candidate = _infer_market_price_precision_from_raw(item)
-            if nested_candidate:
+            if nested_candidate is not None:
                 return nested_candidate
     return None
 
@@ -2256,8 +2348,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         })
         return
 
-    def _calc_profit_floor(meta: Dict[str, Any]) -> Tuple[float, Optional[int]]:
+    def _calc_profit_floor(
+        meta: Dict[str, Any], token_for_fallback: Optional[str] = None
+    ) -> Tuple[float, Optional[int]]:
         precision = _infer_market_price_precision(meta)
+        if precision is None and token_for_fallback:
+            precision = _fetch_price_precision_from_orderbook(
+                client, str(token_for_fallback)
+            )
         floor = 0.003
         if precision == 2:
             floor = 0.01
@@ -2265,7 +2363,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             floor = 0.003
         return floor, precision
 
-    profit_floor, market_price_precision = _calc_profit_floor(market_meta)
+    profit_floor, market_price_precision = _calc_profit_floor(market_meta, str(token_id))
 
     def _log_profit_floor(prefix: str = "[INFO]") -> None:
         if market_price_precision is not None:
@@ -2373,6 +2471,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     else:
         print("[INIT] 未启用递增跌幅阈值，保持固定阈值运行。")
 
+    incremental_profit_pct_step = _normalize_ratio(
+        run_cfg.get("incremental_profit_pct_step"), 0.003
+    )
+    enable_incremental_profit_pct = bool(
+        run_cfg.get("enable_incremental_profit_pct", incremental_profit_pct_step > 0)
+    )
+    if not enable_incremental_profit_pct:
+        incremental_profit_pct_step = 0.0
+
+    if enable_incremental_profit_pct:
+        print(
+            f"[INIT] 卖出后递增盈利阈值已启用，步长 {incremental_profit_pct_step * 100:.4f}%。"
+        )
+    else:
+        print("[INIT] 未启用递增盈利阈值，保持固定阈值运行。")
+
     resume_drop_pct_raw = _coerce_float(run_cfg.get("resume_drop_pct"))
     if resume_drop_pct_raw is not None:
         if resume_drop_pct_raw > 1:
@@ -2392,6 +2506,27 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     f"drop_pct {drop_pct:.6f} -> {resume_drop_pct:.6f}"
                 )
                 drop_pct = resume_drop_pct
+
+    resume_profit_pct_raw = _coerce_float(run_cfg.get("resume_profit_pct"))
+    if resume_profit_pct_raw is not None:
+        if resume_profit_pct_raw > 1:
+            resume_profit_pct_raw = resume_profit_pct_raw / 100.0
+        if resume_profit_pct_raw >= 0:
+            resume_profit_pct = max(resume_profit_pct_raw, profit_pct)
+            cap_raw = _coerce_float(run_cfg.get("incremental_profit_pct_cap"))
+            if cap_raw is not None:
+                if cap_raw > 1:
+                    cap_raw = cap_raw / 100.0
+                if cap_raw >= 0:
+                    cap = max(cap_raw, profit_pct)
+                    resume_profit_pct = min(resume_profit_pct, cap)
+            resume_profit_pct = _enforce_profit_floor(resume_profit_pct, prefix="[REFILL]")
+            if resume_profit_pct > profit_pct:
+                print(
+                    "[REFILL] 继续沿用历史递增盈利阈值："
+                    f"profit_pct {profit_pct:.6f} -> {resume_profit_pct:.6f}"
+                )
+                profit_pct = resume_profit_pct
 
     print(f"[INIT] 买入价格上限: {max_buy_price:.4f}（价格>=此值时不买入）")
 
@@ -2784,7 +2919,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     new_deadline = _calc_deadline(refreshed)
                     if new_deadline:
                         market_deadline_ts = new_deadline
-                new_floor, new_precision = _calc_profit_floor(refreshed)
+                new_floor, new_precision = _calc_profit_floor(refreshed, str(token_id))
                 meta_changed = (
                     new_precision != market_price_precision
                     or abs(new_floor - profit_floor) > 1e-12
@@ -4303,15 +4438,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             strategy.on_reject("missing sell trigger")
             return
 
-        # Refill 模式优化：若当前价与地板价差距过大，直接跳过以释放槽位
+        # Refill 模式优化：若当前卖一低于地板价 10% 以上，直接跳过以释放槽位
         if "REFILL" in source.upper():
             best_ask = _latest_best_ask()
             if best_ask is not None and best_ask > 0 and floor_price > 0:
-                gap_ratio = (best_ask / floor_price) - 1.0
-                if gap_ratio >= 0.10:
+                below_floor_ratio = 1.0 - (best_ask / floor_price)
+                if below_floor_ratio >= 0.10:
                     print(
-                        f"[REFILL][SKIP] 当前卖一 {best_ask:.4f} 与地板价 {floor_price:.4f} 差距过大 "
-                        f"({gap_ratio*100:.1f}%)，跳过挂单释放槽位。"
+                        f"[REFILL][SKIP] 当前卖一 {best_ask:.4f} 低于地板价 {floor_price:.4f} 超过阈值 "
+                        f"({below_floor_ratio*100:.1f}%)，跳过挂单释放槽位。"
                     )
                     snap = latest.get(token_id) or {}
                     _record_exit_token(token_id, "REFILL_SKIP_GAP", {
@@ -4321,7 +4456,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "last_bid": float(snap.get("best_bid") or 0.0),
                         "last_ask": float(best_ask),
                         "sell_floor_price": float(floor_price),
-                        "gap_ratio": float(gap_ratio),
+                        "below_floor_ratio": float(below_floor_ratio),
                     })
                     strategy.stop("refill skip gap")
                     stop_event.set()
