@@ -5163,6 +5163,11 @@ class AutoRunManager:
         for token_id in sorted(to_liquidate):
             self._trigger_sell_exit(token_id, task=None)
 
+        orphan_stats = self._schedule_startup_orphan_profit_sweep(
+            copytrade_topics=copytrade_topics,
+            active_tasks=active_tasks | to_reactivate | to_liquidate,
+        )
+
         for token_id in sorted(to_reactivate):
             if token_id in self.pending_burst_topics:
                 self._remove_pending_topic(token_id)
@@ -5209,10 +5214,6 @@ class AutoRunManager:
 
         self._startup_sync_retry_needed = False
         self._next_startup_sync_retry_at = 0.0
-        orphan_stats = self._schedule_startup_orphan_profit_sweep(
-            copytrade_topics=copytrade_topics,
-            active_tasks=active_tasks | to_reactivate | to_liquidate,
-        )
         print(
             "[HANDLED] 启动全量对账完成: "
             f"total={len(self.handled_topics)} "
