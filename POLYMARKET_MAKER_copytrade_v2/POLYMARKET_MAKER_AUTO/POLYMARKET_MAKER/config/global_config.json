@@ -21,6 +21,9 @@
     "refill_cooldown_minutes_no_position": 20,
     "max_refill_retries": 6,
     "refill_check_interval_sec": 60.0,
+    "startup_orphan_profit_sweep_enabled": true,
+    "startup_orphan_profit_sweep_min_profit_pct": 0.01,
+    "startup_orphan_profit_sweep_skip_if_open_sell": true,
     "total_liquidation": {
       "enable_total_liquidation": true,
       "min_interval_hours": 6.0,

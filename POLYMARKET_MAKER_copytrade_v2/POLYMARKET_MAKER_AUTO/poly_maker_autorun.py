@@ -106,6 +106,11 @@ DEFAULT_GLOBAL_CONFIG = {
     "max_refill_retries": 6,
     "refill_check_interval_sec": 60.0,
     "inactive_token_reconcile_interval_sec": 1200.0,
+    # Startup orphan position profit sweep:
+    # tokens not tracked by copytrade but currently profitable and holding position
+    "startup_orphan_profit_sweep_enabled": True,
+    "startup_orphan_profit_sweep_min_profit_pct": 0.01,
+    "startup_orphan_profit_sweep_skip_if_open_sell": True,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
     "enable_pending_soft_eviction": True,
     "pending_soft_eviction_minutes": 45.0,
@@ -361,6 +366,77 @@ def _extract_position_size(entry: Dict[str, Any]) -> Optional[float]:
         return float(val)
     except (TypeError, ValueError):
         return None
+
+
+def _extract_position_avg_price(entry: Dict[str, Any]) -> Optional[float]:
+    for key in ("avgPrice", "avg_price", "averagePrice", "entryPrice", "entry_price"):
+        val = entry.get(key)
+        if val is None or isinstance(val, bool):
+            continue
+        try:
+            out = float(val)
+            if out >= 0:
+                return out
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _extract_position_current_price(entry: Dict[str, Any]) -> Optional[float]:
+    for key in ("curPrice", "currentPrice", "markPrice", "price", "lastPrice"):
+        val = entry.get(key)
+        if val is None or isinstance(val, bool):
+            continue
+        try:
+            out = float(val)
+            if out >= 0:
+                return out
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _fetch_position_rows_from_data_api(address: str) -> tuple[List[Dict[str, Any]], str]:
+    if not address:
+        return [], "missing address"
+    url = f"{DATA_API_ROOT}/positions"
+    limit = 500
+    offset = 0
+    rows: List[Dict[str, Any]] = []
+    while True:
+        params = {
+            "user": address,
+            "limit": limit,
+            "offset": offset,
+            "sizeThreshold": 0,
+        }
+        try:
+            with _data_api_request_lock:
+                global _data_api_last_request_ts
+                now = time.time()
+                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
+                if wait_sec > 0:
+                    time.sleep(wait_sec)
+                _data_api_last_request_ts = time.time()
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 404:
+                return [], "positions 404"
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as exc:
+            return [], f"positions request failed: {exc}"
+        except ValueError:
+            return [], "positions decode failed"
+        if not isinstance(payload, list):
+            return [], "positions payload invalid"
+        positions = payload
+        for pos in positions:
+            if isinstance(pos, dict):
+                rows.append(pos)
+        if not positions:
+            break
+        offset += len(positions)
+    return rows, "ok"
 
 
 def _fetch_position_size_from_data_api(
@@ -874,6 +950,15 @@ class GlobalConfig:
     inactive_token_reconcile_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
         "inactive_token_reconcile_interval_sec"
     ]
+    startup_orphan_profit_sweep_enabled: bool = bool(
+        DEFAULT_GLOBAL_CONFIG["startup_orphan_profit_sweep_enabled"]
+    )
+    startup_orphan_profit_sweep_min_profit_pct: float = float(
+        DEFAULT_GLOBAL_CONFIG["startup_orphan_profit_sweep_min_profit_pct"]
+    )
+    startup_orphan_profit_sweep_skip_if_open_sell: bool = bool(
+        DEFAULT_GLOBAL_CONFIG["startup_orphan_profit_sweep_skip_if_open_sell"]
+    )
     enable_pending_soft_eviction: bool = DEFAULT_GLOBAL_CONFIG[
         "enable_pending_soft_eviction"
     ]
@@ -1354,6 +1439,24 @@ class GlobalConfig:
                     )
                 ),
             ),
+            startup_orphan_profit_sweep_enabled=bool(
+                scheduler.get(
+                    "startup_orphan_profit_sweep_enabled",
+                    merged.get("startup_orphan_profit_sweep_enabled", True),
+                )
+            ),
+            startup_orphan_profit_sweep_min_profit_pct=float(
+                scheduler.get(
+                    "startup_orphan_profit_sweep_min_profit_pct",
+                    merged.get("startup_orphan_profit_sweep_min_profit_pct", 0.01),
+                )
+            ),
+            startup_orphan_profit_sweep_skip_if_open_sell=bool(
+                scheduler.get(
+                    "startup_orphan_profit_sweep_skip_if_open_sell",
+                    merged.get("startup_orphan_profit_sweep_skip_if_open_sell", True),
+                )
+            ),
             enable_pending_soft_eviction=bool(
                 scheduler.get(
                     "enable_pending_soft_eviction",
@@ -1523,6 +1626,7 @@ class AutoRunManager:
         self._exit_cleanup_retry_counts: Dict[str, int] = {}
         self._startup_sync_retry_needed: bool = True
         self._next_startup_sync_retry_at: float = 0.0
+        self._startup_orphan_profit_sweep_done: bool = False
         self._position_address: Optional[str] = None
         self._position_address_origin: Optional[str] = None
         self._position_address_warned: bool = False
@@ -4381,6 +4485,8 @@ class AutoRunManager:
             merged["refill_retry_count"] = refill_retry_count
         if topic_info.get("force_sell_only_on_startup"):
             merged["force_sell_only_on_startup"] = True
+        if topic_info.get("startup_skip_if_open_sell"):
+            merged["startup_skip_if_open_sell"] = True
 
         resume_drop_pct = topic_info.get("resume_drop_pct")
         if resume_drop_pct is not None:
@@ -4971,6 +5077,16 @@ class AutoRunManager:
         tokens_path = self.config.copytrade_tokens_path
         signals_path = self.config.copytrade_sell_signals_path
         if not tokens_path.exists() and not signals_path.exists():
+            active_tasks = (
+                set(self.tasks.keys())
+                | set(self.pending_topics)
+                | set(self.pending_burst_topics)
+                | set(self.pending_exit_topics)
+            )
+            self._schedule_startup_orphan_profit_sweep(
+                copytrade_topics=set(),
+                active_tasks=active_tasks,
+            )
             self._startup_sync_retry_needed = False
             self._next_startup_sync_retry_at = 0.0
             return
@@ -5008,6 +5124,10 @@ class AutoRunManager:
         )
         to_reconcile = copytrade_topics - active_tasks
         if not to_reconcile:
+            self._schedule_startup_orphan_profit_sweep(
+                copytrade_topics=copytrade_topics,
+                active_tasks=active_tasks,
+            )
             self._startup_sync_retry_needed = False
             self._next_startup_sync_retry_at = 0.0
             return
@@ -5089,6 +5209,10 @@ class AutoRunManager:
 
         self._startup_sync_retry_needed = False
         self._next_startup_sync_retry_at = 0.0
+        orphan_stats = self._schedule_startup_orphan_profit_sweep(
+            copytrade_topics=copytrade_topics,
+            active_tasks=active_tasks | to_reactivate | to_liquidate,
+        )
         print(
             "[HANDLED] 启动全量对账完成: "
             f"total={len(self.handled_topics)} "
@@ -5096,7 +5220,9 @@ class AutoRunManager:
             f"reactivated={len(to_reactivate)} "
             f"liquidating={len(to_liquidate)} "
             f"cleaned={len(to_cleanup)} "
-            f"stale_removed={len(stale_topics)}"
+            f"stale_removed={len(stale_topics)} "
+            f"orphan_candidates={orphan_stats.get('candidates', 0)} "
+            f"orphan_queued={orphan_stats.get('queued', 0)}"
         )
 
     def _build_copytrade_active_token_set(self) -> set[str]:
@@ -5107,6 +5233,102 @@ class AutoRunManager:
                 active.add(token_id)
         active.update(self._load_copytrade_sell_signals().keys())
         return active
+
+    def _schedule_startup_orphan_profit_sweep(
+        self,
+        *,
+        copytrade_topics: set[str],
+        active_tasks: set[str],
+    ) -> Dict[str, int]:
+        stats = {
+            "candidates": 0,
+            "queued": 0,
+            "skipped_active": 0,
+            "skipped_copytrade": 0,
+            "skipped_profit": 0,
+            "skipped_invalid_price": 0,
+        }
+        if self._startup_orphan_profit_sweep_done:
+            return stats
+        if not bool(self.config.startup_orphan_profit_sweep_enabled):
+            self._startup_orphan_profit_sweep_done = True
+            return stats
+        if not self._position_address:
+            address, origin = _resolve_position_address_from_env()
+            self._position_address = address
+            self._position_address_origin = origin
+        if not self._position_address:
+            return stats
+
+        min_profit = self._normalize_ratio_value(
+            self.config.startup_orphan_profit_sweep_min_profit_pct
+        )
+        if min_profit is None:
+            min_profit = 0.01
+        min_profit = max(0.0, float(min_profit))
+
+        rows, info = _fetch_position_rows_from_data_api(self._position_address)
+        if info != "ok":
+            print(f"[ORPHAN][WARN] startup profit sweep skipped: {info}")
+            return stats
+
+        tracked = (
+            set(active_tasks)
+            | set(self.tasks.keys())
+            | set(self.pending_topics)
+            | set(self.pending_burst_topics)
+            | set(self.pending_exit_topics)
+        )
+        for row in rows:
+            token_id = _extract_position_token_id(row)
+            if not token_id:
+                continue
+            size = float(_extract_position_size(row) or 0.0)
+            if size <= POSITION_CLEANUP_DUST_THRESHOLD:
+                continue
+            stats["candidates"] += 1
+            if token_id in copytrade_topics:
+                stats["skipped_copytrade"] += 1
+                continue
+            if token_id in tracked:
+                stats["skipped_active"] += 1
+                continue
+            avg_price = _extract_position_avg_price(row)
+            cur_price = _extract_position_current_price(row)
+            if avg_price is None or cur_price is None or avg_price <= 0:
+                stats["skipped_invalid_price"] += 1
+                continue
+            profit_ratio = (float(cur_price) / float(avg_price)) - 1.0
+            if profit_ratio + 1e-12 < min_profit:
+                stats["skipped_profit"] += 1
+                continue
+
+            detail = self.topic_details.setdefault(token_id, {})
+            title = row.get("title")
+            slug = row.get("slug")
+            if title and not detail.get("title"):
+                detail["title"] = title
+            if slug and not detail.get("slug"):
+                detail["slug"] = slug
+            detail["queue_role"] = "startup_orphan_profit_sweep"
+            detail["schedule_lane"] = "base"
+            detail["force_sell_only_on_startup"] = True
+            detail["startup_skip_if_open_sell"] = bool(
+                self.config.startup_orphan_profit_sweep_skip_if_open_sell
+            )
+            detail["startup_orphan_profit_sweep"] = True
+            detail["startup_orphan_profit_ratio"] = round(profit_ratio, 6)
+            self._enqueue_pending_topic(token_id)
+            tracked.add(token_id)
+            stats["queued"] += 1
+
+        self._startup_orphan_profit_sweep_done = True
+        if stats["queued"] > 0:
+            print(
+                "[ORPHAN] startup profit sweep queued "
+                f"{stats['queued']} tokens (min_profit={min_profit * 100:.2f}%)"
+            )
+        return stats
 
     def _reconcile_inactive_copytrade_tokens(self) -> None:
         """运行时查漏：本地活跃但不在 copytrade 的 token 立即分流处理。"""
@@ -5133,6 +5355,10 @@ class AutoRunManager:
         skipped = 0
 
         for token_id in leak_tokens:
+            detail = self.topic_details.get(token_id) or {}
+            if bool(detail.get("startup_orphan_profit_sweep")):
+                skipped += 1
+                continue
             task = self.tasks.get(token_id)
             if token_id in self.pending_exit_topics:
                 skipped += 1
@@ -5335,6 +5561,7 @@ class AutoRunManager:
         low_balance_sell_only = bool(cfg.get("force_sell_only_on_startup")) or role in {
             "refill_with_position",
             "startup_reconcile_position",
+            "startup_orphan_profit_sweep",
         }
         if self._buy_paused_due_to_balance and low_balance_sell_only:
             return "余额不足只卖出"
@@ -6045,6 +6272,10 @@ class AutoRunManager:
                     overlay["schedule_lane"] = detail.get("schedule_lane")
                 if detail.get("queue_role"):
                     overlay["queue_role"] = detail.get("queue_role")
+                if detail.get("startup_orphan_profit_sweep"):
+                    overlay["startup_orphan_profit_sweep"] = True
+                if detail.get("startup_skip_if_open_sell"):
+                    overlay["startup_skip_if_open_sell"] = True
                 if overlay:
                     old_runtime_overlays[tid] = overlay
             self.topic_details = {}
@@ -6072,6 +6303,10 @@ class AutoRunManager:
                     self.topic_details[tid]["schedule_lane"] = saved["schedule_lane"]
                 if saved.get("queue_role"):
                     self.topic_details[tid]["queue_role"] = saved["queue_role"]
+                if saved.get("startup_orphan_profit_sweep"):
+                    self.topic_details[tid]["startup_orphan_profit_sweep"] = True
+                if saved.get("startup_skip_if_open_sell"):
+                    self.topic_details[tid]["startup_skip_if_open_sell"] = True
 
             sell_signal_events = self._load_copytrade_sell_signals()
             blacklist_tokens = self._load_copytrade_blacklist()
@@ -6765,6 +7000,7 @@ class AutoRunManager:
         self._completed_exit_cleanup_tokens.clear()
         self._exit_cleanup_retry_counts.clear()
         self._sell_exit_deadlines.clear()
+        self._startup_orphan_profit_sweep_done = False
 
         self._pending_first_seen.clear()
         self._refilled_tokens.clear()

@@ -2110,6 +2110,18 @@ def _cancel_open_buy_orders_for_token(client: Any, token_id: str) -> int:
     return canceled
 
 
+def _count_open_sell_orders_for_token(client: Any, token_id: str) -> int:
+    open_orders = _fetch_open_orders_norm(client)
+    count = 0
+    for order in open_orders:
+        if str(order.get("token_id")) != str(token_id):
+            continue
+        if str(order.get("side", "")).upper() != "SELL":
+            continue
+        count += 1
+    return count
+
+
 # ===== 主流程 =====
 def main(run_config: Optional[Dict[str, Any]] = None):
     client = _get_client()
@@ -2389,6 +2401,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     token_id = str(token_id)
     print(f"[INIT] 目标 token_id: {token_id}")
+
+    startup_skip_if_open_sell = bool(run_cfg.get("startup_skip_if_open_sell", False))
+    if startup_skip_if_open_sell:
+        try:
+            open_sell_count = _count_open_sell_orders_for_token(client, token_id)
+        except Exception as exc:
+            open_sell_count = 0
+            print(f"[INIT][WARN] open sell probe failed, continue: {exc}")
+        if open_sell_count > 0:
+            print(
+                "[INIT] startup skip enabled: existing SELL open orders detected, "
+                f"token={token_id} count={open_sell_count}, exiting."
+            )
+            return
 
     manual_order_size: Optional[float] = _coerce_float(run_cfg.get("order_size"))
     manual_size_is_target = bool(
