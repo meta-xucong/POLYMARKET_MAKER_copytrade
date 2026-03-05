@@ -688,7 +688,8 @@ class TotalLiquidationManager:
             return 0.0
 
         url = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com").rstrip("/") + "/trades"
-        params = {"user": address, "limit": 200}
+        # Keep probe lightweight to reduce read-timeout probability on /trades.
+        params = {"user": address, "limit": 50}
         headers = {
             "Accept": "application/json",
             "User-Agent": "POLYMARKET_MAKER_AUTO/1.0 (+data-api-trades)",
@@ -699,7 +700,7 @@ class TotalLiquidationManager:
             try:
                 query = urllib.parse.urlencode(params)
                 req = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
-                with urllib.request.urlopen(req, timeout=20) as resp:
+                with urllib.request.urlopen(req, timeout=30) as resp:
                     payload = json.loads(resp.read().decode("utf-8"))
 
                 if isinstance(payload, list):
