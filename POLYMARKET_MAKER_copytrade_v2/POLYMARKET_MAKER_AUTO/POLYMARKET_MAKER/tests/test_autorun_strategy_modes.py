@@ -1057,6 +1057,64 @@ def test_buy_block_trigger_unavailable_stale_record_remains_blocked(tmp_path):
     assert refillable == []
 
 
+def test_gap_skip_backoff_applies_and_resets_on_non_gap():
+    cfg = GlobalConfig.from_dict(
+        {
+            "scheduler": {
+                "refill_cooldown_minutes_with_position": 0,
+                "refill_cooldown_minutes_no_position": 0,
+                "gap_skip_backoff_enabled": True,
+                "gap_skip_backoff_minutes": [5, 15, 45, 120],
+            }
+        }
+    )
+    manager = _build_manager(cfg)
+    now = time.time()
+
+    # 最新两条都是 gap，按第2档退避（15分钟）应被拦截
+    blocked = manager._filter_refillable_tokens(
+        [
+            {
+                "token_id": "gap_token",
+                "exit_reason": "REFILL_SKIP_GAP",
+                "exit_ts": now - 60,
+                "exit_data": {"has_position": False},
+                "refillable": True,
+            },
+            {
+                "token_id": "gap_token",
+                "exit_reason": "POSITION_SYNC_SKIP_GAP",
+                "exit_ts": now - 120,
+                "exit_data": {"has_position": False},
+                "refillable": True,
+            },
+        ]
+    )
+    assert blocked == []
+
+    # 最新一条改为非 gap，视为重置，应允许回填
+    released = manager._filter_refillable_tokens(
+        [
+            {
+                "token_id": "gap_token",
+                "exit_reason": "SELL_ABANDONED",
+                "exit_ts": now - 60,
+                "exit_data": {"has_position": False},
+                "refillable": True,
+            },
+            {
+                "token_id": "gap_token",
+                "exit_reason": "REFILL_SKIP_GAP",
+                "exit_ts": now - 120,
+                "exit_data": {"has_position": False},
+                "refillable": True,
+            },
+        ]
+    )
+    assert len(released) == 1
+    assert released[0]["token_id"] == "gap_token"
+
+
 def test_fetch_recent_trades_retries_after_timeout():
     import poly_maker_autorun as autorun
 

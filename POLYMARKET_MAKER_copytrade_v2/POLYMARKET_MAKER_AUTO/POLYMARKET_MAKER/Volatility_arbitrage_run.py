@@ -24,6 +24,7 @@ elif hasattr(sys.stdout, 'buffer'):
     sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
     sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 import time
+import random
 import threading
 import signal
 import re
@@ -2468,6 +2469,23 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     sell_mode_raw = str(run_cfg.get("sell_mode") or "aggressive").lower()
     sell_mode = "conservative" if sell_mode_raw == "conservative" else "aggressive"
     print(f"[INIT] 卖出挂单模式：{sell_mode}")
+    random_action_delay_sec_min = max(float(_coerce_float(run_cfg.get("random_action_delay_sec_min")) or 0.0), 0.0)
+    random_action_delay_sec_max = max(float(_coerce_float(run_cfg.get("random_action_delay_sec_max")) or 0.0), 0.0)
+    if random_action_delay_sec_max < random_action_delay_sec_min:
+        random_action_delay_sec_min, random_action_delay_sec_max = (
+            random_action_delay_sec_max,
+            random_action_delay_sec_min,
+        )
+    random_buy_shares_add_max = max(
+        float(_coerce_float(run_cfg.get("random_buy_shares_add_max")) or 0.0),
+        0.0,
+    )
+    if random_action_delay_sec_max > 0:
+        print(
+            f"[INIT] 随机行为延迟启用：{random_action_delay_sec_min:.0f}s~{random_action_delay_sec_max:.0f}s"
+        )
+    if random_buy_shares_add_max > 0:
+        print(f"[INIT] 买入份数随机增量启用：+0~{random_buy_shares_add_max:g} shares")
 
     buy_threshold = _coerce_float(run_cfg.get("buy_price_threshold"))
     max_buy_price = _coerce_float(run_cfg.get("max_buy_price"))
@@ -2477,8 +2495,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     if min_buy_price is None:
         min_buy_price = 0.01  # 默认最低买入价 0.01
     drop_window = _coerce_float(run_cfg.get("drop_window_minutes")) or 10.0
-    drop_pct = _normalize_ratio(run_cfg.get("drop_pct"), 0.05)
-    profit_pct = _normalize_ratio(run_cfg.get("profit_pct"), 0.05)
+    drop_pct = _normalize_ratio(run_cfg.get("drop_pct"), 0.0)
+    profit_pct = _normalize_ratio(run_cfg.get("profit_pct"), 0.005)
     profit_pct = _enforce_profit_floor(profit_pct)
 
     incremental_drop_pct_step = _normalize_ratio(
@@ -2498,7 +2516,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print("[INIT] 未启用递增跌幅阈值，保持固定阈值运行。")
 
     incremental_profit_pct_step = _normalize_ratio(
-        run_cfg.get("incremental_profit_pct_step"), 0.003
+        run_cfg.get("incremental_profit_pct_step"), 0.0
     )
     enable_incremental_profit_pct = bool(
         run_cfg.get("enable_incremental_profit_pct", incremental_profit_pct_step > 0)
@@ -2969,6 +2987,45 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return 1.0
         s = 1.0 / ask_px
         return float(Decimal(str(s)).quantize(Decimal("1"), rounding=ROUND_UP))
+
+    def _sample_random_action_delay_sec(default_when_disabled: float = 0.0) -> float:
+        if random_action_delay_sec_max <= 0:
+            return max(float(default_when_disabled), 0.0)
+        low = max(random_action_delay_sec_min, 0.0)
+        high = max(random_action_delay_sec_max, low)
+        return random.uniform(low, high)
+
+    def _sleep_random_action_delay(stage: str, default_when_disabled: float = 0.0) -> bool:
+        delay_sec = _sample_random_action_delay_sec(default_when_disabled=default_when_disabled)
+        if delay_sec <= 0:
+            return True
+        print(f"[RAND] delay={delay_sec:.1f}s stage={stage}")
+        return not stop_event.wait(delay_sec)
+
+    def _infer_share_step() -> float:
+        min_size = float(effective_min_order_size or 0.0)
+        if min_size <= 0:
+            return 1.0
+        text = format(min_size, "f").rstrip("0").rstrip(".")
+        if "." not in text:
+            return 1.0
+        decimals = len(text.split(".", 1)[1])
+        return float(Decimal("1").scaleb(-decimals))
+
+    def _randomize_buy_order_size(base_size: float) -> float:
+        if random_buy_shares_add_max <= 0:
+            return base_size
+        step = _infer_share_step()
+        max_units = int(math.floor(random_buy_shares_add_max / step + 1e-9))
+        if max_units <= 0:
+            return base_size
+        add_units = random.randint(0, max_units)
+        delta = float(Decimal(add_units) * Decimal(str(step)))
+        candidate = base_size + delta
+        if candidate < base_size:
+            candidate = base_size
+        print(f"[RAND] buy_shares base={base_size:.4f} +delta={delta:.4f} final={candidate:.4f}")
+        return candidate
 
     def _probe_position_size_for_buy() -> Tuple[Optional[float], Optional[str]]:
         try:
@@ -4465,17 +4522,33 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return
 
         # Refill 模式优化：若当前卖一低于地板价 10% 以上，直接跳过以释放槽位
-        if "REFILL" in source.upper():
+        source_upper = source.upper()
+        fast_skip_on_large_gap = (
+            "REFILL" in source_upper
+            or "[POSITION][SYNC]" in source_upper
+        )
+        if fast_skip_on_large_gap:
             best_ask = _latest_best_ask()
             if best_ask is not None and best_ask > 0 and floor_price > 0:
                 below_floor_ratio = 1.0 - (best_ask / floor_price)
                 if below_floor_ratio >= 0.10:
+                    log_prefix = "[REFILL]" if "REFILL" in source_upper else "[POSITION][SYNC]"
+                    exit_reason = (
+                        "REFILL_SKIP_GAP"
+                        if "REFILL" in source_upper
+                        else "POSITION_SYNC_SKIP_GAP"
+                    )
+                    stop_reason = (
+                        "refill skip gap"
+                        if "REFILL" in source_upper
+                        else "position sync skip gap"
+                    )
                     print(
-                        f"[REFILL][SKIP] 当前卖一 {best_ask:.4f} 低于地板价 {floor_price:.4f} 超过阈值 "
+                        f"{log_prefix}[SKIP] 当前卖一 {best_ask:.4f} 低于地板价 {floor_price:.4f} 超过阈值 "
                         f"({below_floor_ratio*100:.1f}%)，跳过挂单释放槽位。"
                     )
                     snap = latest.get(token_id) or {}
-                    _record_exit_token(token_id, "REFILL_SKIP_GAP", {
+                    _record_exit_token(token_id, exit_reason, {
                         "has_position": True,
                         "position_size": float(eff_qty),
                         "entry_price": strategy.status().get("entry_price"),
@@ -4484,7 +4557,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         "sell_floor_price": float(floor_price),
                         "below_floor_ratio": float(below_floor_ratio),
                     })
-                    strategy.stop("refill skip gap")
+                    strategy.stop(stop_reason)
                     stop_event.set()
                     return
 
@@ -4508,6 +4581,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 return None
             _avg_px, total_pos, _origin = snapshot
             return total_pos
+
+        if not _sleep_random_action_delay(f"{source}-before-sell"):
+            return
 
         # 动态SELL超时：根据entry_price计算超时时间
         # entry_price >= 0.95: 1小时, >= 0.90: 2小时, else: 4小时
@@ -4632,7 +4708,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(
                 "[STATE] 卖出流程已完成或剩余低于最小下单量，切换为等待买入/空闲状态。"
             )
-            wait_after_sell_sec = 300.0
+            wait_after_sell_sec = _sample_random_action_delay_sec(default_when_disabled=300.0)
+            print(f"[RAND] post-sell cooldown={wait_after_sell_sec:.1f}s")
             heartbeat_interval = 60.0
             pause_deadline = time.time() + wait_after_sell_sec
             heartbeat_tick = 1
@@ -5614,7 +5691,29 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 else:
                     order_size = _calc_size_by_1dollar(ref_price)
                     print(f"[HINT] 未指定份数，按 $1 反推 -> size={order_size}")
-    
+                order_size = _randomize_buy_order_size(order_size)
+                if max_position_cap is not None and order_size > 0:
+                    cap_probed_size, cap_origin = _probe_position_size_for_buy()
+                    cap_owned = cap_probed_size
+                    if cap_owned is None:
+                        cap_owned = position_size
+                    cap_owned_val = max(float(cap_owned or 0.0), 0.0)
+                    cap_remaining = max(max_position_cap - cap_owned_val, 0.0)
+                    if cap_remaining <= 0:
+                        origin_note = cap_origin or "positions"
+                        print(
+                            f"[SKIP][BUY] 当前仓位({origin_note}) {cap_owned_val:.4f} 已达到封顶 "
+                            f"{max_position_cap:.4f}，跳过本次买入。"
+                        )
+                        strategy.on_reject("position cap reached after randomization")
+                        continue
+                    if order_size > cap_remaining:
+                        print(
+                            f"[HINT][BUY] 随机增量后按封顶调整下单量 "
+                            f"{order_size:.4f} -> {cap_remaining:.4f}"
+                        )
+                        order_size = cap_remaining
+
                 def _buy_progress_probe() -> None:
                     try:
                         avg_px, total_pos, origin_note = _lookup_position_avg_price(client, token_id)
@@ -5645,6 +5744,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if awaiting_buy_passthrough:
                     awaiting_buy_passthrough = False
                 try:
+                    if not _sleep_random_action_delay("before-buy"):
+                        continue
                     buy_resp = maker_buy_follow_bid(
                         client=client,
                         token_id=token_id,

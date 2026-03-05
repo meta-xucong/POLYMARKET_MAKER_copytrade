@@ -105,6 +105,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_cooldown_minutes_no_position": 20.0,
     "max_refill_retries": 6,
     "refill_check_interval_sec": 60.0,
+    # gap 快速淘汰后指数退避（分钟）：连续第1/2/3/4+次使用 5/15/45/120 分钟
+    "gap_skip_backoff_enabled": True,
+    "gap_skip_backoff_minutes": [5.0, 15.0, 45.0, 120.0],
     "inactive_token_reconcile_interval_sec": 1200.0,
     # Startup orphan position profit sweep:
     # tokens not tracked by copytrade but currently profitable and holding position
@@ -947,6 +950,12 @@ class GlobalConfig:
     ]
     max_refill_retries: int = DEFAULT_GLOBAL_CONFIG["max_refill_retries"]
     refill_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG["refill_check_interval_sec"]
+    gap_skip_backoff_enabled: bool = bool(
+        DEFAULT_GLOBAL_CONFIG["gap_skip_backoff_enabled"]
+    )
+    gap_skip_backoff_minutes: List[float] = field(
+        default_factory=lambda: list(DEFAULT_GLOBAL_CONFIG["gap_skip_backoff_minutes"])
+    )
     inactive_token_reconcile_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
         "inactive_token_reconcile_interval_sec"
     ]
@@ -1430,6 +1439,27 @@ class GlobalConfig:
             refill_check_interval_sec=float(
                 scheduler.get("refill_check_interval_sec", merged.get("refill_check_interval_sec", 60.0))
             ),
+            gap_skip_backoff_enabled=bool(
+                scheduler.get(
+                    "gap_skip_backoff_enabled",
+                    merged.get("gap_skip_backoff_enabled", True),
+                )
+            ),
+            gap_skip_backoff_minutes=[
+                float(v)
+                for v in (
+                    scheduler.get(
+                        "gap_skip_backoff_minutes",
+                        merged.get(
+                            "gap_skip_backoff_minutes",
+                            DEFAULT_GLOBAL_CONFIG["gap_skip_backoff_minutes"],
+                        ),
+                    )
+                    or []
+                )
+                if _coerce_float(v) is not None and float(v) > 0
+            ]
+            or list(DEFAULT_GLOBAL_CONFIG["gap_skip_backoff_minutes"]),
             inactive_token_reconcile_interval_sec=max(
                 60.0,
                 float(
@@ -1808,6 +1838,8 @@ class AutoRunManager:
     def _resolve_current_drop_pct_for_cycle(
         self, token_id: str, run_cfg: Dict[str, Any]
     ) -> Optional[float]:
+        if not bool(run_cfg.get("enable_incremental_drop_pct", False)):
+            return self._normalize_ratio_value(run_cfg.get("drop_pct"))
         state = self._token_cycle_states.get(token_id) or {}
         state_drop = self._normalize_ratio_value(state.get("next_drop_pct"))
         base_drop = self._normalize_ratio_value(run_cfg.get("drop_pct"))
@@ -1820,6 +1852,8 @@ class AutoRunManager:
     def _resolve_current_profit_pct_for_cycle(
         self, token_id: str, run_cfg: Dict[str, Any]
     ) -> Optional[float]:
+        if not bool(run_cfg.get("enable_incremental_profit_pct", False)):
+            return self._normalize_ratio_value(run_cfg.get("profit_pct"))
         state = self._token_cycle_states.get(token_id) or {}
         state_profit = self._normalize_ratio_value(state.get("next_profit_pct"))
         base_profit = self._normalize_ratio_value(run_cfg.get("profit_pct"))
@@ -1898,8 +1932,11 @@ class AutoRunManager:
             )
             return False
 
+        drop_incremental_enabled = bool(run_cfg.get("enable_incremental_drop_pct", False))
+        if not drop_incremental_enabled:
+            run_cfg.pop("resume_drop_pct", None)
         next_drop = self._normalize_ratio_value(state.get("next_drop_pct"))
-        if next_drop is not None:
+        if drop_incremental_enabled and next_drop is not None:
             drop_base = self._normalize_ratio_value(run_cfg.get("drop_pct")) or 0.0
             effective_drop = max(next_drop, drop_base)
             _, cap = self._resolve_drop_step_and_cap(run_cfg)
@@ -1913,8 +1950,11 @@ class AutoRunManager:
                     f"{old_resume if old_resume is not None else 'None'} -> {effective_drop:.6f}"
                 )
 
+        profit_incremental_enabled = bool(run_cfg.get("enable_incremental_profit_pct", False))
+        if not profit_incremental_enabled:
+            run_cfg.pop("resume_profit_pct", None)
         next_profit = self._normalize_ratio_value(state.get("next_profit_pct"))
-        if next_profit is not None:
+        if profit_incremental_enabled and next_profit is not None:
             profit_base = self._normalize_ratio_value(run_cfg.get("profit_pct")) or 0.0
             effective_profit = max(next_profit, profit_base)
             _, profit_cap = self._resolve_profit_step_and_cap(run_cfg)
@@ -2796,6 +2836,8 @@ class AutoRunManager:
         if reason == "SELL_ABANDONED":
             return True
         if reason == "REFILL_SKIP_GAP":
+            return True
+        if reason == "POSITION_SYNC_SKIP_GAP":
             return True
         if reason == "LOW_BALANCE_PAUSE":
             return bool(data.get("has_position"))
@@ -5930,6 +5972,9 @@ class AutoRunManager:
             key=lambda r: r.get("exit_ts", 0),
             reverse=True,
         )
+        gap_backoff_by_token = self._build_gap_skip_backoff_seconds_by_token(
+            exit_records
+        )
 
         for record in sorted_records:
             token_id = record.get("token_id")
@@ -6010,10 +6055,25 @@ class AutoRunManager:
                     if has_position_now
                     else cooldown_no_position_seconds
                 )
+            gap_backoff = gap_backoff_by_token.get(str(token_id))
+            if gap_backoff:
+                effective_cooldown_seconds = max(
+                    effective_cooldown_seconds,
+                    float(gap_backoff.get("seconds", 0.0) or 0.0),
+                )
 
             # 检查冷却时间（exit_ts 到现在的时间间隔）
             if exit_ts > 0 and (now - exit_ts) < effective_cooldown_seconds:
-                skip_stats["cooldown"] = skip_stats.get("cooldown", 0) + 1
+                is_gap_latest = False
+                if gap_backoff:
+                    latest_ts = float(gap_backoff.get("latest_exit_ts", 0.0) or 0.0)
+                    is_gap_latest = abs(latest_ts - float(exit_ts or 0.0)) <= 1e-6
+                if is_gap_latest:
+                    skip_stats["gap_backoff_cooldown"] = (
+                        skip_stats.get("gap_backoff_cooldown", 0) + 1
+                    )
+                else:
+                    skip_stats["cooldown"] = skip_stats.get("cooldown", 0) + 1
                 continue
 
             # 检查重试次数（按退出原因分级）
@@ -6138,6 +6198,52 @@ class AutoRunManager:
         if limit >= 10**8:
             return "INF"
         return str(int(limit))
+
+    def _build_gap_skip_backoff_seconds_by_token(
+        self, exit_records: List[Dict[str, Any]]
+    ) -> Dict[str, Dict[str, float]]:
+        if not bool(getattr(self.config, "gap_skip_backoff_enabled", True)):
+            return {}
+        schedule_minutes = [
+            float(v)
+            for v in (getattr(self.config, "gap_skip_backoff_minutes", []) or [])
+            if _coerce_float(v) is not None and float(v) > 0
+        ]
+        if not schedule_minutes:
+            return {}
+
+        gap_reasons = {"REFILL_SKIP_GAP", "POSITION_SYNC_SKIP_GAP"}
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for record in exit_records:
+            token_id = str(record.get("token_id") or "").strip()
+            if not token_id:
+                continue
+            grouped.setdefault(token_id, []).append(record)
+
+        backoff: Dict[str, Dict[str, float]] = {}
+        for token_id, records in grouped.items():
+            ordered = sorted(records, key=lambda r: r.get("exit_ts", 0), reverse=True)
+            if not ordered:
+                continue
+            latest_reason = str(ordered[0].get("exit_reason", "")).strip().upper()
+            if latest_reason not in gap_reasons:
+                continue
+            streak = 0
+            for rec in ordered:
+                reason = str(rec.get("exit_reason", "")).strip().upper()
+                if reason in gap_reasons:
+                    streak += 1
+                else:
+                    break
+            if streak <= 0:
+                continue
+            idx = min(streak, len(schedule_minutes)) - 1
+            backoff[token_id] = {
+                "seconds": float(schedule_minutes[idx] * 60.0),
+                "streak": float(streak),
+                "latest_exit_ts": float(ordered[0].get("exit_ts") or 0.0),
+            }
+        return backoff
 
     def _schedule_refill(self) -> None:
         """
