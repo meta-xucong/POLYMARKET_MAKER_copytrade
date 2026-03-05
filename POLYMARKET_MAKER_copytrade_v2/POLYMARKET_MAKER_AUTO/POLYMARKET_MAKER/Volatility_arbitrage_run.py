@@ -2361,9 +2361,18 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         })
         return
 
+    PROFIT_FLOOR_ENFORCEMENT_ENABLED = False
+
     def _calc_profit_floor(
         meta: Dict[str, Any], token_for_fallback: Optional[str] = None
     ) -> Tuple[float, Optional[int]]:
+        if not PROFIT_FLOOR_ENFORCEMENT_ENABLED:
+            precision = _infer_market_price_precision(meta)
+            if precision is None and token_for_fallback:
+                precision = _fetch_price_precision_from_orderbook(
+                    client, str(token_for_fallback)
+                )
+            return 0.0, precision
         precision = _infer_market_price_precision(meta)
         if precision is None and token_for_fallback:
             precision = _fetch_price_precision_from_orderbook(
@@ -2379,6 +2388,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     profit_floor, market_price_precision = _calc_profit_floor(market_meta, str(token_id))
 
     def _log_profit_floor(prefix: str = "[INFO]") -> None:
+        if not PROFIT_FLOOR_ENFORCEMENT_ENABLED:
+            if market_price_precision is not None:
+                print(
+                    f"{prefix} 检测到市场价格精度为 {market_price_precision} 位小数，"
+                    "已关闭盈利百分比下限强制。"
+                )
+            else:
+                print(
+                    f"{prefix} 未能识别市场价格精度，已关闭盈利百分比下限强制。"
+                )
+            return
         if market_price_precision is not None:
             print(
                 f"{prefix} 检测到市场价格精度为 {market_price_precision} 位小数，"
@@ -2390,6 +2410,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             )
 
     def _enforce_profit_floor(current: float, *, prefix: str = "[WARN]") -> float:
+        if not PROFIT_FLOOR_ENFORCEMENT_ENABLED:
+            return current
         if current < profit_floor:
             print(
                 f"{prefix} 盈利百分比不能低于 {profit_floor * 100:.3f}%，"
@@ -2496,7 +2518,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         min_buy_price = 0.01  # 默认最低买入价 0.01
     drop_window = _coerce_float(run_cfg.get("drop_window_minutes")) or 10.0
     drop_pct = _normalize_ratio(run_cfg.get("drop_pct"), 0.0)
-    profit_pct = _normalize_ratio(run_cfg.get("profit_pct"), 0.005)
+    profit_pct = _normalize_ratio(run_cfg.get("profit_pct"), 0.003)
     profit_pct = _enforce_profit_floor(profit_pct)
 
     incremental_drop_pct_step = _normalize_ratio(

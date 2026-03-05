@@ -22,7 +22,7 @@
   "buy_price_threshold": null,
   "drop_window_minutes": 30,
   "drop_pct": 0.0,
-  "profit_pct": 0.005,
+  "profit_pct": 0.003,
   "enable_incremental_drop_pct": false,
   "incremental_drop_pct_step": 0.0,
   "enable_incremental_profit_pct": false,
