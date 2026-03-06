@@ -1436,6 +1436,8 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
                     "enabled": True,
                     "check_interval_sec": 90,
                     "drawdown_pct": 0.2,
+                    "aggressive_drawdown_pct": 0.05,
+                    "aggressive_retry_cooldown_minutes": 10,
                     "min_age_minutes": 30,
                     "first_cut_ratio": 0.5,
                     "second_cut_cooldown_minutes": 1440,
@@ -1449,6 +1451,8 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
     assert cfg.enable_stoploss is True
     assert cfg.stoploss_check_interval_sec == 90
     assert cfg.stoploss_drawdown_pct == 0.2
+    assert cfg.stoploss_aggressive_drawdown_pct == 0.05
+    assert cfg.stoploss_aggressive_retry_cooldown_minutes == 10
     assert cfg.stoploss_min_age_minutes == 30
     assert cfg.stoploss_first_cut_ratio == 0.5
     assert cfg.stoploss_second_cut_cooldown_minutes == 1440
@@ -1457,7 +1461,7 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
     assert cfg.stoploss_max_tokens_per_cycle == 2
 
 
-def _build_stoploss_manager(tmp_path):
+def _build_stoploss_manager(tmp_path, *, mode="classic", stoploss_overrides=None):
     data_dir = tmp_path / "data"
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
@@ -1474,6 +1478,21 @@ def _build_stoploss_manager(tmp_path):
     )
     sell_path = copytrade_dir / "copytrade_sell_signals.json"
     sell_path.write_text(json.dumps({"updated_at": "", "sell_tokens": []}), encoding="utf-8")
+    stoploss_cfg = {
+        "enabled": True,
+        "check_interval_sec": 60,
+        "drawdown_pct": 0.2,
+        "aggressive_drawdown_pct": 0.05,
+        "aggressive_retry_cooldown_minutes": 10.0,
+        "min_age_minutes": 0.0,
+        "first_cut_ratio": 0.5,
+        "second_cut_cooldown_minutes": 1440.0,
+        "confirm_rounds": 1,
+        "min_maker_order_size": 5.0,
+        "max_tokens_per_cycle": 1,
+    }
+    if isinstance(stoploss_overrides, dict):
+        stoploss_cfg.update(stoploss_overrides)
     cfg = GlobalConfig.from_dict(
         {
             "paths": {"data_directory": str(data_dir)},
@@ -1482,17 +1501,8 @@ def _build_stoploss_manager(tmp_path):
             "copytrade_sell_signals_path": str(sell_path),
             "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
             "scheduler": {
-                "stoploss": {
-                    "enabled": True,
-                    "check_interval_sec": 60,
-                    "drawdown_pct": 0.2,
-                    "min_age_minutes": 0.0,
-                    "first_cut_ratio": 0.5,
-                    "second_cut_cooldown_minutes": 1440.0,
-                    "confirm_rounds": 1,
-                    "min_maker_order_size": 5.0,
-                    "max_tokens_per_cycle": 1,
-                }
+                "strategy_mode": mode,
+                "stoploss": stoploss_cfg,
             },
         }
     )
@@ -1600,3 +1610,94 @@ def test_stoploss_first_cut_upgrades_to_full_clear_when_remaining_below_min_size
     assert state["stoploss_stage"] == "fully_cleared"
     records = manager._load_exit_tokens()
     assert records[-1]["exit_reason"] == "STOPLOSS_FULL_CLEAR"
+
+
+def test_aggressive_stoploss_triggers_full_clear_after_two_hits(tmp_path):
+    manager = _build_stoploss_manager(tmp_path, mode="aggressive")
+    now = time.time()
+    manager._ws_cache["t1"] = {"best_bid": 0.94, "updated_at": now}
+    calls = []
+
+    def _liq(*args, **kwargs):
+        calls.append(kwargs)
+        return {
+            "ok": True,
+            "before_size": 10.0,
+            "after_size": 0.0,
+            "requested_size": kwargs.get("target_size", 10.0),
+        }
+
+    manager._total_liquidation.liquidate_single_token_taker = _liq  # type: ignore[attr-defined]
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.94}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+        assert calls == []
+        manager._run_stoploss_check(now + 61.0)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    assert len(calls) == 1
+    assert calls[0]["reason"] == "stoploss_aggressive_full_clear"
+    state = manager._token_cycle_states["t1"]
+    assert state["stoploss_stage"] == "fully_cleared"
+
+
+def test_aggressive_stoploss_single_hit_does_not_trigger(tmp_path):
+    manager = _build_stoploss_manager(tmp_path, mode="aggressive")
+    now = time.time()
+    manager._ws_cache["t1"] = {"best_bid": 0.95, "updated_at": now}
+    calls = []
+    manager._total_liquidation.liquidate_single_token_taker = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: calls.append(kwargs) or {"ok": True, "before_size": 10.0, "after_size": 0.0}
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.95}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    assert calls == []
+    state = manager._token_cycle_states["t1"]
+    assert int(state.get("stoploss_confirm_hits", 0)) == 1
+
+
+def test_aggressive_stoploss_failure_enters_retry_cooldown(tmp_path):
+    manager = _build_stoploss_manager(
+        tmp_path,
+        mode="aggressive",
+        stoploss_overrides={"aggressive_retry_cooldown_minutes": 10.0},
+    )
+    now = time.time()
+    manager._ws_cache["t1"] = {"best_bid": 0.90, "updated_at": now}
+    calls = []
+
+    def _liq(*args, **kwargs):
+        calls.append(kwargs)
+        return {
+            "ok": True,
+            "before_size": 10.0,
+            "after_size": 2.0,
+            "requested_size": kwargs.get("target_size", 10.0),
+        }
+
+    manager._total_liquidation.liquidate_single_token_taker = _liq  # type: ignore[attr-defined]
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.90}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+        manager._run_stoploss_check(now + 61.0)  # second confirm hit => one liquidation attempt
+        manager._run_stoploss_check(now + 120.0)  # should be blocked by cooldown
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    assert len(calls) == 1
+    state = manager._token_cycle_states["t1"]
+    assert float(state.get("stoploss_cooldown_until_ts", 0.0)) > (now + 120.0)
