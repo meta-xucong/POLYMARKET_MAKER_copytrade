@@ -110,6 +110,8 @@ DEFAULT_GLOBAL_CONFIG = {
         "enabled": False,
         "check_interval_sec": 60.0,
         "drawdown_pct": 0.20,
+        "aggressive_drawdown_pct": 0.05,
+        "aggressive_retry_cooldown_minutes": 10.0,
         "min_age_minutes": 720.0,
         "first_cut_ratio": 0.50,
         "second_cut_cooldown_minutes": 1440.0,
@@ -972,6 +974,14 @@ class GlobalConfig:
     stoploss_drawdown_pct: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_pct", 0.20)
     )
+    stoploss_aggressive_drawdown_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("aggressive_drawdown_pct", 0.05)
+    )
+    stoploss_aggressive_retry_cooldown_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "aggressive_retry_cooldown_minutes", 10.0
+        )
+    )
     stoploss_min_age_minutes: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_age_minutes", 720.0)
     )
@@ -1515,6 +1525,30 @@ class GlobalConfig:
                     stoploss_cfg.get(
                         "drawdown_pct",
                         merged.get("stoploss_drawdown_pct", cls.stoploss_drawdown_pct),
+                    )
+                ),
+            ),
+            stoploss_aggressive_drawdown_pct=max(
+                0.001,
+                float(
+                    stoploss_cfg.get(
+                        "aggressive_drawdown_pct",
+                        merged.get(
+                            "stoploss_aggressive_drawdown_pct",
+                            cls.stoploss_aggressive_drawdown_pct,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_aggressive_retry_cooldown_minutes=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "aggressive_retry_cooldown_minutes",
+                        merged.get(
+                            "stoploss_aggressive_retry_cooldown_minutes",
+                            cls.stoploss_aggressive_retry_cooldown_minutes,
+                        ),
                     )
                 ),
             ),
@@ -2277,19 +2311,39 @@ class AutoRunManager:
             return
 
         max_actions = max(1, int(getattr(self.config, "stoploss_max_tokens_per_cycle", 1)))
-        drawdown_threshold = max(
-            0.001, float(getattr(self.config, "stoploss_drawdown_pct", 0.20))
-        )
-        min_age_minutes = max(
-            0.0, float(getattr(self.config, "stoploss_min_age_minutes", 0.0))
-        )
-        confirm_rounds = max(1, int(getattr(self.config, "stoploss_confirm_rounds", 2)))
+        aggressive_mode = bool(self._is_aggressive_mode())
+        if aggressive_mode:
+            drawdown_threshold = max(
+                0.001,
+                float(getattr(self.config, "stoploss_aggressive_drawdown_pct", 0.05)),
+            )
+            min_age_minutes = 0.0
+            # aggressive mode keeps strict 2-round confirmation
+            confirm_rounds = 2
+            cooldown_minutes = max(
+                0.0,
+                float(
+                    getattr(
+                        self.config,
+                        "stoploss_aggressive_retry_cooldown_minutes",
+                        10.0,
+                    )
+                ),
+            )
+        else:
+            drawdown_threshold = max(
+                0.001, float(getattr(self.config, "stoploss_drawdown_pct", 0.20))
+            )
+            min_age_minutes = max(
+                0.0, float(getattr(self.config, "stoploss_min_age_minutes", 0.0))
+            )
+            confirm_rounds = max(1, int(getattr(self.config, "stoploss_confirm_rounds", 2)))
+            cooldown_minutes = max(
+                0.0,
+                float(getattr(self.config, "stoploss_second_cut_cooldown_minutes", 1440.0)),
+            )
         first_cut_ratio = max(
             0.0, min(1.0, float(getattr(self.config, "stoploss_first_cut_ratio", 0.5)))
-        )
-        cooldown_minutes = max(
-            0.0,
-            float(getattr(self.config, "stoploss_second_cut_cooldown_minutes", 1440.0)),
         )
         min_maker_order_size = max(
             0.0, float(getattr(self.config, "stoploss_min_maker_order_size", 5.0))
@@ -2321,6 +2375,12 @@ class AutoRunManager:
                 stage = "none"
                 state["stoploss_stage"] = stage
                 state_dirty = True
+            if aggressive_mode and stage == "first_cut_done":
+                stage = "none"
+                state["stoploss_stage"] = stage
+                state["stoploss_cooldown_until_ts"] = 0.0
+                state["stoploss_confirm_hits"] = 0
+                state_dirty = True
             if stage == "fully_cleared":
                 state["stoploss_stage"] = "none"
                 stage = "none"
@@ -2346,6 +2406,13 @@ class AutoRunManager:
                     state["stoploss_confirm_hits"] = 0
                     state_dirty = True
                 continue
+            if aggressive_mode:
+                cooldown_until = _coerce_float(state.get("stoploss_cooldown_until_ts")) or 0.0
+                if cooldown_until > now:
+                    if int(state.get("stoploss_confirm_hits", 0) or 0) != 0:
+                        state["stoploss_confirm_hits"] = 0
+                        state_dirty = True
+                    continue
 
             if drawdown > -drawdown_threshold:
                 if int(state.get("stoploss_confirm_hits", 0) or 0) != 0:
@@ -2364,6 +2431,43 @@ class AutoRunManager:
             action_count += 1
 
             self._prepare_token_for_stoploss_execution(token_id)
+            if aggressive_mode:
+                liq = self._total_liquidation.liquidate_single_token_taker(
+                    self,
+                    token_id,
+                    target_size=pos_size,
+                    reason="stoploss_aggressive_full_clear",
+                )
+                liq_after = _coerce_float(liq.get("after_size"))
+                liq_before = _coerce_float(liq.get("before_size"))
+                after_size = max(0.0, liq_after if liq_after is not None else pos_size)
+                before_size = max(0.0, liq_before if liq_before is not None else pos_size)
+                if after_size > dust:
+                    state["stoploss_stage"] = "none"
+                    state["stoploss_confirm_hits"] = 0
+                    state["stoploss_last_action_ts"] = now
+                    state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
+                    state_dirty = True
+                    print(
+                        f"[STOPLOSS][WARN] aggressive_full_clear 鏈畬鎴?token={token_id[:20]}... "
+                        f"remain={after_size:.4f}锛岃繘鍏ュ喎鍗村悗閲嶈瘯"
+                    )
+                    continue
+                self._finalize_stoploss_full_clear(
+                    token_id,
+                    state,
+                    drawdown=drawdown,
+                    now=now,
+                    before_size=before_size,
+                    after_size=after_size,
+                    source="aggressive_single_cut",
+                )
+                state_dirty = True
+                print(
+                    f"[STOPLOSS] aggressive_full_clear token={token_id[:20]}... "
+                    f"drawdown={drawdown:.2%} before={before_size:.4f} after={after_size:.4f}"
+                )
+                continue
             if stage == "none":
                 force_full_clear = (
                     first_cut_ratio <= 0.0
@@ -8056,4 +8160,3 @@ def main(argv: Optional[List[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
-
