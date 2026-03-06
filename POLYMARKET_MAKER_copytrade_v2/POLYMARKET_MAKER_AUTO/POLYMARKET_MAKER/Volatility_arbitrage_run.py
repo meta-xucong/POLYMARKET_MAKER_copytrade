@@ -228,6 +228,9 @@ POST_BUY_POSITION_CHECK_ROUND_COOLDOWN = 60.0
 POST_BUY_POSITION_CONFIRM_MAX_ROUNDS = 10  # 最大重试轮数，防止无限循环
 POST_BUY_POSITION_MATCH_REL_TOL = 1e-4
 POST_BUY_POSITION_MATCH_ABS_TOL = 1e-6
+POST_BUY_POSITION_SIZE_MATCH_REL_TOL = 0.02
+POST_BUY_POSITION_SIZE_MATCH_ABS_TOL = 0.05
+POST_BUY_AVG_DIVERGENCE_WARN_PCT = 0.003
 
 
 _REQUEST_RATE_LIMIT_SEC = 1.0
@@ -4538,6 +4541,27 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             # 地板价不得低于“买入均价 + 盈利阈值”，若上游给出更高提示价则取较高值。
             floor_price = max(floor_price, floor_hint)
 
+        # 硬性地板校验：优先使用更保守（更高）的成本基准，防止低成本回填导致提前卖出。
+        try:
+            st = strategy.status()
+            entry_ref = _coerce_float(st.get("entry_price")) if isinstance(st, dict) else None
+            last_buy_ref = _coerce_float(st.get("last_buy_price")) if isinstance(st, dict) else None
+            baseline = None
+            if entry_ref is not None and entry_ref > 0:
+                baseline = entry_ref
+            if last_buy_ref is not None and last_buy_ref > 0:
+                baseline = max(baseline, last_buy_ref) if baseline is not None else last_buy_ref
+            if baseline is not None:
+                profit_pct_cfg = getattr(getattr(strategy, "cfg", None), "profit_pct", None)
+                if profit_pct_cfg is None:
+                    profit_pct_cfg = getattr(getattr(strategy, "cfg", None), "profit_ratio", None)
+                profit_pct_cfg = float(profit_pct_cfg or 0.0)
+                hard_floor = baseline * (1.0 + profit_pct_cfg)
+                if floor_price is None or hard_floor > floor_price:
+                    floor_price = hard_floor
+        except Exception as floor_guard_exc:
+            print(f"[SELL][GUARD] 硬地板校验失败，沿用当前地板价：{floor_guard_exc}")
+
         if floor_price is None:
             print(f"[WARN] {source} 无法计算卖出地板价，跳过卖出流程。")
             strategy.on_reject("missing sell trigger")
@@ -5555,7 +5579,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                             continue
 
                         # 使用均价计算地板价：均价 * (1 + profit_pct)
-                        strategy.sync_long_state(ref_price=block_avg_px)
+                        strategy.sync_position(actionable_position, ref_price=block_avg_px)
                         block_floor_hint = strategy.sell_trigger_price()
                         if block_floor_hint is None or block_floor_hint <= 0:
                             print(
@@ -5847,12 +5871,30 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                                 actual_avg_price is not None
                                 and actual_total_position is not None
                             ):
-                                success_samples.append((actual_avg_price, actual_total_position))
-                                origin_display = origin_note or "positions"
-                                print(
-                                    f"[TRACE] 持仓均价查询结果（第{attempt + 1}次/本轮）"
-                                    f" origin={origin_display} avg={actual_avg_price:.6f} size={actual_total_position:.6f}"
+                                size_matches_increment = math.isclose(
+                                    actual_total_position,
+                                    expected_total_position,
+                                    rel_tol=POST_BUY_POSITION_SIZE_MATCH_REL_TOL,
+                                    abs_tol=POST_BUY_POSITION_SIZE_MATCH_ABS_TOL,
                                 )
+                                origin_display = origin_note or "positions"
+                                if size_matches_increment:
+                                    success_samples.append((actual_avg_price, actual_total_position))
+                                    print(
+                                        f"[TRACE] 持仓均价查询结果（第{attempt + 1}次/本轮）"
+                                        f" origin={origin_display} avg={actual_avg_price:.6f} size={actual_total_position:.6f}"
+                                    )
+                                else:
+                                    print(
+                                        f"[WARN] 持仓均价样本增量不匹配，忽略该样本："
+                                        f" expected_size={expected_total_position:.6f} "
+                                        f"actual_size={actual_total_position:.6f} origin={origin_display}"
+                                    )
+                                    consecutive_hits = 0
+                                    last_avg = None
+                                    if attempt < POST_BUY_POSITION_CHECK_ATTEMPTS - 1:
+                                        time.sleep(POST_BUY_POSITION_CHECK_INTERVAL)
+                                    continue
                                 if (
                                     last_avg is not None
                                     and math.isclose(
@@ -5924,15 +5966,28 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if stop_event.is_set():
                         return
 
-                    fill_px = confirmed_avg
-                    position_size = confirmed_total
+                    pos_avg_price = confirmed_avg
+                    fill_px = max(fallback_price, pos_avg_price if pos_avg_price is not None else fallback_price)
+                    if (
+                        pos_avg_price is not None
+                        and fallback_price > 0
+                        and abs(pos_avg_price - fallback_price) / fallback_price >= POST_BUY_AVG_DIVERGENCE_WARN_PCT
+                    ):
+                        print(
+                            f"[WARN] 买入成本来源不一致：fill_avg={fallback_price:.6f} "
+                            f"positions_avg={pos_avg_price:.6f}，采用更高值 {fill_px:.6f}"
+                        )
+                    position_size = confirmed_total if confirmed_total is not None else expected_total_position
                     last_order_size = filled_amt
                     display_size = (
                         confirmed_total if confirmed_total is not None else position_size
                     )
                     origin_display = origin_note or "positions"
                     print(
-                        f"[STATE] 持仓均价确认 -> origin={origin_display} avg={fill_px:.4f} size={display_size:.4f}"
+                        f"[STATE] 成本确认 -> origin={origin_display} "
+                        f"fill_avg={fallback_price:.4f} "
+                        f"positions_avg={(pos_avg_price if pos_avg_price is not None else fallback_price):.4f} "
+                        f"chosen={fill_px:.4f} size={display_size:.4f}"
                     )
                     buy_filled_kwargs = {
                         "avg_price": fill_px,
