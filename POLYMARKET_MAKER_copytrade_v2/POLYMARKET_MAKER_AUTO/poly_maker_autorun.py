@@ -105,6 +105,19 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_cooldown_minutes_no_position": 20.0,
     "max_refill_retries": 6,
     "refill_check_interval_sec": 60.0,
+    # 单阈值两步止损（首次50%，冷却后仍未恢复则全清）
+    "stoploss": {
+        "enabled": False,
+        "check_interval_sec": 60.0,
+        "drawdown_pct": 0.20,
+        "min_age_minutes": 720.0,
+        "first_cut_ratio": 0.50,
+        "second_cut_cooldown_minutes": 1440.0,
+        "confirm_rounds": 2,
+        "min_maker_order_size": 5.0,
+        "max_tokens_per_cycle": 3,
+        "skip_if_global_liquidation_active": True,
+    },
     # gap 快速淘汰后指数退避（分钟）：连续第1/2/3/4+次使用 5/15/45/120 分钟
     "gap_skip_backoff_enabled": True,
     "gap_skip_backoff_minutes": [5.0, 15.0, 45.0, 120.0],
@@ -950,6 +963,40 @@ class GlobalConfig:
     ]
     max_refill_retries: int = DEFAULT_GLOBAL_CONFIG["max_refill_retries"]
     refill_check_interval_sec: float = DEFAULT_GLOBAL_CONFIG["refill_check_interval_sec"]
+    enable_stoploss: bool = bool(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("enabled", False)
+    )
+    stoploss_check_interval_sec: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("check_interval_sec", 60.0)
+    )
+    stoploss_drawdown_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_pct", 0.20)
+    )
+    stoploss_min_age_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_age_minutes", 720.0)
+    )
+    stoploss_first_cut_ratio: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("first_cut_ratio", 0.50)
+    )
+    stoploss_second_cut_cooldown_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "second_cut_cooldown_minutes", 1440.0
+        )
+    )
+    stoploss_confirm_rounds: int = int(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("confirm_rounds", 2)
+    )
+    stoploss_min_maker_order_size: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_maker_order_size", 5.0)
+    )
+    stoploss_max_tokens_per_cycle: int = int(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("max_tokens_per_cycle", 3)
+    )
+    stoploss_skip_if_global_liquidation_active: bool = bool(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "skip_if_global_liquidation_active", True
+        )
+    )
     gap_skip_backoff_enabled: bool = bool(
         DEFAULT_GLOBAL_CONFIG["gap_skip_backoff_enabled"]
     )
@@ -1008,6 +1055,11 @@ class GlobalConfig:
             title_blacklist_cfg = merged.get("title_blacklist")
         if not isinstance(title_blacklist_cfg, dict):
             title_blacklist_cfg = {}
+        stoploss_cfg = scheduler.get("stoploss")
+        if not isinstance(stoploss_cfg, dict):
+            stoploss_cfg = merged.get("stoploss")
+        if not isinstance(stoploss_cfg, dict):
+            stoploss_cfg = {}
 
         log_dir = Path(
             paths.get("log_directory")
@@ -1439,6 +1491,112 @@ class GlobalConfig:
             refill_check_interval_sec=float(
                 scheduler.get("refill_check_interval_sec", merged.get("refill_check_interval_sec", 60.0))
             ),
+            enable_stoploss=bool(
+                stoploss_cfg.get(
+                    "enabled",
+                    merged.get("enable_stoploss", cls.enable_stoploss),
+                )
+            ),
+            stoploss_check_interval_sec=max(
+                10.0,
+                float(
+                    stoploss_cfg.get(
+                        "check_interval_sec",
+                        merged.get(
+                            "stoploss_check_interval_sec",
+                            cls.stoploss_check_interval_sec,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_drawdown_pct=max(
+                0.001,
+                float(
+                    stoploss_cfg.get(
+                        "drawdown_pct",
+                        merged.get("stoploss_drawdown_pct", cls.stoploss_drawdown_pct),
+                    )
+                ),
+            ),
+            stoploss_min_age_minutes=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "min_age_minutes",
+                        merged.get(
+                            "stoploss_min_age_minutes", cls.stoploss_min_age_minutes
+                        ),
+                    )
+                ),
+            ),
+            stoploss_first_cut_ratio=max(
+                0.0,
+                min(
+                    1.0,
+                    float(
+                        stoploss_cfg.get(
+                            "first_cut_ratio",
+                            merged.get(
+                                "stoploss_first_cut_ratio", cls.stoploss_first_cut_ratio
+                            ),
+                        )
+                    ),
+                ),
+            ),
+            stoploss_second_cut_cooldown_minutes=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "second_cut_cooldown_minutes",
+                        merged.get(
+                            "stoploss_second_cut_cooldown_minutes",
+                            cls.stoploss_second_cut_cooldown_minutes,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_confirm_rounds=max(
+                1,
+                int(
+                    stoploss_cfg.get(
+                        "confirm_rounds",
+                        merged.get("stoploss_confirm_rounds", cls.stoploss_confirm_rounds),
+                    )
+                ),
+            ),
+            stoploss_min_maker_order_size=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "min_maker_order_size",
+                        merged.get(
+                            "stoploss_min_maker_order_size",
+                            cls.stoploss_min_maker_order_size,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_max_tokens_per_cycle=max(
+                1,
+                int(
+                    stoploss_cfg.get(
+                        "max_tokens_per_cycle",
+                        merged.get(
+                            "stoploss_max_tokens_per_cycle",
+                            cls.stoploss_max_tokens_per_cycle,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_skip_if_global_liquidation_active=bool(
+                stoploss_cfg.get(
+                    "skip_if_global_liquidation_active",
+                    merged.get(
+                        "stoploss_skip_if_global_liquidation_active",
+                        cls.stoploss_skip_if_global_liquidation_active,
+                    ),
+                )
+            ),
             gap_skip_backoff_enabled=bool(
                 scheduler.get(
                     "gap_skip_backoff_enabled",
@@ -1627,6 +1785,7 @@ class AutoRunManager:
         self._token_cycle_states: Dict[str, Dict[str, Any]] = {}
         self._refill_retry_counts: Dict[str, int] = {}  # token_id -> 已重试次数
         self._next_refill_check: float = 0.0
+        self._next_stoploss_check: float = 0.0
         self._next_inactive_token_reconcile_check: float = 0.0
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
         # Shared WS 等待保护
@@ -1747,15 +1906,57 @@ class AutoRunManager:
             )
         except (TypeError, ValueError):
             last_cycle_completed_ts = 0.0
+        stage = str(raw.get("stoploss_stage") or "none").strip().lower()
+        if stage not in {"none", "first_cut_done", "fully_cleared"}:
+            stage = "none"
+        try:
+            stoploss_first_cut_ts = max(
+                0.0, float(raw.get("stoploss_first_cut_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            stoploss_first_cut_ts = 0.0
+        try:
+            stoploss_cooldown_until_ts = max(
+                0.0, float(raw.get("stoploss_cooldown_until_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            stoploss_cooldown_until_ts = 0.0
+        try:
+            stoploss_confirm_hits = max(
+                0, int(raw.get("stoploss_confirm_hits", 0) or 0)
+            )
+        except (TypeError, ValueError):
+            stoploss_confirm_hits = 0
+        stoploss_first_cut_drawdown = _coerce_float(raw.get("stoploss_first_cut_drawdown"))
+        try:
+            stoploss_last_action_ts = max(
+                0.0, float(raw.get("stoploss_last_action_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            stoploss_last_action_ts = 0.0
+        try:
+            stoploss_position_opened_ts = max(
+                0.0, float(raw.get("stoploss_position_opened_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            stoploss_position_opened_ts = 0.0
         normalized = {
             "cycle_round": cycle_round,
             "next_buy_allowed_ts": next_buy_allowed_ts,
             "last_cycle_completed_ts": last_cycle_completed_ts,
+            "stoploss_stage": stage,
+            "stoploss_first_cut_ts": stoploss_first_cut_ts,
+            "stoploss_cooldown_until_ts": stoploss_cooldown_until_ts,
+            "stoploss_confirm_hits": stoploss_confirm_hits,
+            "stoploss_last_action_ts": stoploss_last_action_ts,
+            "stoploss_position_opened_ts": stoploss_position_opened_ts,
         }
         if next_drop_pct is not None:
             normalized["next_drop_pct"] = next_drop_pct
         if next_profit_pct is not None:
             normalized["next_profit_pct"] = next_profit_pct
+        if stoploss_first_cut_drawdown is not None:
+            normalized["stoploss_first_cut_drawdown"] = float(stoploss_first_cut_drawdown)
         return normalized
 
     def _load_token_cycle_states(self) -> None:
@@ -1968,6 +2169,335 @@ class AutoRunManager:
                     f"{old_resume_profit if old_resume_profit is not None else 'None'} -> {effective_profit:.6f}"
                 )
         return True
+
+    def _estimate_stoploss_sellable_price(
+        self, token_id: str, position_row: Dict[str, Any]
+    ) -> Optional[float]:
+        ws_bid = 0.0
+        ws_age = float("inf")
+        try:
+            with self._ws_cache_lock:
+                cached = dict(self._ws_cache.get(token_id) or {})
+            ws_bid = float(cached.get("best_bid") or 0.0)
+            updated_at = _coerce_float(cached.get("updated_at"))
+            if updated_at is not None and updated_at > 0:
+                ws_age = max(0.0, time.time() - updated_at)
+        except Exception:
+            ws_bid = 0.0
+            ws_age = float("inf")
+        if ws_bid > 0 and ws_age <= 120.0:
+            return ws_bid
+        cur_price = _extract_position_current_price(position_row)
+        if cur_price is not None and cur_price > 0:
+            return float(cur_price)
+        if ws_bid > 0:
+            return ws_bid
+        return None
+
+    def _prepare_token_for_stoploss_execution(self, token_id: str) -> None:
+        self._remove_pending_topic(token_id)
+        self._remove_pending_exit_topic(token_id)
+        task = self.tasks.get(token_id)
+        if task and task.is_running():
+            task.no_restart = True
+            task.end_reason = "stoploss liquidation"
+            self._terminate_task(task, reason="stoploss liquidation")
+        if task:
+            self.tasks.pop(token_id, None)
+
+    def _finalize_stoploss_full_clear(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        drawdown: float,
+        now: float,
+        before_size: float,
+        after_size: float,
+        source: str,
+    ) -> None:
+        state["stoploss_stage"] = "fully_cleared"
+        state["stoploss_confirm_hits"] = 0
+        state["stoploss_last_action_ts"] = now
+        state["stoploss_cooldown_until_ts"] = 0.0
+        self._append_exit_token_record(
+            token_id,
+            "STOPLOSS_FULL_CLEAR",
+            exit_data={
+                "source": source,
+                "drawdown": drawdown,
+                "before_size": before_size,
+                "after_size": after_size,
+            },
+            refillable=False,
+        )
+        self._remove_pending_topic(token_id)
+        self._remove_pending_exit_topic(token_id)
+        self._remove_from_handled_topics(token_id)
+        self._remove_token_from_copytrade_files(token_id)
+        self._position_snapshot_cache.pop(token_id, None)
+
+    def _run_stoploss_check(self, now: float) -> None:
+        if not bool(getattr(self.config, "enable_stoploss", False)):
+            return
+        if (
+            bool(getattr(self.config, "stoploss_skip_if_global_liquidation_active", True))
+            and getattr(self._total_liquidation, "_running", False)
+        ):
+            return
+        if not self._position_address:
+            address, origin = _resolve_position_address_from_env()
+            self._position_address = address
+            self._position_address_origin = origin
+            if not address and not self._position_address_warned:
+                self._position_address_warned = True
+                print(f"[STOPLOSS][WARN] {origin}")
+        if not self._position_address:
+            return
+
+        rows, info = _fetch_position_rows_from_data_api(self._position_address)
+        if info != "ok":
+            self._log_throttled(
+                "stoploss_positions_fetch_error",
+                60.0,
+                f"[STOPLOSS][WARN] 持仓查询失败: {info}",
+            )
+            return
+
+        try:
+            managed_scope = self._build_copytrade_active_token_set()
+        except Exception:
+            managed_scope = set()
+        managed_scope.update(self.handled_topics)
+        managed_scope.update(self.tasks.keys())
+        managed_scope.update(self.pending_topics)
+        managed_scope.update(self.pending_burst_topics)
+        managed_scope.update(self.pending_exit_topics)
+        if not managed_scope:
+            return
+
+        max_actions = max(1, int(getattr(self.config, "stoploss_max_tokens_per_cycle", 1)))
+        drawdown_threshold = max(
+            0.001, float(getattr(self.config, "stoploss_drawdown_pct", 0.20))
+        )
+        min_age_minutes = max(
+            0.0, float(getattr(self.config, "stoploss_min_age_minutes", 0.0))
+        )
+        confirm_rounds = max(1, int(getattr(self.config, "stoploss_confirm_rounds", 2)))
+        first_cut_ratio = max(
+            0.0, min(1.0, float(getattr(self.config, "stoploss_first_cut_ratio", 0.5)))
+        )
+        cooldown_minutes = max(
+            0.0,
+            float(getattr(self.config, "stoploss_second_cut_cooldown_minutes", 1440.0)),
+        )
+        min_maker_order_size = max(
+            0.0, float(getattr(self.config, "stoploss_min_maker_order_size", 5.0))
+        )
+        dust = max(float(POSITION_CLEANUP_DUST_THRESHOLD), 1e-6)
+
+        state_dirty = False
+        action_count = 0
+        for row in rows:
+            token_id = _extract_position_token_id(row)
+            if not token_id:
+                continue
+            if managed_scope and token_id not in managed_scope:
+                continue
+            pos_size = float(_extract_position_size(row) or 0.0)
+            if pos_size <= dust:
+                continue
+            avg_price = _extract_position_avg_price(row)
+            if avg_price is None or avg_price <= 0:
+                continue
+            sellable_price = self._estimate_stoploss_sellable_price(token_id, row)
+            if sellable_price is None or sellable_price <= 0:
+                continue
+            drawdown = (float(sellable_price) / float(avg_price)) - 1.0
+
+            state = self._token_cycle_states.setdefault(token_id, {})
+            stage = str(state.get("stoploss_stage") or "none").strip().lower()
+            if stage not in {"none", "first_cut_done", "fully_cleared"}:
+                stage = "none"
+                state["stoploss_stage"] = stage
+                state_dirty = True
+            if stage == "fully_cleared":
+                state["stoploss_stage"] = "none"
+                stage = "none"
+                state["stoploss_confirm_hits"] = 0
+                state["stoploss_cooldown_until_ts"] = 0.0
+                state["stoploss_first_cut_ts"] = 0.0
+                state["stoploss_first_cut_drawdown"] = None
+                state["stoploss_position_opened_ts"] = now
+                state_dirty = True
+
+            opened_ts = _coerce_float(state.get("stoploss_position_opened_ts")) or 0.0
+            if opened_ts <= 0:
+                task = self.tasks.get(token_id)
+                if task and task.start_time > 0:
+                    opened_ts = float(task.start_time)
+                else:
+                    opened_ts = now
+                state["stoploss_position_opened_ts"] = opened_ts
+                state_dirty = True
+            age_minutes = max(0.0, (now - opened_ts) / 60.0)
+            if age_minutes < min_age_minutes:
+                if int(state.get("stoploss_confirm_hits", 0) or 0) != 0:
+                    state["stoploss_confirm_hits"] = 0
+                    state_dirty = True
+                continue
+
+            if drawdown > -drawdown_threshold:
+                if int(state.get("stoploss_confirm_hits", 0) or 0) != 0:
+                    state["stoploss_confirm_hits"] = 0
+                    state_dirty = True
+                continue
+
+            hits = int(state.get("stoploss_confirm_hits", 0) or 0) + 1
+            state["stoploss_confirm_hits"] = hits
+            state_dirty = True
+            if hits < confirm_rounds:
+                continue
+
+            if action_count >= max_actions:
+                break
+            action_count += 1
+
+            self._prepare_token_for_stoploss_execution(token_id)
+            if stage == "none":
+                force_full_clear = (
+                    first_cut_ratio <= 0.0
+                    or first_cut_ratio >= 1.0
+                    or (pos_size * max(0.0, 1.0 - first_cut_ratio) < min_maker_order_size)
+                )
+                target_size = pos_size if force_full_clear else pos_size * first_cut_ratio
+                liq = self._total_liquidation.liquidate_single_token_taker(
+                    self,
+                    token_id,
+                    target_size=target_size,
+                    reason="stoploss_first_cut",
+                )
+                liq_after = _coerce_float(liq.get("after_size"))
+                liq_before = _coerce_float(liq.get("before_size"))
+                after_size = max(0.0, liq_after if liq_after is not None else pos_size)
+                before_size = max(0.0, liq_before if liq_before is not None else pos_size)
+                if (
+                    (not force_full_clear)
+                    and after_size > dust
+                    and after_size < min_maker_order_size
+                ):
+                    liq2 = self._total_liquidation.liquidate_single_token_taker(
+                        self,
+                        token_id,
+                        target_size=after_size,
+                        reason="stoploss_upgrade_full_clear_for_min_size",
+                    )
+                    liq2_after = _coerce_float(liq2.get("after_size"))
+                    after_size = max(0.0, liq2_after if liq2_after is not None else after_size)
+                    force_full_clear = True
+
+                if force_full_clear or after_size <= dust:
+                    if after_size > dust:
+                        state["stoploss_stage"] = "first_cut_done"
+                        state["stoploss_confirm_hits"] = 0
+                        state["stoploss_last_action_ts"] = now
+                        state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
+                        state_dirty = True
+                        print(
+                            f"[STOPLOSS][WARN] full_clear 未完成 token={token_id[:20]}... "
+                            f"remain={after_size:.4f}，保留冷却后重试"
+                        )
+                        continue
+                    self._finalize_stoploss_full_clear(
+                        token_id,
+                        state,
+                        drawdown=drawdown,
+                        now=now,
+                        before_size=before_size,
+                        after_size=after_size,
+                        source="first_cut_upgraded_or_full",
+                    )
+                    state_dirty = True
+                    print(
+                        f"[STOPLOSS] full_clear token={token_id[:20]}... "
+                        f"drawdown={drawdown:.2%} before={before_size:.4f} after={after_size:.4f}"
+                    )
+                    continue
+
+                state["stoploss_stage"] = "first_cut_done"
+                state["stoploss_first_cut_ts"] = now
+                state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
+                state["stoploss_first_cut_drawdown"] = drawdown
+                state["stoploss_last_action_ts"] = now
+                state["stoploss_confirm_hits"] = 0
+                self._append_exit_token_record(
+                    token_id,
+                    "STOPLOSS_FIRST_CUT",
+                    exit_data={
+                        "drawdown": drawdown,
+                        "before_size": before_size,
+                        "after_size": after_size,
+                        "cooldown_minutes": cooldown_minutes,
+                    },
+                    refillable=True,
+                )
+                print(
+                    f"[STOPLOSS] first_cut token={token_id[:20]}... drawdown={drawdown:.2%} "
+                    f"before={before_size:.4f} after={after_size:.4f} cooldown={cooldown_minutes:.1f}m"
+                )
+                state_dirty = True
+                continue
+
+            cooldown_until = _coerce_float(state.get("stoploss_cooldown_until_ts")) or 0.0
+            if cooldown_until > now:
+                continue
+            liq = self._total_liquidation.liquidate_single_token_taker(
+                self,
+                token_id,
+                target_size=pos_size,
+                reason="stoploss_second_cut_full_clear",
+            )
+            liq_after = _coerce_float(liq.get("after_size"))
+            liq_before = _coerce_float(liq.get("before_size"))
+            after_size = max(0.0, liq_after if liq_after is not None else pos_size)
+            before_size = max(0.0, liq_before if liq_before is not None else pos_size)
+            if after_size > dust:
+                liq2 = self._total_liquidation.liquidate_single_token_taker(
+                    self,
+                    token_id,
+                    target_size=after_size,
+                    reason="stoploss_second_cut_retry",
+                )
+                liq2_after = _coerce_float(liq2.get("after_size"))
+                after_size = max(0.0, liq2_after if liq2_after is not None else after_size)
+            if after_size > dust:
+                state["stoploss_stage"] = "first_cut_done"
+                state["stoploss_confirm_hits"] = 0
+                state["stoploss_last_action_ts"] = now
+                state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
+                state_dirty = True
+                print(
+                    f"[STOPLOSS][WARN] second_cut 全清未完成 token={token_id[:20]}... "
+                    f"remain={after_size:.4f}，进入冷却后重试"
+                )
+                continue
+            self._finalize_stoploss_full_clear(
+                token_id,
+                state,
+                drawdown=drawdown,
+                now=now,
+                before_size=before_size,
+                after_size=after_size,
+                source="second_cut",
+            )
+            state_dirty = True
+            print(
+                f"[STOPLOSS] second_cut_full_clear token={token_id[:20]}... "
+                f"drawdown={drawdown:.2%} before={before_size:.4f} after={after_size:.4f}"
+            )
+
+        if state_dirty:
+            self._save_token_cycle_states()
 
     @staticmethod
     def _parse_title_blacklist_settings(config_payload: Dict[str, Any]) -> tuple[bool, List[str], bool, str]:
@@ -2454,6 +2984,11 @@ class AutoRunManager:
                         self._reconcile_inactive_copytrade_tokens()
                         self._next_inactive_token_reconcile_check = now + float(
                             self.config.inactive_token_reconcile_interval_sec
+                        )
+                    if self.config.enable_stoploss and now >= self._next_stoploss_check:
+                        self._run_stoploss_check(now)
+                        self._next_stoploss_check = now + max(
+                            10.0, float(self.config.stoploss_check_interval_sec)
                         )
                     # Slot回填检查
                     if self.config.enable_slot_refill and now >= self._next_refill_check:
