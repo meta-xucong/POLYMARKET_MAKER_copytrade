@@ -993,6 +993,97 @@ class TotalLiquidationManager:
         except Exception:
             pass
 
+    def liquidate_single_token_taker(
+        self,
+        autorun: Any,
+        token_id: str,
+        *,
+        target_size: Optional[float] = None,
+        reason: str = "",
+        max_attempts: int = 2,
+    ) -> Dict[str, Any]:
+        """对单个 token 执行 taker 清仓（支持部分数量）。"""
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return {"ok": False, "error": "missing token_id"}
+
+        client = self._get_cached_client()
+        if client is None:
+            return {"ok": False, "error": "client init failed", "token_id": token_id}
+
+        before_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+        if before_size <= 0:
+            return {
+                "ok": True,
+                "token_id": token_id,
+                "requested_size": 0.0,
+                "filled_size": 0.0,
+                "before_size": before_size,
+                "after_size": 0.0,
+                "attempts": 0,
+                "reason": reason,
+            }
+
+        requested_size = before_size
+        if target_size is not None:
+            try:
+                requested_size = max(0.0, min(before_size, float(target_size)))
+            except (TypeError, ValueError):
+                requested_size = before_size
+        if requested_size <= 0:
+            return {
+                "ok": True,
+                "token_id": token_id,
+                "requested_size": 0.0,
+                "filled_size": 0.0,
+                "before_size": before_size,
+                "after_size": before_size,
+                "attempts": 0,
+                "reason": reason,
+            }
+
+        # 先撤单，避免 maker/遗留订单和 taker 冲突。
+        try:
+            self._cancel_open_orders_for_token(client, token_id)
+        except Exception:
+            pass
+
+        attempts = 0
+        sold_total = 0.0
+        last_error: Optional[str] = None
+        remain_to_sell = requested_size
+        while attempts < max(1, int(max_attempts)) and remain_to_sell > 1e-6:
+            attempts += 1
+            try:
+                bid, ask = self._resolve_bid_ask(autorun, token_id)
+                taker_price = self._compute_taker_price(bid=bid, ask=ask)
+                self._place_sell_ioc(client, token_id, taker_price, remain_to_sell)
+                after_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+                sold_total = max(0.0, before_size - after_size)
+                remain_to_sell = max(0.0, requested_size - sold_total)
+                if remain_to_sell <= 1e-6:
+                    break
+            except Exception as exc:
+                last_error = str(exc)
+                break
+
+        after_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+        sold_total = max(0.0, before_size - after_size)
+        remaining_target = max(0.0, requested_size - sold_total)
+        ok = (remaining_target <= 1e-6) and (last_error is None)
+        return {
+            "ok": ok,
+            "token_id": token_id,
+            "requested_size": requested_size,
+            "filled_size": sold_total,
+            "before_size": before_size,
+            "after_size": after_size,
+            "remaining_target": remaining_target,
+            "attempts": attempts,
+            "reason": reason,
+            "error": last_error,
+        }
+
     def _liquidate_positions(
         self,
         autorun: Any,
