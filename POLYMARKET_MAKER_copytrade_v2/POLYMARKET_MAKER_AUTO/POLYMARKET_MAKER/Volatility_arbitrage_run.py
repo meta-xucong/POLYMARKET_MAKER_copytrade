@@ -4534,14 +4534,46 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             strategy.on_reject("invalid sell size")
             return
 
+        source_upper = str(source or "").upper()
+        loss_allowed_paths = ("LIQUID", "STOPLOSS", "STOP_LOSS", "STOP-LOSS", "STAGNANT")
+        loss_allowed = any(key in source_upper for key in loss_allowed_paths)
+
         floor_price = strategy.sell_trigger_price()
+        fallback_floor_from_hint = False
         if floor_price is None:
             floor_price = floor_hint
+            fallback_floor_from_hint = floor_price is not None
         elif floor_hint is not None:
             # 地板价不得低于“买入均价 + 盈利阈值”，若上游给出更高提示价则取较高值。
             floor_price = max(floor_price, floor_hint)
 
+        # 若只能回退到 floor_hint，额外抬高 2*tick，避免“买后原价卖出”。
+        if fallback_floor_from_hint and floor_price is not None and floor_price > 0:
+            tick_dp: Optional[int] = None
+            if isinstance(market_price_precision, int) and market_price_precision >= 0:
+                tick_dp = market_price_precision
+            if tick_dp is None:
+                tick_dp = _count_decimal_places(floor_price)
+            if tick_dp is None and floor_hint is not None:
+                tick_dp = _count_decimal_places(floor_hint)
+            if tick_dp is None:
+                tick_dp = 3
+            tick_dp = max(0, min(int(tick_dp), 6))
+            tick_size = float(Decimal("1").scaleb(-tick_dp))
+            guarded_floor = floor_price + tick_size * 2.0
+            floor_price = float(
+                Decimal(str(guarded_floor)).quantize(
+                    Decimal("1." + "0" * tick_dp), rounding=ROUND_UP
+                )
+            )
+            print(
+                "[SELL][FALLBACK_GUARD] "
+                f"trigger unavailable, fallback floor raised by 2*tick: "
+                f"tick={tick_size:.{tick_dp}f} floor={floor_price:.{tick_dp}f}"
+            )
+
         # 硬性地板校验：优先使用更保守（更高）的成本基准，防止低成本回填导致提前卖出。
+        baseline_for_hard_rule: Optional[float] = None
         try:
             st = strategy.status()
             entry_ref = _coerce_float(st.get("entry_price")) if isinstance(st, dict) else None
@@ -4552,6 +4584,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             if last_buy_ref is not None and last_buy_ref > 0:
                 baseline = max(baseline, last_buy_ref) if baseline is not None else last_buy_ref
             if baseline is not None:
+                baseline_for_hard_rule = baseline
                 profit_pct_cfg = getattr(getattr(strategy, "cfg", None), "profit_pct", None)
                 if profit_pct_cfg is None:
                     profit_pct_cfg = getattr(getattr(strategy, "cfg", None), "profit_ratio", None)
@@ -4562,13 +4595,46 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         except Exception as floor_guard_exc:
             print(f"[SELL][GUARD] 硬地板校验失败，沿用当前地板价：{floor_guard_exc}")
 
+        # 全局硬限制（清仓/止损路径豁免）：
+        # 除允许亏本卖出的路径外，卖价必须 >= max(entry_price, last_buy_price) + 2*tick
+        if (
+            not loss_allowed
+            and baseline_for_hard_rule is not None
+            and baseline_for_hard_rule > 0
+        ):
+            tick_dp = (
+                market_price_precision
+                if isinstance(market_price_precision, int) and market_price_precision >= 0
+                else None
+            )
+            if tick_dp is None:
+                tick_dp = _count_decimal_places(baseline_for_hard_rule)
+            if tick_dp is None and floor_hint is not None:
+                tick_dp = _count_decimal_places(floor_hint)
+            if tick_dp is None:
+                tick_dp = 3
+            tick_dp = max(0, min(int(tick_dp), 6))
+            tick_size = float(Decimal("1").scaleb(-tick_dp))
+            hard_floor_plus_ticks = baseline_for_hard_rule + tick_size * 2.0
+            hard_floor_plus_ticks = float(
+                Decimal(str(hard_floor_plus_ticks)).quantize(
+                    Decimal("1." + "0" * tick_dp), rounding=ROUND_UP
+                )
+            )
+            if floor_price is None or hard_floor_plus_ticks > floor_price:
+                floor_price = hard_floor_plus_ticks
+                print(
+                    "[SELL][HARD_FLOOR] enforce >= max(entry,last_buy)+2*tick: "
+                    f"baseline={baseline_for_hard_rule:.{tick_dp}f} "
+                    f"tick={tick_size:.{tick_dp}f} floor={floor_price:.{tick_dp}f}"
+                )
+
         if floor_price is None:
             print(f"[WARN] {source} 无法计算卖出地板价，跳过卖出流程。")
             strategy.on_reject("missing sell trigger")
             return
 
         # Refill 模式优化：若当前卖一低于地板价 10% 以上，直接跳过以释放槽位
-        source_upper = source.upper()
         fast_skip_on_large_gap = (
             "REFILL" in source_upper
             or "[POSITION][SYNC]" in source_upper
