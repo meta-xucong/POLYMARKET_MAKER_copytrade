@@ -1373,3 +1373,56 @@ def test_update_metrics_uses_data_api_trade_when_fill_not_in_last_line():
                 os.environ["POLY_DATA_ADDRESS"] = old_addr
 
         assert all("no_trade_for=" not in r for r in reasons)
+
+
+def test_reenter_single_token_taker_requires_ask_quote():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        mgr._cached_client = object()
+        mgr._fetch_single_position_size = lambda _token_id: 0.0
+        mgr._resolve_bid_ask = lambda _autorun, _token_id: (0.45, 0.0)
+        place_calls = []
+        mgr._place_buy_ioc = lambda *_args, **_kwargs: place_calls.append(True)
+
+        resp = mgr.reenter_single_token_taker(
+            _Autorun(cfg, running_tasks=0),
+            "t1",
+            target_size=3.0,
+            reference_buy_price=0.5,
+            reason="unit_test",
+            max_attempts=1,
+        )
+
+        assert resp.get("ok") is False
+        assert "missing taker ask quote" in str(resp.get("error") or "")
+        assert place_calls == []
+
+
+def test_reenter_single_token_taker_rejects_stale_ask_quote():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        mgr._cached_client = object()
+        mgr._fetch_single_position_size = lambda _token_id: 0.0
+        mgr._resolve_bid_ask = lambda _autorun, _token_id: (0.45, 0.46)
+        mgr._is_quote_fresh = lambda _autorun, _token_id, max_age_sec=30.0: False
+        place_calls = []
+        mgr._place_buy_ioc = lambda *_args, **_kwargs: place_calls.append(True)
+
+        resp = mgr.reenter_single_token_taker(
+            _Autorun(cfg, running_tasks=0),
+            "t1",
+            target_size=3.0,
+            reference_buy_price=0.5,
+            reason="unit_test",
+            max_attempts=1,
+        )
+
+        assert resp.get("ok") is False
+        assert "stale taker ask quote" in str(resp.get("error") or "")
+        assert place_calls == []

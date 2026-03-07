@@ -849,6 +849,18 @@ class TotalLiquidationManager:
             dedup.append(px)
         return dedup
 
+    @staticmethod
+    def _build_buy_price_ladder(price: float) -> List[float]:
+        base = max(float(price or 0.0), 0.01)
+        ladder = [base, min(0.9999, base * 1.003), min(0.9999, base * 1.008), min(0.9999, base * 1.015)]
+        dedup: List[float] = []
+        for px in ladder:
+            px = round(float(px), 4)
+            if dedup and abs(dedup[-1] - px) < 1e-9:
+                continue
+            dedup.append(px)
+        return dedup
+
     def _place_sell_ioc(self, client: Any, token_id: str, price: float, size: float) -> Dict[str, Any]:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import SELL
@@ -873,6 +885,98 @@ class TotalLiquidationManager:
                     print(
                         f"[GLB_LIQ][IOC] token={token_id} level={idx} price={eff_price:.4f} "
                         "无可匹配买单，继续尝试更低价"
+                    )
+                    continue
+                raise
+
+        if last_exc is not None:
+            raise last_exc
+        return {}
+
+    @staticmethod
+    def _extract_filled_and_price(resp: Any) -> Tuple[float, Optional[float]]:
+        """Best-effort parse of IOC response fill stats."""
+        if not isinstance(resp, dict):
+            return 0.0, None
+
+        # 1) direct aggregate fields
+        filled = 0.0
+        avg_price: Optional[float] = None
+        try:
+            filled = float(resp.get("filled") or 0.0)
+        except (TypeError, ValueError):
+            filled = 0.0
+        for key in ("avg_price", "average_price", "price", "avgPrice"):
+            try:
+                px = float(resp.get(key))
+                if px > 0:
+                    avg_price = px
+                    break
+            except (TypeError, ValueError):
+                continue
+        if filled > 0 and avg_price is not None:
+            return filled, avg_price
+
+        # 2) nested order list
+        orders = resp.get("orders")
+        if isinstance(orders, list):
+            total_size = 0.0
+            total_notional = 0.0
+            for row in orders:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    row_filled = float(row.get("filled") or 0.0)
+                except (TypeError, ValueError):
+                    row_filled = 0.0
+                if row_filled <= 0:
+                    continue
+                row_px: Optional[float] = None
+                for key in ("avg_price", "average_price", "price", "avgPrice"):
+                    try:
+                        p = float(row.get(key))
+                        if p > 0:
+                            row_px = p
+                            break
+                    except (TypeError, ValueError):
+                        continue
+                if row_px is None:
+                    continue
+                total_size += row_filled
+                total_notional += row_filled * row_px
+            if total_size > 0:
+                return total_size, (total_notional / total_size)
+        return 0.0, None
+
+    def _place_buy_ioc(self, client: Any, token_id: str, price: float, size: float) -> Dict[str, Any]:
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY
+
+        eff_size = max(float(size), 0.0)
+        order_type = getattr(OrderType, "FAK", None) or getattr(OrderType, "IOC", OrderType.FOK)
+        last_exc: Optional[Exception] = None
+
+        for idx, eff_price in enumerate(self._build_buy_price_ladder(price), start=1):
+            order = OrderArgs(
+                token_id=str(token_id),
+                side=BUY,
+                price=min(max(float(eff_price), 0.01), 0.9999),
+                size=eff_size,
+            )
+            signed = client.create_order(order)
+            try:
+                resp = client.post_order(signed, order_type)
+                if idx > 1:
+                    print(
+                        f"[GLB_LIQ][IOC_BUY] token={token_id} 阶梯价格 level={idx} price={eff_price:.4f} 下单成功"
+                    )
+                return resp
+            except Exception as exc:
+                last_exc = exc
+                if self._is_fak_no_match_error(exc):
+                    print(
+                        f"[GLB_LIQ][IOC_BUY] token={token_id} level={idx} price={eff_price:.4f} "
+                        "无可匹配卖单，继续尝试更高价"
                     )
                     continue
                 raise
@@ -1052,12 +1156,20 @@ class TotalLiquidationManager:
         sold_total = 0.0
         last_error: Optional[str] = None
         remain_to_sell = requested_size
+        executed_notional = 0.0
+        executed_size = 0.0
+        last_quote_price: Optional[float] = None
         while attempts < max(1, int(max_attempts)) and remain_to_sell > 1e-6:
             attempts += 1
             try:
                 bid, ask = self._resolve_bid_ask(autorun, token_id)
                 taker_price = self._compute_taker_price(bid=bid, ask=ask)
-                self._place_sell_ioc(client, token_id, taker_price, remain_to_sell)
+                last_quote_price = taker_price
+                resp = self._place_sell_ioc(client, token_id, taker_price, remain_to_sell)
+                fill_size, fill_price = self._extract_filled_and_price(resp)
+                if fill_size > 0 and fill_price is not None:
+                    executed_size += fill_size
+                    executed_notional += fill_size * fill_price
                 after_size = max(0.0, float(self._fetch_single_position_size(token_id)))
                 sold_total = max(0.0, before_size - after_size)
                 remain_to_sell = max(0.0, requested_size - sold_total)
@@ -1071,6 +1183,12 @@ class TotalLiquidationManager:
         sold_total = max(0.0, before_size - after_size)
         remaining_target = max(0.0, requested_size - sold_total)
         ok = (remaining_target <= 1e-6) and (last_error is None)
+        executed_avg_price: Optional[float] = None
+        if executed_size > 1e-9 and executed_notional > 0:
+            executed_avg_price = executed_notional / executed_size
+        elif last_quote_price is not None and sold_total > 1e-9:
+            # Fallback to quote used for IOC ladder when exchange response omits fill prices.
+            executed_avg_price = float(last_quote_price)
         return {
             "ok": ok,
             "token_id": token_id,
@@ -1082,6 +1200,92 @@ class TotalLiquidationManager:
             "attempts": attempts,
             "reason": reason,
             "error": last_error,
+            "executed_avg_price": executed_avg_price,
+            "executed_price_source": "response_fill" if executed_size > 1e-9 else ("ioc_quote_fallback" if executed_avg_price is not None else "unknown"),
+        }
+
+    def reenter_single_token_taker(
+        self,
+        autorun: Any,
+        token_id: str,
+        *,
+        target_size: float,
+        reference_buy_price: Optional[float] = None,
+        reason: str = "",
+        max_attempts: int = 2,
+    ) -> Dict[str, Any]:
+        """对单个 token 执行 taker 回补买入。"""
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return {"ok": False, "error": "missing token_id"}
+
+        client = self._get_cached_client()
+        if client is None:
+            return {"ok": False, "error": "client init failed", "token_id": token_id}
+
+        before_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+        requested_size = max(0.0, float(target_size or 0.0))
+        if requested_size <= 0:
+            return {
+                "ok": False,
+                "token_id": token_id,
+                "error": "invalid target_size",
+                "before_size": before_size,
+            }
+
+        attempts = 0
+        bought_total = 0.0
+        last_error: Optional[str] = None
+        remain_to_buy = requested_size
+        last_exec_price: Optional[float] = None
+        while attempts < max(1, int(max_attempts)) and remain_to_buy > 1e-6:
+            attempts += 1
+            try:
+                bid, ask = self._resolve_bid_ask(autorun, token_id)
+                if ask <= 0:
+                    last_error = "missing taker ask quote"
+                    break
+                if not self._is_quote_fresh(autorun, token_id, max_age_sec=30.0):
+                    last_error = "stale taker ask quote"
+                    break
+                if (
+                    reference_buy_price is not None
+                    and reference_buy_price > 0
+                    and ask > float(reference_buy_price) + 1e-12
+                ):
+                    last_error = (
+                        f"ask above reference_buy_price ask={ask:.6f} "
+                        f"ref={float(reference_buy_price):.6f}"
+                    )
+                    break
+                base_buy = ask
+                self._place_buy_ioc(client, token_id, base_buy, remain_to_buy)
+                last_exec_price = base_buy
+                after_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+                bought_total = max(0.0, after_size - before_size)
+                remain_to_buy = max(0.0, requested_size - bought_total)
+                if remain_to_buy <= 1e-6:
+                    break
+            except Exception as exc:
+                last_error = str(exc)
+                break
+
+        after_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+        bought_total = max(0.0, after_size - before_size)
+        remaining_target = max(0.0, requested_size - bought_total)
+        ok = (remaining_target <= 1e-6) and (last_error is None)
+        return {
+            "ok": ok,
+            "token_id": token_id,
+            "requested_size": requested_size,
+            "filled_size": bought_total,
+            "before_size": before_size,
+            "after_size": after_size,
+            "remaining_target": remaining_target,
+            "attempts": attempts,
+            "reason": reason,
+            "error": last_error,
+            "executed_price": last_exec_price,
         }
 
     def _liquidate_positions(

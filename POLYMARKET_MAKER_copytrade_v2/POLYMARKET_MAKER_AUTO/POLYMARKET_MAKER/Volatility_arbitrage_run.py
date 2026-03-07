@@ -4214,6 +4214,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     position_size: Optional[float] = None
     last_order_size: Optional[float] = None
+    stoploss_reentry_resume = run_cfg.get("stoploss_reentry_resume")
+    reentry_hold_enabled = (
+        isinstance(stoploss_reentry_resume, dict)
+        and bool(stoploss_reentry_resume.get("enabled", False))
+    )
+    reentry_hold_active = False
+    reentry_hold_floor_price: Optional[float] = None
+    reentry_hold_activation_price: Optional[float] = None
     status_snapshot = strategy.status()
     print("[INIT][TRACE] 4. 策略状态已获取")
     initial_pos = _extract_position_size(status_snapshot)
@@ -4918,28 +4926,54 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 ref_price=entry_price
             )
             print(f"[REFILL] ✓ 已同步持仓状态到策略")
-            
-            # 【关键修复】立即执行卖出，不依赖策略信号（避免价格不满足时不返回SELL导致的死锁）
-            fallback_px = entry_price
-            if fallback_px is None or fallback_px <= 0:
-                # 尝试从WS缓存获取当前价格
-                try:
-                    latest_snap = latest.get(token_id) or {}
-                    fallback_px = float(latest_snap.get("best_bid") or 0.0)
-                    if fallback_px <= 0:
-                        fallback_px = float(latest_snap.get("best_ask") or 0.0)
-                except Exception:
-                    fallback_px = 0.0
-            
-            if fallback_px > 0 and position_size > 0:
-                print(f"[REFILL] 立即启动卖出流程，地板价参考: {fallback_px:.4f}")
-                _execute_sell(
-                    position_size, 
-                    floor_hint=fallback_px, 
-                    source="[REFILL]"
+
+            if reentry_hold_enabled:
+                hold_floor_raw = _coerce_float(
+                    stoploss_reentry_resume.get("hold_floor_price")
                 )
+                hold_profit_pct_raw = _normalize_ratio(
+                    stoploss_reentry_resume.get("hold_profit_pct"), 0.05
+                )
+                reentry_hold_floor_price = (
+                    float(hold_floor_raw)
+                    if hold_floor_raw is not None and hold_floor_raw > 0
+                    else None
+                )
+                if reentry_hold_floor_price is not None:
+                    reentry_hold_activation_price = reentry_hold_floor_price * (
+                        1.0 + max(0.0, float(hold_profit_pct_raw))
+                    )
+                    reentry_hold_active = True
+                    print(
+                        "[REENTRY_HOLD] 启用回补持仓保护: "
+                        f"floor={reentry_hold_floor_price:.4f} "
+                        f"activation={reentry_hold_activation_price:.4f}"
+                    )
+
+            if not reentry_hold_active:
+                # 【关键修复】立即执行卖出，不依赖策略信号（避免价格不满足时不返回SELL导致的死锁）
+                fallback_px = entry_price
+                if fallback_px is None or fallback_px <= 0:
+                    # 尝试从WS缓存获取当前价格
+                    try:
+                        latest_snap = latest.get(token_id) or {}
+                        fallback_px = float(latest_snap.get("best_bid") or 0.0)
+                        if fallback_px <= 0:
+                            fallback_px = float(latest_snap.get("best_ask") or 0.0)
+                    except Exception:
+                        fallback_px = 0.0
+
+                if fallback_px > 0 and position_size > 0:
+                    print(f"[REFILL] 立即启动卖出流程，地板价参考: {fallback_px:.4f}")
+                    _execute_sell(
+                        position_size,
+                        floor_hint=fallback_px,
+                        source="[REFILL]"
+                    )
+                else:
+                    print(f"[REFILL][WARN] 无法确定地板价({fallback_px})或持仓({position_size})，跳过自动卖出")
             else:
-                print(f"[REFILL][WARN] 无法确定地板价({fallback_px})或持仓({position_size})，跳过自动卖出")
+                print("[REENTRY_HOLD] 回补后先不挂 SELL，等待回升至激活价后恢复卖出。")
         else:
             # 无持仓：正常启动等待买入
             print(f"[REFILL] 无持仓恢复状态，将正常等待买入信号")
@@ -5513,6 +5547,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     continue
     
                 if action.action == ActionType.SELL:
+                    if reentry_hold_active:
+                        if (
+                            reentry_hold_activation_price is not None
+                            and bid < reentry_hold_activation_price - 1e-12
+                        ):
+                            print(
+                                "[REENTRY_HOLD] 未达到恢复阈值，忽略 SELL 信号: "
+                                f"bid={bid:.4f} activation={reentry_hold_activation_price:.4f}"
+                            )
+                            strategy.on_reject("reentry hold below activation")
+                            continue
+                        reentry_hold_active = False
+                        print(
+                            "[REENTRY_HOLD] 达到恢复阈值，恢复常规 maker 卖出: "
+                            f"bid={bid:.4f} activation={reentry_hold_activation_price}"
+                        )
                     floor_override = action.target_price
                     _execute_sell(position_size, floor_hint=floor_override, source="[SIGNAL]")
                     continue

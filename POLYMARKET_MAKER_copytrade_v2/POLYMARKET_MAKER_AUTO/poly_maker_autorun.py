@@ -1,4 +1,4 @@
-"""
+﻿"""
 poly_maker_autorun
 -------------------
 
@@ -110,8 +110,17 @@ DEFAULT_GLOBAL_CONFIG = {
         "enabled": False,
         "check_interval_sec": 60.0,
         "drawdown_pct": 0.20,
+        "base_drawdown_pct": 0.05,
         "aggressive_drawdown_pct": 0.05,
         "aggressive_retry_cooldown_minutes": 10.0,
+        "reentry_window_cooldown_minutes": 120.0,
+        "next_stoploss_cooldown_minutes": 30.0,
+        "reentry_extra_delay_after_5_cuts_hours": 24.0,
+        "reentry_line_ticks": 2,
+        "reentry_zone_lower_pct": 0.02,
+        "probe_break_pct": 0.05,
+        "daily_reentry_loss_circuit_breaker_pct": 0.10,
+        "drawdown_step_per_cycle_pct": 0.01,
         "min_age_minutes": 720.0,
         "first_cut_ratio": 0.50,
         "second_cut_cooldown_minutes": 1440.0,
@@ -971,6 +980,9 @@ class GlobalConfig:
     stoploss_check_interval_sec: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("check_interval_sec", 60.0)
     )
+    stoploss_base_drawdown_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("base_drawdown_pct", 0.05)
+    )
     stoploss_drawdown_pct: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_pct", 0.20)
     )
@@ -981,6 +993,30 @@ class GlobalConfig:
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
             "aggressive_retry_cooldown_minutes", 10.0
         )
+    )
+    stoploss_reentry_window_cooldown_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_window_cooldown_minutes", 120.0)
+    )
+    stoploss_next_stoploss_cooldown_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("next_stoploss_cooldown_minutes", 30.0)
+    )
+    stoploss_reentry_extra_delay_after_5_cuts_hours: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_extra_delay_after_5_cuts_hours", 24.0)
+    )
+    stoploss_reentry_line_ticks: int = int(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_line_ticks", 2)
+    )
+    stoploss_reentry_zone_lower_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_zone_lower_pct", 0.02)
+    )
+    stoploss_probe_break_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("probe_break_pct", 0.05)
+    )
+    stoploss_daily_reentry_loss_circuit_breaker_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("daily_reentry_loss_circuit_breaker_pct", 0.10)
+    )
+    stoploss_drawdown_step_per_cycle_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_step_per_cycle_pct", 0.01)
     )
     stoploss_min_age_minutes: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_age_minutes", 720.0)
@@ -1006,6 +1042,12 @@ class GlobalConfig:
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
             "skip_if_global_liquidation_active", True
         )
+    )
+    stoploss_reentry_state_path: Path = field(
+        default_factory=lambda: PROJECT_ROOT.parent / "copytrade" / "stoploss_reentry_state.json"
+    )
+    stoploss_reentry_state_backup_path: Path = field(
+        default_factory=lambda: PROJECT_ROOT.parent / "copytrade" / "stoploss_reentry_state.bak.json"
     )
     gap_skip_backoff_enabled: bool = bool(
         DEFAULT_GLOBAL_CONFIG["gap_skip_backoff_enabled"]
@@ -1109,6 +1151,16 @@ class GlobalConfig:
             paths.get("token_cycle_state_file")
             or flat_overrides.get("token_cycle_state_path")
             or data_dir / "token_cycle_gate.json"
+        )
+        stoploss_reentry_state_path = Path(
+            paths.get("stoploss_reentry_state_file")
+            or flat_overrides.get("stoploss_reentry_state_path")
+            or PROJECT_ROOT.parent / "copytrade" / "stoploss_reentry_state.json"
+        )
+        stoploss_reentry_state_backup_path = Path(
+            paths.get("stoploss_reentry_state_backup_file")
+            or flat_overrides.get("stoploss_reentry_state_backup_path")
+            or PROJECT_ROOT.parent / "copytrade" / "stoploss_reentry_state.bak.json"
         )
 
         ws_ping_interval_sec = max(
@@ -1519,12 +1571,111 @@ class GlobalConfig:
                     )
                 ),
             ),
+            stoploss_base_drawdown_pct=max(
+                0.001,
+                float(
+                    stoploss_cfg.get(
+                        "base_drawdown_pct",
+                        merged.get("stoploss_base_drawdown_pct", cls.stoploss_base_drawdown_pct),
+                    )
+                ),
+            ),
             stoploss_drawdown_pct=max(
                 0.001,
                 float(
                     stoploss_cfg.get(
                         "drawdown_pct",
                         merged.get("stoploss_drawdown_pct", cls.stoploss_drawdown_pct),
+                    )
+                ),
+            ),
+            stoploss_reentry_window_cooldown_minutes=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "reentry_window_cooldown_minutes",
+                        merged.get(
+                            "stoploss_reentry_window_cooldown_minutes",
+                            cls.stoploss_reentry_window_cooldown_minutes,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_next_stoploss_cooldown_minutes=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "next_stoploss_cooldown_minutes",
+                        merged.get(
+                            "stoploss_next_stoploss_cooldown_minutes",
+                            cls.stoploss_next_stoploss_cooldown_minutes,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_reentry_extra_delay_after_5_cuts_hours=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "reentry_extra_delay_after_5_cuts_hours",
+                        merged.get(
+                            "stoploss_reentry_extra_delay_after_5_cuts_hours",
+                            cls.stoploss_reentry_extra_delay_after_5_cuts_hours,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_reentry_line_ticks=max(
+                1,
+                int(
+                    stoploss_cfg.get(
+                        "reentry_line_ticks",
+                        merged.get("stoploss_reentry_line_ticks", cls.stoploss_reentry_line_ticks),
+                    )
+                ),
+            ),
+            stoploss_reentry_zone_lower_pct=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "reentry_zone_lower_pct",
+                        merged.get(
+                            "stoploss_reentry_zone_lower_pct",
+                            cls.stoploss_reentry_zone_lower_pct,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_probe_break_pct=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "probe_break_pct",
+                        merged.get("stoploss_probe_break_pct", cls.stoploss_probe_break_pct),
+                    )
+                ),
+            ),
+            stoploss_daily_reentry_loss_circuit_breaker_pct=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "daily_reentry_loss_circuit_breaker_pct",
+                        merged.get(
+                            "stoploss_daily_reentry_loss_circuit_breaker_pct",
+                            cls.stoploss_daily_reentry_loss_circuit_breaker_pct,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_drawdown_step_per_cycle_pct=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "drawdown_step_per_cycle_pct",
+                        merged.get(
+                            "stoploss_drawdown_step_per_cycle_pct",
+                            cls.stoploss_drawdown_step_per_cycle_pct,
+                        ),
                     )
                 ),
             ),
@@ -1631,6 +1782,8 @@ class GlobalConfig:
                     ),
                 )
             ),
+            stoploss_reentry_state_path=stoploss_reentry_state_path,
+            stoploss_reentry_state_backup_path=stoploss_reentry_state_backup_path,
             gap_skip_backoff_enabled=bool(
                 scheduler.get(
                     "gap_skip_backoff_enabled",
@@ -1888,6 +2041,10 @@ class AutoRunManager:
         self._market_closed_cleaner: Optional[MarketClosedCleaner] = None
         self._file_io_lock = threading.RLock()  # 文件操作锁（共享给检测器和清理器）
         self._load_token_cycle_states()
+        self._stoploss_reentry_state_path = self.config.stoploss_reentry_state_path
+        self._stoploss_reentry_state_backup_path = self.config.stoploss_reentry_state_backup_path
+        self._stoploss_reentry_states: Dict[str, Dict[str, Any]] = {}
+        self._load_stoploss_reentry_states()
         
         if MARKET_STATE_CHECKER_AVAILABLE:
             try:
@@ -2032,6 +2189,275 @@ class AutoRunManager:
                 _atomic_json_write(self._token_cycle_state_path, payload)
             except OSError as exc:
                 print(f"[CYCLE_GATE][WARN] 写入状态失败: {exc}")
+
+    @staticmethod
+    def _today_utc_date(now: Optional[float] = None) -> str:
+        ts = time.time() if now is None else float(now)
+        return time.strftime("%Y-%m-%d", time.gmtime(ts))
+
+    def _default_stoploss_reentry_state(self, token_id: str) -> Dict[str, Any]:
+        base_threshold = max(0.001, float(self.config.stoploss_base_drawdown_pct))
+        return {
+            "token_id": str(token_id),
+            "version": 4,
+            "state": "NORMAL_MAKER",
+            "stoploss_cycle_count": 0,
+            "next_stoploss_threshold_pct": base_threshold,
+            "stoploss_confirm_hits": 0,
+            "stop_exit_price": None,
+            "stop_exit_price_source": "",
+            "stop_exit_ts": 0.0,
+            "last_stoploss_size": 0.0,
+            "reentry_line_price": None,
+            "reentry_zone_lower_price": None,
+            "probe_line_price": None,
+            "probe_seen": False,
+            "probe_seen_ts": 0.0,
+            "probe_confirm_hits": 0,
+            "rebound_confirm_hits": 0,
+            "reentry_earliest_ts": 0.0,
+            "next_stoploss_earliest_ts": 0.0,
+            "old_maker_floor_price": None,
+            "old_entry_price": None,
+            "old_last_buy_price": None,
+            "today_realized_loss_pct": 0.0,
+            "loss_date_utc": self._today_utc_date(),
+            "reentry_paused_for_day": False,
+            "source_detached": False,
+            "source_detached_since_ts": 0.0,
+            "market_status_last": "",
+            "last_price_check_ts": 0.0,
+            "last_position_seen_ts": 0.0,
+            "last_error": "",
+            "reentry_quote_missing_hits": 0,
+            "closed_final_ts": 0.0,
+            "closed_final_reason": "",
+            "pending_cleanup_since_ts": 0.0,
+        }
+
+    def _normalize_stoploss_reentry_state_record(
+        self, token_id: str, raw: Any
+    ) -> Dict[str, Any]:
+        base = self._default_stoploss_reentry_state(token_id)
+        if not isinstance(raw, dict):
+            return base
+        merged = dict(base)
+        merged.update(raw)
+        merged["token_id"] = str(token_id)
+        merged["version"] = 4
+        merged["state"] = str(merged.get("state") or "NORMAL_MAKER")
+        merged["stoploss_cycle_count"] = max(
+            0, int(_coerce_float(merged.get("stoploss_cycle_count")) or 0)
+        )
+        merged["stoploss_confirm_hits"] = max(
+            0, int(_coerce_float(merged.get("stoploss_confirm_hits")) or 0)
+        )
+        merged["probe_confirm_hits"] = max(
+            0, int(_coerce_float(merged.get("probe_confirm_hits")) or 0)
+        )
+        merged["rebound_confirm_hits"] = max(
+            0, int(_coerce_float(merged.get("rebound_confirm_hits")) or 0)
+        )
+        for key in (
+            "next_stoploss_threshold_pct",
+            "stop_exit_price",
+            "stop_exit_ts",
+            "last_stoploss_size",
+            "reentry_line_price",
+            "reentry_zone_lower_price",
+            "probe_line_price",
+            "probe_seen_ts",
+            "reentry_earliest_ts",
+            "next_stoploss_earliest_ts",
+            "old_maker_floor_price",
+            "old_entry_price",
+            "old_last_buy_price",
+            "today_realized_loss_pct",
+            "source_detached_since_ts",
+            "last_price_check_ts",
+            "last_position_seen_ts",
+            "closed_final_ts",
+            "pending_cleanup_since_ts",
+        ):
+            val = _coerce_float(merged.get(key))
+            merged[key] = float(val) if val is not None else None
+        merged["stop_exit_ts"] = max(0.0, float(merged.get("stop_exit_ts") or 0.0))
+        merged["probe_seen_ts"] = max(0.0, float(merged.get("probe_seen_ts") or 0.0))
+        merged["closed_final_ts"] = max(0.0, float(merged.get("closed_final_ts") or 0.0))
+        merged["reentry_earliest_ts"] = max(0.0, float(merged.get("reentry_earliest_ts") or 0.0))
+        merged["next_stoploss_earliest_ts"] = max(0.0, float(merged.get("next_stoploss_earliest_ts") or 0.0))
+        merged["last_stoploss_size"] = max(0.0, float(merged.get("last_stoploss_size") or 0.0))
+        merged["next_stoploss_threshold_pct"] = max(
+            0.001,
+            float(merged.get("next_stoploss_threshold_pct") or self.config.stoploss_base_drawdown_pct),
+        )
+        merged["today_realized_loss_pct"] = max(0.0, float(merged.get("today_realized_loss_pct") or 0.0))
+        merged["source_detached_since_ts"] = max(0.0, float(merged.get("source_detached_since_ts") or 0.0))
+        merged["last_position_seen_ts"] = max(0.0, float(merged.get("last_position_seen_ts") or 0.0))
+        merged["pending_cleanup_since_ts"] = max(0.0, float(merged.get("pending_cleanup_since_ts") or 0.0))
+        merged["probe_seen"] = bool(merged.get("probe_seen", False))
+        merged["reentry_paused_for_day"] = bool(merged.get("reentry_paused_for_day", False))
+        merged["source_detached"] = bool(merged.get("source_detached", False))
+        merged["loss_date_utc"] = str(merged.get("loss_date_utc") or self._today_utc_date())
+        merged["market_status_last"] = str(merged.get("market_status_last") or "")
+        merged["last_error"] = str(merged.get("last_error") or "")
+        merged["stop_exit_price_source"] = str(merged.get("stop_exit_price_source") or "")
+        merged["closed_final_reason"] = str(merged.get("closed_final_reason") or "")
+        merged["reentry_quote_missing_hits"] = max(
+            0, int(_coerce_float(merged.get("reentry_quote_missing_hits")) or 0)
+        )
+        return merged
+
+    def _load_stoploss_reentry_states(self) -> None:
+        with self._file_io_lock:
+            payload: Any = {}
+            loaded = False
+            for path in (
+                self._stoploss_reentry_state_path,
+                self._stoploss_reentry_state_backup_path,
+            ):
+                if not path.exists():
+                    continue
+                try:
+                    with path.open("r", encoding="utf-8") as f:
+                        payload = json.load(f)
+                    loaded = True
+                    break
+                except (json.JSONDecodeError, OSError):
+                    continue
+            if not loaded:
+                self._stoploss_reentry_states = {}
+                return
+            rows = payload.get("token_states") if isinstance(payload, dict) else {}
+            if not isinstance(rows, dict):
+                self._stoploss_reentry_states = {}
+                return
+            normalized: Dict[str, Dict[str, Any]] = {}
+            for token_id, raw in rows.items():
+                token = str(token_id).strip()
+                if not token:
+                    continue
+                normalized[token] = self._normalize_stoploss_reentry_state_record(token, raw)
+            self._stoploss_reentry_states = normalized
+            self._save_stoploss_reentry_states()
+
+    def _save_stoploss_reentry_states(self) -> None:
+        payload = {
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "version": 4,
+            "token_states": self._stoploss_reentry_states,
+        }
+        with self._file_io_lock:
+            for path in (self._stoploss_reentry_state_path, self._stoploss_reentry_state_backup_path):
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    _atomic_json_write(path, payload)
+                except OSError:
+                    continue
+
+    def _remove_stoploss_reentry_state(self, token_id: str) -> None:
+        self._stoploss_reentry_states.pop(str(token_id), None)
+
+    def _update_stoploss_source_detached_flags(self, copytrade_scope: set[str], *, now: float) -> bool:
+        changed = False
+        for token_id, state in self._stoploss_reentry_states.items():
+            detached = token_id not in copytrade_scope
+            prev_detached = bool(state.get("source_detached", False))
+            if prev_detached != detached:
+                state["source_detached"] = detached
+                state["source_detached_since_ts"] = float(max(now, 0.0)) if detached else 0.0
+                state["pending_cleanup_since_ts"] = 0.0
+                changed = True
+                continue
+            if detached and float(state.get("source_detached_since_ts") or 0.0) <= 0.0:
+                state["source_detached_since_ts"] = float(max(now, 0.0))
+                changed = True
+        return changed
+
+    @staticmethod
+    def _rollover_stoploss_daily_fields(state: Dict[str, Any], today: str) -> bool:
+        if str(state.get("loss_date_utc") or "") == str(today):
+            return False
+        state["loss_date_utc"] = str(today)
+        state["today_realized_loss_pct"] = 0.0
+        state["reentry_paused_for_day"] = False
+        return True
+
+    def _estimate_token_tick_size(
+        self, token_id: str, position_row: Optional[Dict[str, Any]] = None
+    ) -> float:
+        cache = self._ws_cache.get(token_id) or {}
+        for key in ("tick_size", "min_tick_size", "tickSize"):
+            val = _coerce_float(cache.get(key))
+            if val is not None and val > 0:
+                return float(val)
+        return 0.0001
+
+    def _resolve_profit_pct_for_token(self, token_id: str) -> float:
+        detail = self.topic_details.get(token_id) or {}
+        resume = detail.get("resume_state") if isinstance(detail, dict) else {}
+        value = _coerce_float((resume or {}).get("profit_pct")) if isinstance(resume, dict) else None
+        if value is not None:
+            return max(0.0, float(value))
+        return 0.01
+
+    def _estimate_reentry_buyable_price(
+        self, token_id: str, position_row: Optional[Dict[str, Any]] = None
+    ) -> Optional[float]:
+        cache = self._ws_cache.get(token_id) or {}
+        ask = _coerce_float(cache.get("best_ask"))
+        updated_at = _coerce_float(cache.get("updated_at"))
+        if ask is not None and ask > 0 and updated_at is not None and (time.time() - updated_at) <= 120.0:
+            return float(ask)
+        return None
+
+    def _stoploss_is_market_closed(self, token_id: str) -> bool:
+        data = self._ws_cache.get(token_id) or {}
+        return bool(data.get("market_closed") or data.get("is_closed") or data.get("closed"))
+
+    def _queue_reentry_task_after_buy(
+        self,
+        token_id: str,
+        *,
+        position_size: float,
+        entry_price: float,
+        hold_floor_price: Optional[float],
+        hold_profit_pct: float,
+    ) -> None:
+        detail = self.topic_details.setdefault(token_id, {})
+        detail["resume_state"] = {
+            "has_position": True,
+            "position_size": float(max(position_size, 0.0)),
+            "entry_price": float(entry_price),
+            "skip_buy": True,
+        }
+        detail["queue_role"] = "reentry_token"
+        detail["schedule_lane"] = "burst"
+        detail["stoploss_reentry_resume"] = {
+            "enabled": True,
+            "hold_floor_price": hold_floor_price,
+            "hold_profit_pct": hold_profit_pct,
+            "state": "REENTRY_HOLD",
+        }
+        self._enqueue_burst_topic(token_id, promote=True)
+
+    def _sync_reentry_hold_recovered_from_log(self, task: TopicTask) -> bool:
+        excerpt = str(task.log_excerpt or "")
+        if "[REENTRY_HOLD]" not in excerpt:
+            return False
+        token_id = str(task.topic_id or "").strip()
+        if not token_id:
+            return False
+        state = self._stoploss_reentry_states.get(token_id)
+        if not isinstance(state, dict):
+            return False
+        if str(state.get("state") or "") != "REENTRY_HOLD":
+            return False
+        state["state"] = "NORMAL_MAKER"
+        state["last_error"] = ""
+        state["market_status_last"] = "reentry_hold_recovered"
+        self._save_stoploss_reentry_states()
+        return True
 
     @staticmethod
     def _config_requires_buy_stage(run_cfg: Dict[str, Any]) -> bool:
@@ -2221,11 +2647,8 @@ class AutoRunManager:
             ws_age = float("inf")
         if ws_bid > 0 and ws_age <= 120.0:
             return ws_bid
-        cur_price = _extract_position_current_price(position_row)
-        if cur_price is not None and cur_price > 0:
-            return float(cur_price)
-        if ws_bid > 0:
-            return ws_bid
+        # Stoploss should be based on executable bid. If we do not have a fresh bid,
+        # skip this round instead of using non-executable curPrice snapshots.
         return None
 
     def _prepare_token_for_stoploss_execution(self, token_id: str) -> None:
@@ -2299,310 +2722,368 @@ class AutoRunManager:
             return
 
         try:
-            managed_scope = self._build_copytrade_active_token_set()
+            copytrade_scope = self._build_copytrade_active_token_set()
         except Exception:
-            managed_scope = set()
+            copytrade_scope = set()
+        managed_scope = set(copytrade_scope)
         managed_scope.update(self.handled_topics)
         managed_scope.update(self.tasks.keys())
         managed_scope.update(self.pending_topics)
         managed_scope.update(self.pending_burst_topics)
         managed_scope.update(self.pending_exit_topics)
-        if not managed_scope:
+        managed_scope.update(self._stoploss_reentry_states.keys())
+        if not managed_scope and not self._stoploss_reentry_states:
             return
 
         max_actions = max(1, int(getattr(self.config, "stoploss_max_tokens_per_cycle", 1)))
-        aggressive_mode = bool(self._is_aggressive_mode())
-        if aggressive_mode:
-            drawdown_threshold = max(
-                0.001,
-                float(getattr(self.config, "stoploss_aggressive_drawdown_pct", 0.05)),
-            )
-            min_age_minutes = 0.0
-            # aggressive mode keeps strict 2-round confirmation
-            confirm_rounds = 2
-            cooldown_minutes = max(
-                0.0,
-                float(
-                    getattr(
-                        self.config,
-                        "stoploss_aggressive_retry_cooldown_minutes",
-                        10.0,
-                    )
-                ),
-            )
-        else:
-            drawdown_threshold = max(
-                0.001, float(getattr(self.config, "stoploss_drawdown_pct", 0.20))
-            )
-            min_age_minutes = max(
-                0.0, float(getattr(self.config, "stoploss_min_age_minutes", 0.0))
-            )
-            confirm_rounds = max(1, int(getattr(self.config, "stoploss_confirm_rounds", 2)))
-            cooldown_minutes = max(
-                0.0,
-                float(getattr(self.config, "stoploss_second_cut_cooldown_minutes", 1440.0)),
-            )
-        first_cut_ratio = max(
-            0.0, min(1.0, float(getattr(self.config, "stoploss_first_cut_ratio", 0.5)))
-        )
-        min_maker_order_size = max(
-            0.0, float(getattr(self.config, "stoploss_min_maker_order_size", 5.0))
-        )
+        confirm_rounds = max(1, int(getattr(self.config, "stoploss_confirm_rounds", 2)))
         dust = max(float(POSITION_CLEANUP_DUST_THRESHOLD), 1e-6)
+        today = self._today_utc_date(now)
+        window_cd = max(0.0, float(self.config.stoploss_reentry_window_cooldown_minutes)) * 60.0
+        next_stoploss_cd = max(0.0, float(self.config.stoploss_next_stoploss_cooldown_minutes)) * 60.0
+        extra_reentry_cd = max(0.0, float(self.config.stoploss_reentry_extra_delay_after_5_cuts_hours)) * 3600.0
+        line_ticks = max(1, int(self.config.stoploss_reentry_line_ticks))
+        zone_lower_pct = max(0.0, float(self.config.stoploss_reentry_zone_lower_pct))
+        probe_break_pct = max(0.0, float(self.config.stoploss_probe_break_pct))
+        drawdown_step = max(0.0, float(self.config.stoploss_drawdown_step_per_cycle_pct))
+        circuit_loss = max(0.0, float(self.config.stoploss_daily_reentry_loss_circuit_breaker_pct))
 
-        state_dirty = False
-        action_count = 0
+        positions: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             token_id = _extract_position_token_id(row)
             if not token_id:
                 continue
-            if managed_scope and token_id not in managed_scope:
-                continue
             pos_size = float(_extract_position_size(row) or 0.0)
             if pos_size <= dust:
                 continue
+            positions[token_id] = row
+            managed_scope.add(token_id)
+
+        state_dirty = False
+        action_count = 0
+        if self._update_stoploss_source_detached_flags(copytrade_scope, now=now):
+            state_dirty = True
+
+        for token_id, row in positions.items():
+            if managed_scope and token_id not in managed_scope:
+                continue
+            state = self._stoploss_reentry_states.get(token_id)
+            if not isinstance(state, dict):
+                state = self._default_stoploss_reentry_state(token_id)
+                self._stoploss_reentry_states[token_id] = state
+                state_dirty = True
+            if self._rollover_stoploss_daily_fields(state, today):
+                state_dirty = True
+            state["last_price_check_ts"] = float(now)
+            state["last_position_seen_ts"] = float(now)
+
+            if self._stoploss_is_market_closed(token_id):
+                print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason=market_closed_with_position")
+                self._remove_stoploss_reentry_state(token_id)
+                state_dirty = True
+                continue
+
+            if bool(state.get("source_detached", False)):
+                state["market_status_last"] = "source_detached_local_risk_exit"
+                state["last_error"] = ""
+                state["pending_cleanup_since_ts"] = 0.0
+                try:
+                    self._trigger_sell_exit(token_id, task=self.tasks.get(token_id))
+                    print(f"[RISK_GUARD] token={token_id[:20]}... source_detached with local position -> sell_cleanup_chain")
+                except Exception:
+                    pass
+                state_dirty = True
+                continue
+
+            pos_size = float(_extract_position_size(row) or 0.0)
+            if pos_size <= dust:
+                state["stoploss_confirm_hits"] = 0
+                state_dirty = True
+                continue
             avg_price = _extract_position_avg_price(row)
             if avg_price is None or avg_price <= 0:
+                state["stoploss_confirm_hits"] = 0
+                state["last_error"] = "missing avg price"
+                state_dirty = True
                 continue
+            if float(state.get("next_stoploss_earliest_ts") or 0.0) > now:
+                state["stoploss_confirm_hits"] = 0
+                state_dirty = True
+                continue
+
             sellable_price = self._estimate_stoploss_sellable_price(token_id, row)
             if sellable_price is None or sellable_price <= 0:
+                state["stoploss_confirm_hits"] = 0
+                state["last_error"] = "sellable bid missing or stale"
+                print(f"[RISK_GUARD] token={token_id[:20]}... skip stoploss due to missing/stale executable bid")
+                state_dirty = True
                 continue
             drawdown = (float(sellable_price) / float(avg_price)) - 1.0
-
-            state = self._token_cycle_states.setdefault(token_id, {})
-            stage = str(state.get("stoploss_stage") or "none").strip().lower()
-            if stage not in {"none", "first_cut_done", "fully_cleared"}:
-                stage = "none"
-                state["stoploss_stage"] = stage
-                state_dirty = True
-            if aggressive_mode and stage == "first_cut_done":
-                stage = "none"
-                state["stoploss_stage"] = stage
-                state["stoploss_cooldown_until_ts"] = 0.0
-                state["stoploss_confirm_hits"] = 0
-                state_dirty = True
-            if stage == "fully_cleared":
-                state["stoploss_stage"] = "none"
-                stage = "none"
-                state["stoploss_confirm_hits"] = 0
-                state["stoploss_cooldown_until_ts"] = 0.0
-                state["stoploss_first_cut_ts"] = 0.0
-                state["stoploss_first_cut_drawdown"] = None
-                state["stoploss_position_opened_ts"] = now
-                state_dirty = True
-
-            opened_ts = _coerce_float(state.get("stoploss_position_opened_ts")) or 0.0
-            if opened_ts <= 0:
-                task = self.tasks.get(token_id)
-                if task and task.start_time > 0:
-                    opened_ts = float(task.start_time)
-                else:
-                    opened_ts = now
-                state["stoploss_position_opened_ts"] = opened_ts
-                state_dirty = True
-            age_minutes = max(0.0, (now - opened_ts) / 60.0)
-            if age_minutes < min_age_minutes:
-                if int(state.get("stoploss_confirm_hits", 0) or 0) != 0:
-                    state["stoploss_confirm_hits"] = 0
-                    state_dirty = True
-                continue
-            if aggressive_mode:
-                cooldown_until = _coerce_float(state.get("stoploss_cooldown_until_ts")) or 0.0
-                if cooldown_until > now:
-                    if int(state.get("stoploss_confirm_hits", 0) or 0) != 0:
-                        state["stoploss_confirm_hits"] = 0
-                        state_dirty = True
-                    continue
-
-            if drawdown > -drawdown_threshold:
-                if int(state.get("stoploss_confirm_hits", 0) or 0) != 0:
+            threshold = max(0.001, float(state.get("next_stoploss_threshold_pct") or self.config.stoploss_base_drawdown_pct))
+            if drawdown > -threshold:
+                if int(state.get("stoploss_confirm_hits") or 0) != 0:
                     state["stoploss_confirm_hits"] = 0
                     state_dirty = True
                 continue
 
-            hits = int(state.get("stoploss_confirm_hits", 0) or 0) + 1
+            hits = int(state.get("stoploss_confirm_hits") or 0) + 1
             state["stoploss_confirm_hits"] = hits
             state_dirty = True
             if hits < confirm_rounds:
                 continue
-
             if action_count >= max_actions:
                 break
             action_count += 1
 
             self._prepare_token_for_stoploss_execution(token_id)
-            if aggressive_mode:
-                liq = self._total_liquidation.liquidate_single_token_taker(
-                    self,
-                    token_id,
-                    target_size=pos_size,
-                    reason="stoploss_aggressive_full_clear",
-                )
-                liq_after = _coerce_float(liq.get("after_size"))
-                liq_before = _coerce_float(liq.get("before_size"))
-                after_size = max(0.0, liq_after if liq_after is not None else pos_size)
-                before_size = max(0.0, liq_before if liq_before is not None else pos_size)
-                if after_size > dust:
-                    state["stoploss_stage"] = "none"
-                    state["stoploss_confirm_hits"] = 0
-                    state["stoploss_last_action_ts"] = now
-                    state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
-                    state_dirty = True
-                    print(
-                        f"[STOPLOSS][WARN] aggressive_full_clear 鏈畬鎴?token={token_id[:20]}... "
-                        f"remain={after_size:.4f}锛岃繘鍏ュ喎鍗村悗閲嶈瘯"
-                    )
-                    continue
-                self._finalize_stoploss_full_clear(
-                    token_id,
-                    state,
-                    drawdown=drawdown,
-                    now=now,
-                    before_size=before_size,
-                    after_size=after_size,
-                    source="aggressive_single_cut",
-                )
-                state_dirty = True
-                print(
-                    f"[STOPLOSS] aggressive_full_clear token={token_id[:20]}... "
-                    f"drawdown={drawdown:.2%} before={before_size:.4f} after={after_size:.4f}"
-                )
-                continue
-            if stage == "none":
-                force_full_clear = (
-                    first_cut_ratio <= 0.0
-                    or first_cut_ratio >= 1.0
-                    or (pos_size * max(0.0, 1.0 - first_cut_ratio) < min_maker_order_size)
-                )
-                target_size = pos_size if force_full_clear else pos_size * first_cut_ratio
-                liq = self._total_liquidation.liquidate_single_token_taker(
-                    self,
-                    token_id,
-                    target_size=target_size,
-                    reason="stoploss_first_cut",
-                )
-                liq_after = _coerce_float(liq.get("after_size"))
-                liq_before = _coerce_float(liq.get("before_size"))
-                after_size = max(0.0, liq_after if liq_after is not None else pos_size)
-                before_size = max(0.0, liq_before if liq_before is not None else pos_size)
-                if (
-                    (not force_full_clear)
-                    and after_size > dust
-                    and after_size < min_maker_order_size
-                ):
-                    liq2 = self._total_liquidation.liquidate_single_token_taker(
-                        self,
-                        token_id,
-                        target_size=after_size,
-                        reason="stoploss_upgrade_full_clear_for_min_size",
-                    )
-                    liq2_after = _coerce_float(liq2.get("after_size"))
-                    after_size = max(0.0, liq2_after if liq2_after is not None else after_size)
-                    force_full_clear = True
-
-                if force_full_clear or after_size <= dust:
-                    if after_size > dust:
-                        state["stoploss_stage"] = "first_cut_done"
-                        state["stoploss_confirm_hits"] = 0
-                        state["stoploss_last_action_ts"] = now
-                        state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
-                        state_dirty = True
-                        print(
-                            f"[STOPLOSS][WARN] full_clear 未完成 token={token_id[:20]}... "
-                            f"remain={after_size:.4f}，保留冷却后重试"
-                        )
-                        continue
-                    self._finalize_stoploss_full_clear(
-                        token_id,
-                        state,
-                        drawdown=drawdown,
-                        now=now,
-                        before_size=before_size,
-                        after_size=after_size,
-                        source="first_cut_upgraded_or_full",
-                    )
-                    state_dirty = True
-                    print(
-                        f"[STOPLOSS] full_clear token={token_id[:20]}... "
-                        f"drawdown={drawdown:.2%} before={before_size:.4f} after={after_size:.4f}"
-                    )
-                    continue
-
-                state["stoploss_stage"] = "first_cut_done"
-                state["stoploss_first_cut_ts"] = now
-                state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
-                state["stoploss_first_cut_drawdown"] = drawdown
-                state["stoploss_last_action_ts"] = now
-                state["stoploss_confirm_hits"] = 0
-                self._append_exit_token_record(
-                    token_id,
-                    "STOPLOSS_FIRST_CUT",
-                    exit_data={
-                        "drawdown": drawdown,
-                        "before_size": before_size,
-                        "after_size": after_size,
-                        "cooldown_minutes": cooldown_minutes,
-                    },
-                    refillable=True,
-                )
-                print(
-                    f"[STOPLOSS] first_cut token={token_id[:20]}... drawdown={drawdown:.2%} "
-                    f"before={before_size:.4f} after={after_size:.4f} cooldown={cooldown_minutes:.1f}m"
-                )
-                state_dirty = True
-                continue
-
-            cooldown_until = _coerce_float(state.get("stoploss_cooldown_until_ts")) or 0.0
-            if cooldown_until > now:
-                continue
             liq = self._total_liquidation.liquidate_single_token_taker(
                 self,
                 token_id,
                 target_size=pos_size,
-                reason="stoploss_second_cut_full_clear",
+                reason="stoploss_v4_full_clear",
             )
             liq_after = _coerce_float(liq.get("after_size"))
             liq_before = _coerce_float(liq.get("before_size"))
             after_size = max(0.0, liq_after if liq_after is not None else pos_size)
             before_size = max(0.0, liq_before if liq_before is not None else pos_size)
             if after_size > dust:
-                liq2 = self._total_liquidation.liquidate_single_token_taker(
-                    self,
-                    token_id,
-                    target_size=after_size,
-                    reason="stoploss_second_cut_retry",
-                )
-                liq2_after = _coerce_float(liq2.get("after_size"))
-                after_size = max(0.0, liq2_after if liq2_after is not None else after_size)
-            if after_size > dust:
-                state["stoploss_stage"] = "first_cut_done"
                 state["stoploss_confirm_hits"] = 0
-                state["stoploss_last_action_ts"] = now
-                state["stoploss_cooldown_until_ts"] = now + cooldown_minutes * 60.0
+                state["last_error"] = f"stoploss clear incomplete remain={after_size:.4f}"
                 state_dirty = True
-                print(
-                    f"[STOPLOSS][WARN] second_cut 全清未完成 token={token_id[:20]}... "
-                    f"remain={after_size:.4f}，进入冷却后重试"
-                )
                 continue
-            self._finalize_stoploss_full_clear(
+
+            exec_price = _coerce_float(liq.get("executed_avg_price"))
+            if exec_price is None or exec_price <= 0:
+                exec_price = _coerce_float(liq.get("executed_price"))
+            if exec_price is None or exec_price <= 0:
+                exec_price = max(0.0, float(sellable_price) * (1.0 - 0.003))
+                exec_source = "bid_buffer_fallback"
+            else:
+                exec_source = str(liq.get("executed_price_source") or "response_fill")
+            tick = self._estimate_token_tick_size(token_id, row)
+            reentry_line = max(0.0, float(exec_price) - float(line_ticks) * float(tick))
+            zone_lower = max(0.0, float(exec_price) * (1.0 - zone_lower_pct))
+            if zone_lower > reentry_line:
+                zone_lower = reentry_line
+            probe_line = max(0.0, reentry_line * (1.0 - probe_break_pct))
+            cycle_count = int(state.get("stoploss_cycle_count") or 0) + 1
+            extra_wait = extra_reentry_cd if cycle_count >= 5 else 0.0
+
+            state["state"] = "STOPLOSS_EXITED_WAITING_WINDOW"
+            state["stoploss_cycle_count"] = cycle_count
+            state["next_stoploss_threshold_pct"] = max(
+                0.001, float(self.config.stoploss_base_drawdown_pct) + float(drawdown_step) * float(cycle_count)
+            )
+            state["stoploss_confirm_hits"] = 0
+            state["stop_exit_price"] = float(exec_price)
+            state["stop_exit_price_source"] = exec_source
+            state["stop_exit_ts"] = float(now)
+            state["last_stoploss_size"] = float(max(before_size, pos_size))
+            state["reentry_line_price"] = float(reentry_line)
+            state["reentry_zone_lower_price"] = float(zone_lower)
+            state["probe_line_price"] = float(probe_line)
+            state["probe_seen"] = False
+            state["probe_seen_ts"] = 0.0
+            state["probe_confirm_hits"] = 0
+            state["rebound_confirm_hits"] = 0
+            state["reentry_earliest_ts"] = float(now + window_cd + extra_wait)
+            state["next_stoploss_earliest_ts"] = float(now)
+            state["old_entry_price"] = float(avg_price)
+            state["old_last_buy_price"] = float(avg_price)
+            state["old_maker_floor_price"] = _coerce_float((self.topic_details.get(token_id) or {}).get("floor_price"))
+            state["market_status_last"] = "stoploss_exited"
+            state["last_error"] = ""
+            state["reentry_quote_missing_hits"] = 0
+            state["pending_cleanup_since_ts"] = 0.0
+            realized_loss = max(0.0, -drawdown)
+            state["today_realized_loss_pct"] = float(state.get("today_realized_loss_pct") or 0.0) + realized_loss
+            if state["today_realized_loss_pct"] >= circuit_loss > 0:
+                state["reentry_paused_for_day"] = True
+                state["market_status_last"] = "reentry_paused_for_day"
+            self._append_exit_token_record(
                 token_id,
-                state,
-                drawdown=drawdown,
-                now=now,
-                before_size=before_size,
-                after_size=after_size,
-                source="second_cut",
+                "STOPLOSS_FULL_CLEAR",
+                exit_data={
+                    "source": "stoploss_v4",
+                    "drawdown": drawdown,
+                    "before_size": before_size,
+                    "after_size": after_size,
+                },
+                refillable=False,
+            )
+            print(
+                f"[STOPLOSS] token={token_id[:20]}... drawdown={drawdown:.2%} "
+                f"exit={float(exec_price):.6f} line={reentry_line:.6f} probe={probe_line:.6f} "
+                f"state=STOPLOSS_EXITED_WAITING_WINDOW"
             )
             state_dirty = True
-            print(
-                f"[STOPLOSS] second_cut_full_clear token={token_id[:20]}... "
-                f"drawdown={drawdown:.2%} before={before_size:.4f} after={after_size:.4f}"
+
+        for token_id in list(self._stoploss_reentry_states.keys()):
+            if token_id in positions:
+                continue
+            state = self._stoploss_reentry_states.get(token_id)
+            if not isinstance(state, dict):
+                continue
+            if self._rollover_stoploss_daily_fields(state, today):
+                state_dirty = True
+            if self._stoploss_is_market_closed(token_id):
+                print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason=market_closed_no_position")
+                self._remove_stoploss_reentry_state(token_id)
+                state_dirty = True
+                continue
+
+            if bool(state.get("source_detached", False)):
+                first_seen = float(state.get("pending_cleanup_since_ts") or 0.0)
+                if first_seen <= 0.0:
+                    state["pending_cleanup_since_ts"] = float(now)
+                    state_dirty = True
+                    continue
+                if (now - first_seen) >= max(1.0, float(self.config.stoploss_check_interval_sec)):
+                    print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason=detached_no_position_delayed_cleanup")
+                    self._remove_stoploss_reentry_state(token_id)
+                    state_dirty = True
+                continue
+            state["pending_cleanup_since_ts"] = 0.0
+
+            if bool(state.get("reentry_paused_for_day", False)):
+                state["market_status_last"] = "reentry_paused_for_day"
+                print(f"[RISK_GUARD] token={token_id[:20]}... reentry paused for day")
+                state_dirty = True
+                continue
+
+            recent_seen = float(state.get("last_position_seen_ts") or 0.0)
+            jitter_grace = max(1.0, float(self.config.stoploss_check_interval_sec)) * 2.0
+            if recent_seen > 0.0 and (now - recent_seen) <= jitter_grace:
+                state["last_error"] = "position snapshot jitter guard"
+                print(
+                    f"[RISK_GUARD] token={token_id[:20]}... hold no-position transition "
+                    f"(recent_position_seen={now - recent_seen:.1f}s <= grace={jitter_grace:.1f}s)"
+                )
+                state_dirty = True
+                continue
+
+            state_name = str(state.get("state") or "NORMAL_MAKER")
+            if state_name == "STOPLOSS_EXITED_WAITING_WINDOW":
+                if float(state.get("reentry_earliest_ts") or 0.0) <= now:
+                    state["state"] = "STOPLOSS_EXITED_WAITING_PROBE"
+                    state["probe_confirm_hits"] = 0
+                    state["rebound_confirm_hits"] = 0
+                    state["last_error"] = ""
+                    print(f"[STATE_SYNC] token={token_id[:20]}... WAITING_WINDOW -> WAITING_PROBE")
+                    state_dirty = True
+                    state_name = "STOPLOSS_EXITED_WAITING_PROBE"
+                else:
+                    continue
+
+            if state_name not in {"STOPLOSS_EXITED_WAITING_PROBE", "STOPLOSS_EXITED_WAITING_REBOUND"}:
+                continue
+
+            quote = self._estimate_reentry_buyable_price(token_id, None)
+            if quote is None or quote <= 0:
+                state["reentry_quote_missing_hits"] = int(state.get("reentry_quote_missing_hits") or 0) + 1
+                state["probe_confirm_hits"] = 0
+                state["rebound_confirm_hits"] = 0
+                state["last_error"] = "ask missing or stale"
+                print(f"[RISK_GUARD] token={token_id[:20]}... skip reentry due to ask missing/stale")
+                state_dirty = True
+                continue
+            state["last_price_check_ts"] = float(now)
+            state["reentry_quote_missing_hits"] = 0
+            state["last_error"] = ""
+            probe_line = float(state.get("probe_line_price") or 0.0)
+            zone_lower = float(state.get("reentry_zone_lower_price") or 0.0)
+            zone_upper = float(state.get("reentry_line_price") or 0.0)
+
+            if state_name == "STOPLOSS_EXITED_WAITING_PROBE":
+                if probe_line > 0 and quote <= probe_line + 1e-12:
+                    hits = int(state.get("probe_confirm_hits") or 0) + 1
+                    state["probe_confirm_hits"] = hits
+                    print(f"[REENTRY_PROBE] token={token_id[:20]}... hit={hits}/{confirm_rounds} price={quote:.6f} line={probe_line:.6f}")
+                    if hits >= confirm_rounds:
+                        state["probe_seen"] = True
+                        state["probe_seen_ts"] = float(now)
+                        state["state"] = "STOPLOSS_EXITED_WAITING_REBOUND"
+                        state["probe_confirm_hits"] = 0
+                        state["rebound_confirm_hits"] = 0
+                        print(f"[STATE_SYNC] token={token_id[:20]}... WAITING_PROBE -> WAITING_REBOUND")
+                    state_dirty = True
+                else:
+                    if int(state.get("probe_confirm_hits") or 0) != 0:
+                        state["probe_confirm_hits"] = 0
+                        state_dirty = True
+                continue
+
+            in_zone = (zone_lower > 0 and zone_upper > 0 and zone_lower - 1e-12 <= quote <= zone_upper + 1e-12)
+            if not in_zone:
+                if int(state.get("rebound_confirm_hits") or 0) != 0:
+                    state["rebound_confirm_hits"] = 0
+                    state_dirty = True
+                continue
+            hits = int(state.get("rebound_confirm_hits") or 0) + 1
+            state["rebound_confirm_hits"] = hits
+            print(f"[REENTRY_REBOUND] token={token_id[:20]}... hit={hits}/{confirm_rounds} price={quote:.6f} zone=[{zone_lower:.6f},{zone_upper:.6f}]")
+            state_dirty = True
+            if hits < confirm_rounds:
+                continue
+
+            target_size = max(0.0, float(state.get("last_stoploss_size") or 0.0))
+            if target_size <= dust:
+                state["rebound_confirm_hits"] = 0
+                state["last_error"] = "invalid reentry target size"
+                print(f"[RISK_GUARD] token={token_id[:20]}... invalid reentry target size={target_size:.6f}")
+                state_dirty = True
+                continue
+            reentry_line = float(state.get("reentry_line_price") or 0.0)
+            reenter = self._total_liquidation.reenter_single_token_taker(
+                self,
+                token_id,
+                target_size=target_size,
+                reference_buy_price=reentry_line if reentry_line > 0 else None,
+                reason="stoploss_v4_reentry",
             )
+            after_size = max(0.0, float(_coerce_float(reenter.get("after_size")) or 0.0))
+            if (not bool(reenter.get("ok"))) or after_size <= dust:
+                state["rebound_confirm_hits"] = 0
+                state["last_error"] = str(reenter.get("error") or "reentry failed")
+                print(f"[REENTRY_EXEC] token={token_id[:20]}... failed error={state['last_error']}")
+                state_dirty = True
+                continue
+
+            exec_buy = _coerce_float(reenter.get("executed_avg_price"))
+            if exec_buy is None or exec_buy <= 0:
+                exec_buy = quote
+            if reentry_line > 0 and float(exec_buy) > reentry_line + 1e-12:
+                state["rebound_confirm_hits"] = 0
+                state["last_error"] = f"reentry price above line buy={float(exec_buy):.6f} line={reentry_line:.6f}"
+                print(f"[RISK_GUARD] token={token_id[:20]}... {state['last_error']}")
+                state_dirty = True
+                continue
+
+            hold_floor = _coerce_float(state.get("old_maker_floor_price"))
+            hold_profit = self._resolve_profit_pct_for_token(token_id)
+            self._queue_reentry_task_after_buy(
+                token_id,
+                position_size=after_size,
+                entry_price=float(exec_buy),
+                hold_floor_price=hold_floor if hold_floor is not None and hold_floor > 0 else None,
+                hold_profit_pct=hold_profit,
+            )
+            state["state"] = "REENTRY_HOLD"
+            state["market_status_last"] = "reentry_done"
+            state["probe_seen"] = False
+            state["probe_confirm_hits"] = 0
+            state["rebound_confirm_hits"] = 0
+            state["next_stoploss_earliest_ts"] = float(now + next_stoploss_cd)
+            state["last_error"] = ""
+            print(
+                f"[REENTRY_EXEC] token={token_id[:20]}... success buy={float(exec_buy):.6f} "
+                f"size={after_size:.4f} state=REENTRY_HOLD next_stoploss_in={next_stoploss_cd:.0f}s"
+            )
+            state_dirty = True
 
         if state_dirty:
-            self._save_token_cycle_states()
-
+            self._save_stoploss_reentry_states()
+            print("[STATE_SYNC] stoploss/reentry states persisted")
     @staticmethod
     def _parse_title_blacklist_settings(config_payload: Dict[str, Any]) -> tuple[bool, List[str], bool, str]:
         scheduler = (
@@ -4254,6 +4735,10 @@ class AutoRunManager:
             task.status = "exited" if rc == 0 else "error"
         task.heartbeat(f"process finished rc={rc}")
         self._update_log_excerpt(task)
+        # Force one immediate refresh to avoid interval gating hiding the latest REENTRY_HOLD marker.
+        task.last_log_excerpt_ts = 0.0
+        self._update_log_excerpt(task, max_bytes=8192)
+        self._sync_reentry_hold_recovered_from_log(task)
 
         # 如果是因 sell signal 退出（包括运行中收到信号和 exit-only cleanup），
         # 仅在子进程退出码为 0 时标记“清仓完成”；
@@ -8160,3 +8645,4 @@ def main(argv: Optional[List[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
+
