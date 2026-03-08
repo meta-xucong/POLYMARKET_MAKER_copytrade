@@ -2824,9 +2824,19 @@ class AutoRunManager:
         self._stoploss_quote_cycle_cache = {}
 
         try:
-            copytrade_scope = self._build_copytrade_active_token_set()
+            copytrade_token_scope = {
+                token_id
+                for item in self._load_copytrade_tokens()
+                if (token_id := _topic_id_from_entry(item))
+            }
         except Exception:
-            copytrade_scope = set()
+            copytrade_token_scope = set()
+        try:
+            copytrade_sell_signal_scope = set(self._load_copytrade_sell_signals().keys())
+        except Exception:
+            copytrade_sell_signal_scope = set()
+        copytrade_scope = set(copytrade_token_scope)
+        copytrade_scope.update(copytrade_sell_signal_scope)
         managed_scope = set(copytrade_scope)
         managed_scope.update(self.handled_topics)
         managed_scope.update(self.tasks.keys())
@@ -3071,6 +3081,29 @@ class AutoRunManager:
                 state_dirty = True
                 continue
 
+            state_name = str(state.get("state") or "NORMAL_MAKER")
+            if state_name in {
+                "STOPLOSS_EXITED_WAITING_WINDOW",
+                "STOPLOSS_EXITED_WAITING_PROBE",
+                "STOPLOSS_EXITED_WAITING_REBOUND",
+            }:
+                has_sell_signal = token_id in copytrade_sell_signal_scope
+                not_in_follow_list = token_id not in copytrade_token_scope
+                if has_sell_signal or not_in_follow_list:
+                    reason = "target_sell_signal_while_waiting_reentry" if has_sell_signal else "target_not_following_while_waiting_reentry"
+                    print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason={reason}")
+                    self._remove_stoploss_reentry_state(token_id)
+                    state_dirty = True
+                    if has_sell_signal:
+                        self._remove_token_from_copytrade_files(token_id)
+                        self._handled_sell_signals.discard(token_id)
+                        self._update_sell_signal_event(
+                            token_id,
+                            status="processed",
+                            note="skip_reentry_after_target_sell",
+                        )
+                    continue
+
             if bool(state.get("source_detached", False)):
                 first_seen = float(state.get("pending_cleanup_since_ts") or 0.0)
                 if first_seen <= 0.0:
@@ -3101,7 +3134,6 @@ class AutoRunManager:
                 state_dirty = True
                 continue
 
-            state_name = str(state.get("state") or "NORMAL_MAKER")
             if state_name == "STOPLOSS_EXITED_WAITING_WINDOW":
                 if float(state.get("reentry_earliest_ts") or 0.0) <= now:
                     state["state"] = "STOPLOSS_EXITED_WAITING_PROBE"
@@ -3348,6 +3380,72 @@ class AutoRunManager:
             )
         _atomic_json_write(path, {"updated_at": now_iso, "tokens": out})
 
+    def _set_follow_cooldown_token(self, token_id: str, *, cooldown_seconds: float = 24.0 * 3600.0) -> None:
+        if not token_id:
+            return
+        path = self._manual_intervention_path()
+        payload = _load_json_file(path)
+        rows = payload.get("tokens") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            rows = []
+        now_ts = time.time()
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_ts))
+        until_ts = float(now_ts + max(0.0, float(cooldown_seconds)))
+        out: List[Dict[str, Any]] = []
+        matched = False
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            tid = str(item.get("token_id") or item.get("tokenId") or "").strip()
+            if tid == token_id:
+                item = dict(item)
+                item["token_id"] = token_id
+                item["follow_cooldown_until_ts"] = until_ts
+                item["updated_at"] = now_iso
+                matched = True
+            out.append(item)
+        if not matched:
+            out.append(
+                {
+                    "token_id": token_id,
+                    "follow_cooldown_until_ts": until_ts,
+                    "updated_at": now_iso,
+                    "reason": "FOLLOW_SELL_COOLDOWN",
+                }
+            )
+        _atomic_json_write(path, {"updated_at": now_iso, "tokens": out})
+
+    def _load_active_follow_cooldown_map(self, *, now: Optional[float] = None) -> Dict[str, float]:
+        path = self._manual_intervention_path()
+        if not path.exists():
+            return {}
+        ts_now = float(now if now is not None else time.time())
+        payload = _load_json_file(path)
+        rows = payload.get("tokens") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            return {}
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts_now))
+        out: List[Dict[str, Any]] = []
+        active: Dict[str, float] = {}
+        changed = False
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            item_copy = dict(item)
+            token_id = str(item_copy.get("token_id") or item_copy.get("tokenId") or "").strip()
+            if token_id:
+                cooldown_until_ts = _coerce_float(item_copy.get("follow_cooldown_until_ts"))
+                if cooldown_until_ts is not None and cooldown_until_ts > ts_now:
+                    active[token_id] = float(cooldown_until_ts)
+                elif "follow_cooldown_until_ts" in item_copy:
+                    item_copy.pop("follow_cooldown_until_ts", None)
+                    item_copy["updated_at"] = now_iso
+                    changed = True
+            out.append(item_copy)
+        if changed:
+            _atomic_json_write(path, {"updated_at": now_iso, "tokens": out})
+        return active
+
     def _clear_manual_intervention_token(self, token_id: str) -> None:
         if not token_id:
             return
@@ -3358,13 +3456,32 @@ class AutoRunManager:
         rows = payload.get("tokens") if isinstance(payload, dict) else []
         if not isinstance(rows, list):
             return
-        kept = [
-            item
-            for item in rows
-            if isinstance(item, dict)
-            and str(item.get("token_id") or item.get("tokenId") or "").strip() != token_id
-        ]
-        if len(kept) == len(rows):
+        kept: List[Dict[str, Any]] = []
+        changed = False
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            tid = str(item.get("token_id") or item.get("tokenId") or "").strip()
+            if tid != token_id:
+                kept.append(item)
+                continue
+            item_copy = dict(item)
+            had_retry_fields = any(
+                key in item_copy for key in ("retry_count", "last_rc", "reason")
+            )
+            item_copy.pop("retry_count", None)
+            item_copy.pop("last_rc", None)
+            if str(item_copy.get("reason") or "").strip().upper() == "EXIT_CLEANUP_MAX_RETRIES":
+                item_copy.pop("reason", None)
+            cooldown_until_ts = _coerce_float(item_copy.get("follow_cooldown_until_ts"))
+            if cooldown_until_ts is not None and cooldown_until_ts > time.time():
+                if had_retry_fields:
+                    item_copy["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    changed = True
+                kept.append(item_copy)
+            else:
+                changed = True
+        if not changed:
             return
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         _atomic_json_write(path, {"updated_at": now_iso, "tokens": kept})
@@ -4902,6 +5019,7 @@ class AutoRunManager:
                     attempts=0,
                     note="exit_cleanup_success",
                 )
+                self._set_follow_cooldown_token(task.topic_id, cooldown_seconds=24.0 * 3600.0)
                 self._clear_manual_intervention_token(task.topic_id)
             else:
                 self._append_exit_token_record(
@@ -7823,6 +7941,8 @@ class AutoRunManager:
             return []
         topics: List[Dict[str, Any]] = []
         skipped_not_buy = 0
+        skipped_follow_cooldown = 0
+        follow_cooldown_map = self._load_active_follow_cooldown_map()
         for item in raw_tokens:
             if not isinstance(item, dict):
                 continue
@@ -7831,6 +7951,11 @@ class AutoRunManager:
                 continue
             token_id = item.get("token_id") or item.get("tokenId")
             if not token_id:
+                continue
+            token_id_str = str(token_id)
+            cooldown_until_ts = _coerce_float(follow_cooldown_map.get(token_id_str))
+            if cooldown_until_ts is not None and cooldown_until_ts > time.time():
+                skipped_follow_cooldown += 1
                 continue
             market_slug = item.get("market_slug") or item.get("slug")
             market_title = (
@@ -7841,8 +7966,8 @@ class AutoRunManager:
             )
             topics.append(
                 {
-                    "topic_id": str(token_id),
-                    "token_id": str(token_id),
+                    "topic_id": token_id_str,
+                    "token_id": token_id_str,
                     "slug": market_slug,
                     "title": market_title,
                     "last_seen": item.get("last_seen"),
@@ -7851,6 +7976,8 @@ class AutoRunManager:
         print(f"[COPYTRADE] 已读取 token {len(topics)} 条 | {path}")
         if skipped_not_buy:
             print(f"[COPYTRADE] 已跳过非BUY引入 token {skipped_not_buy} 条")
+        if skipped_follow_cooldown:
+            print(f"[COPYTRADE] 已跳过冷却中 token {skipped_follow_cooldown} 条")
         return topics
 
     def _load_copytrade_sell_signals(self) -> Dict[str, Dict[str, Any]]:

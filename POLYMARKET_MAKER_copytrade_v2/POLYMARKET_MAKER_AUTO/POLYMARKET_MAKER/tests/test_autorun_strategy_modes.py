@@ -1402,6 +1402,53 @@ def test_load_copytrade_tokens_skips_non_buy_introduced(tmp_path):
     assert [t["topic_id"] for t in topics] == ["buy_token"]
 
 
+def test_load_copytrade_tokens_skips_follow_cooldown_token(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+    manual_path = copytrade_dir / "manual_intervention_tokens.json"
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [
+                    {"token_id": "cooldown_token", "introduced_by_buy": True},
+                    {"token_id": "normal_token", "introduced_by_buy": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sell_path.write_text(json.dumps({"updated_at": "", "sell_tokens": []}), encoding="utf-8")
+    manual_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [
+                    {
+                        "token_id": "cooldown_token",
+                        "follow_cooldown_until_ts": time.time() + 3600.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+
+    topics = manager._load_copytrade_tokens()
+
+    assert [t["topic_id"] for t in topics] == ["normal_token"]
+
+
 def test_apply_sell_signals_requires_position_even_with_history(tmp_path):
     cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
     manager = _build_manager(cfg)
@@ -1606,7 +1653,8 @@ def test_reentry_requires_probe_then_rebound_zone(tmp_path):
 
 def test_detached_state_without_position_is_cleaned(tmp_path):
     manager = _build_stoploss_manager(tmp_path)
-    manager._build_copytrade_active_token_set = lambda: set()  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: []  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
     now = time.time()
     manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
         "t1",
@@ -1621,7 +1669,6 @@ def test_detached_state_without_position_is_cleaned(tmp_path):
     autorun_mod._fetch_position_rows_from_data_api = lambda address: ([], "ok")  # type: ignore[assignment]
     try:
         manager._run_stoploss_check(now)
-        assert "t1" in manager._stoploss_reentry_states
         manager._run_stoploss_check(now + float(manager.config.stoploss_check_interval_sec) + 1.0)
     finally:
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
@@ -1838,10 +1885,54 @@ def test_process_exit_forces_log_refresh_for_reentry_hold_recovery(tmp_path):
     assert manager._stoploss_reentry_states["t1"]["state"] == "NORMAL_MAKER"
 
 
+def test_process_exit_sell_cleanup_success_sets_follow_cooldown(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+    sell_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "sell_tokens": [
+                    {"token_id": "t1", "introduced_by_buy": True, "status": "pending"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    tokens_path.write_text(
+        json.dumps({"updated_at": "", "tokens": []}),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    task = TopicTask(topic_id="t1")
+    task.end_reason = "sell signal cleanup"
+    task.no_restart = True
+
+    manager._handle_process_exit(task, 0)
+
+    payload = json.loads((copytrade_dir / "manual_intervention_tokens.json").read_text(encoding="utf-8"))
+    rows = payload.get("tokens") or []
+    row = next((x for x in rows if str(x.get("token_id")) == "t1"), None)
+    assert isinstance(row, dict)
+    cooldown_until = float(row.get("follow_cooldown_until_ts") or 0.0)
+    assert cooldown_until > time.time() + 23 * 3600.0
+
+
 def test_source_detached_with_position_is_guard_held_without_forced_sell(tmp_path):
     manager = _build_stoploss_manager(tmp_path)
     now = time.time()
-    manager._build_copytrade_active_token_set = lambda: set()  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: []  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
     manager._ws_cache["t1"] = {"best_bid": 0.9, "updated_at": now}
     manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
         "t1",
