@@ -2913,6 +2913,44 @@ class AutoRunManager:
                         ),
                     )
                 elif not cleanup_started:
+                    # Detached one-time cleanup honors global liquidation value threshold:
+                    # skip cleanup for tiny positions below configured minimum notional value.
+                    threshold = max(
+                        0.0,
+                        float(
+                            getattr(
+                                getattr(self._total_liquidation, "cfg", None),
+                                "position_value_threshold",
+                                0.0,
+                            )
+                            or 0.0
+                        ),
+                    )
+                    if threshold > 0.0:
+                        value_price = self._estimate_stoploss_sellable_price(token_id, row)
+                        if value_price is None or value_price <= 0:
+                            value_price = _extract_position_current_price(row)
+                        est_value = (
+                            float(pos_size) * float(value_price)
+                            if value_price is not None and value_price > 0
+                            else None
+                        )
+                        if est_value is not None and est_value < threshold:
+                            state["market_status_last"] = "source_detached_timeout_value_below_threshold"
+                            state["last_error"] = (
+                                f"source_detached value_below_threshold "
+                                f"value={est_value:.4f} threshold={threshold:.4f}"
+                            )
+                            self._log_throttled(
+                                f"stoploss_source_detached_value_skip_{token_id}",
+                                180.0,
+                                (
+                                    f"[RISK_GUARD] token={token_id[:20]}... source_detached timeout skip cleanup "
+                                    f"value={est_value:.4f} < threshold={threshold:.4f}"
+                                ),
+                            )
+                            state_dirty = True
+                            continue
                     triggered = self._trigger_sell_exit(
                         token_id,
                         self.tasks.get(token_id),

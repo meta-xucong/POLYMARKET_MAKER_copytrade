@@ -2002,3 +2002,69 @@ def test_source_detached_with_position_is_guard_held_without_forced_sell(tmp_pat
     assert state.get("market_status_last") == "source_detached_guard_hold"
     assert liq_calls == []
     assert sell_calls == []
+
+
+def test_source_detached_timeout_skips_cleanup_below_value_threshold(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._load_copytrade_tokens = lambda: []  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._ws_cache["t1"] = {"best_bid": 0.2, "updated_at": now}
+    manager._total_liquidation.cfg.position_value_threshold = 3.0  # type: ignore[attr-defined]
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "NORMAL_MAKER",
+            "source_detached": True,
+            "source_detached_since_ts": now - 1800.0,
+            "source_detached_cleanup_started": False,
+        },
+    )
+    sell_calls = []
+    manager._trigger_sell_exit = lambda token_id, task=None, **kwargs: sell_calls.append((token_id, task, kwargs)) or True  # type: ignore[assignment]
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 5.0, "avgPrice": 1.0, "curPrice": 0.2}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state.get("market_status_last") == "source_detached_timeout_value_below_threshold"
+    assert bool(state.get("source_detached_cleanup_started", False)) is False
+    assert sell_calls == []
+
+
+def test_source_detached_timeout_triggers_cleanup_above_value_threshold(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._load_copytrade_tokens = lambda: []  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._ws_cache["t1"] = {"best_bid": 0.8, "updated_at": now}
+    manager._total_liquidation.cfg.position_value_threshold = 3.0  # type: ignore[attr-defined]
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "NORMAL_MAKER",
+            "source_detached": True,
+            "source_detached_since_ts": now - 1800.0,
+            "source_detached_cleanup_started": False,
+        },
+    )
+    sell_calls = []
+    manager._trigger_sell_exit = lambda token_id, task=None, **kwargs: sell_calls.append((token_id, task, kwargs)) or True  # type: ignore[assignment]
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 5.0, "avgPrice": 1.0, "curPrice": 0.8}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state.get("market_status_last") == "source_detached_timeout_cleanup_started"
+    assert bool(state.get("source_detached_cleanup_started", False)) is True
+    assert len(sell_calls) == 1
