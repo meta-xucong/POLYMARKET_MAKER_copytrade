@@ -39,8 +39,6 @@
 | `profit_pct` | 止盈阈值。 | 比例浮点 | 如 `0.005~0.05`。 |
 | `enable_incremental_drop_pct` | 卖出后是否提高下次抄底阈值。 | 布尔 | 建议与下一项配套。 |
 | `incremental_drop_pct_step` | 阈值递增步长。 | 比例浮点 | 如 `0.0002`。 |
-| `stagnation_window_minutes` | 停滞判定窗口（分钟）。 | 浮点 | `<=0` 表示禁用。 |
-| `stagnation_pct` | 停滞波动阈值。 | 比例浮点 | 如 `0.001~0.003`。 |
 | `no_event_exit_minutes` | 启动后无行情自动退出时间（分钟）。 | 浮点 | `<=0` 表示禁用。 |
 | `signal_timeout_minutes` | 信号超时窗口（分钟）；超时后信号视作失效。 | 浮点 | 常用 `10~60`。 |
 | `sell_inactive_hours` | 卖出挂单长期不活跃保护阈值（小时）。 | 浮点 | `<=0` 表示禁用。 |

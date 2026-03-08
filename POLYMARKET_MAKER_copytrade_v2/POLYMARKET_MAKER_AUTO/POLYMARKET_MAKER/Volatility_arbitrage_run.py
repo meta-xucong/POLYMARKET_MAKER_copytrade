@@ -33,8 +33,7 @@ import hashlib
 import json
 import inspect
 from queue import Queue, Empty
-from collections import deque
-from typing import Dict, Any, Tuple, List, Optional, Deque
+from typing import Dict, Any, Tuple, List, Optional
 import math
 from decimal import Decimal, ROUND_UP, ROUND_DOWN
 import requests
@@ -231,6 +230,10 @@ POST_BUY_POSITION_MATCH_ABS_TOL = 1e-6
 POST_BUY_POSITION_SIZE_MATCH_REL_TOL = 0.02
 POST_BUY_POSITION_SIZE_MATCH_ABS_TOL = 0.05
 POST_BUY_AVG_DIVERGENCE_WARN_PCT = 0.003
+SELL_ANCHOR_CONFIRM_ATTEMPTS = 2
+SELL_ANCHOR_CONFIRM_INTERVAL_SEC = 0.35
+SELL_ANCHOR_MATCH_REL_TOL = 1e-4
+SELL_ANCHOR_MATCH_ABS_TOL = 1e-6
 
 
 _REQUEST_RATE_LIMIT_SEC = 1.0
@@ -257,6 +260,62 @@ def _enforce_request_rate_limit() -> None:
         if remaining > 0:
             time.sleep(remaining)
     _last_request_ts = time.monotonic()
+
+
+def _cost_anchor_dir() -> Path:
+    root_dir = Path(__file__).parent.parent.parent
+    path = root_dir / "copytrade" / "cost_anchors"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _cost_anchor_path(token_id: str) -> Path:
+    safe_token = re.sub(r"[^0-9A-Za-z_-]", "_", str(token_id))
+    return _cost_anchor_dir() / f"{safe_token}.json"
+
+
+def _load_cost_anchor(token_id: str) -> Dict[str, Any]:
+    path = _cost_anchor_path(token_id)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "token_id": str(token_id),
+            "entry_anchor": None,
+            "last_buy_anchor": None,
+            "updated_ts": 0.0,
+            "confidence_hits": 0,
+            "version": 1,
+        }
+    if not isinstance(payload, dict):
+        return {
+            "token_id": str(token_id),
+            "entry_anchor": None,
+            "last_buy_anchor": None,
+            "updated_ts": 0.0,
+            "confidence_hits": 0,
+            "version": 1,
+        }
+    payload.setdefault("token_id", str(token_id))
+    payload.setdefault("entry_anchor", None)
+    payload.setdefault("last_buy_anchor", None)
+    payload.setdefault("updated_ts", 0.0)
+    payload.setdefault("confidence_hits", 0)
+    payload.setdefault("version", 1)
+    return payload
+
+
+def _save_cost_anchor(token_id: str, state: Dict[str, Any]) -> None:
+    path = _cost_anchor_path(token_id)
+    tmp_path = path.with_suffix(".tmp")
+    payload = dict(state)
+    payload["token_id"] = str(token_id)
+    payload["version"] = 1
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
 
 
 def _extract_min_order_size_from_orderbook(payload: Any) -> Optional[float]:
@@ -2435,6 +2494,60 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     token_id = str(token_id)
     print(f"[INIT] 目标 token_id: {token_id}")
+    anchor_state = _load_cost_anchor(token_id)
+    anchor_pending_avg: Optional[float] = None
+    anchor_pending_hits: int = 0
+
+    def _anchor_val(name: str) -> Optional[float]:
+        val = _coerce_float(anchor_state.get(name))
+        if val is None or val <= 0:
+            return None
+        return val
+
+    def _anchor_commit() -> None:
+        anchor_state["updated_ts"] = time.time()
+        _save_cost_anchor(token_id, anchor_state)
+
+    def _anchor_note_buy(fill_price: float, *, position_avg: Optional[float] = None) -> None:
+        px = _coerce_float(fill_price)
+        if px is None or px <= 0:
+            return
+        anchor_state["last_buy_anchor"] = float(px)
+        if _anchor_val("entry_anchor") is None:
+            anchor_state["entry_anchor"] = float(px)
+        pos_avg = _coerce_float(position_avg)
+        if pos_avg is not None and pos_avg > 0:
+            anchor_state["entry_anchor"] = float(pos_avg)
+            anchor_state["confidence_hits"] = max(int(anchor_state.get("confidence_hits") or 0), 2)
+        _anchor_commit()
+
+    def _anchor_note_position_avg(avg_price: Optional[float], *, source: str) -> None:
+        nonlocal anchor_pending_avg, anchor_pending_hits
+        avg = _coerce_float(avg_price)
+        if avg is None or avg <= 0:
+            return
+        if (
+            anchor_pending_avg is not None
+            and math.isclose(
+                float(anchor_pending_avg),
+                float(avg),
+                rel_tol=SELL_ANCHOR_MATCH_REL_TOL,
+                abs_tol=SELL_ANCHOR_MATCH_ABS_TOL,
+            )
+        ):
+            anchor_pending_hits += 1
+        else:
+            anchor_pending_avg = float(avg)
+            anchor_pending_hits = 1
+        if anchor_pending_hits < 2:
+            return
+        anchor_state["entry_anchor"] = float(avg)
+        anchor_state["confidence_hits"] = int(anchor_pending_hits)
+        _anchor_commit()
+        print(
+            f"[ANCHOR] confirmed entry anchor from {source}: "
+            f"{float(avg):.6f} (hits={anchor_pending_hits})"
+        )
 
     startup_skip_if_open_sell = bool(run_cfg.get("startup_skip_if_open_sell", False))
     if startup_skip_if_open_sell:
@@ -2607,10 +2720,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     print(f"[INIT] 买入价格上限: {max_buy_price:.4f}（价格>=此值时不买入）")
 
-    stagnation_window_minutes = _coerce_float(run_cfg.get("stagnation_window_minutes"))
-    if stagnation_window_minutes is None:
-        stagnation_window_minutes = 120.0
-    stagnation_pct = _normalize_ratio(run_cfg.get("stagnation_pct"), 0.0)
     no_event_exit_minutes = _coerce_float(run_cfg.get("no_event_exit_minutes"))
     if no_event_exit_minutes is None:
         no_event_exit_minutes = 20.0
@@ -2620,13 +2729,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     price_none_exit_count = max(0, int(PRICE_NONE_EXIT_COUNT))
     set_price_none_exit_threshold(price_none_exit_count)
     set_price_invalid_timeout_sec(max(float(signal_timeout_minutes), 0.0) * 60.0)
-    if stagnation_window_minutes <= 0:
-        print("[INIT] 价格停滞监控已禁用。")
-    else:
-        print(
-            "[INIT] 价格停滞监控窗口 "
-            f"{stagnation_window_minutes:.1f} 分钟，阈值 {stagnation_pct * 100:.4f}%。"
-        )
     if no_event_exit_minutes <= 0:
         print("[INIT] 启动后无行情自动退出已禁用。")
     else:
@@ -4323,7 +4425,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     exit_after_sell_only_clear: bool = False
     min_loop_interval = 0.1  # 从1.0秒改为0.1秒，提高主循环频率以匹配聚合器缓存更新频率
     next_loop_after = 0.0
-    stagnation_window_seconds = max(float(stagnation_window_minutes), 0.0) * 60.0
     no_event_exit_seconds = max(float(no_event_exit_minutes), 0.0) * 60.0
     signal_timeout_seconds = max(float(signal_timeout_minutes), 0.0) * 60.0
     data_timeout_seconds = signal_timeout_seconds
@@ -4332,10 +4433,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         no_event_exit_seconds = 0.0
         if no_event_exit_minutes > 0:
             print("[INIT] no_event_exit_minutes 已由统一数据风控接管（仅保留兼容字段）。")
-    stagnation_history: Deque[Tuple[float, float]] = deque()
-    stagnation_triggered: bool = False
     run_started_at = time.time()
     data_unhealthy_since: Optional[float] = None
+    remote_empty_position_hits: int = 0
 
     def _reconcile_empty_long_state(reason: str) -> None:
         nonlocal position_size
@@ -4358,7 +4458,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         strategy.on_sell_filled(avg_price=fallback_px, remaining=0.0)
 
     def _maybe_refresh_position_size(reason: str, *, force: bool = False) -> None:
-        nonlocal position_size, next_position_sync
+        nonlocal position_size, next_position_sync, remote_empty_position_hits
         now = time.time()
         if not force and now < next_position_sync:
             return
@@ -4370,6 +4470,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             avg_px, total_pos, origin_note = _lookup_position_avg_price(client, token_id)
         except Exception as probe_exc:
             print(f"[WATCHDOG][POSITION] {reason} 持仓查询异常：{probe_exc}")
+            return
+
+        if total_pos is None or total_pos <= 0:
+            remote_empty_position_hits += 1
+        else:
+            remote_empty_position_hits = 0
+
+        if (
+            position_size is not None
+            and (total_pos is None or total_pos <= 0)
+            and remote_empty_position_hits < 2
+        ):
+            print(
+                f"[WATCHDOG][POSITION] {reason} 远端仓位暂缺，等待二次确认 "
+                f"({remote_empty_position_hits}/2)，本轮不清空本地仓位。"
+            )
             return
 
         status_snapshot = strategy.status()
@@ -4433,13 +4549,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(
                 f"[WATCHDOG][POSITION] {reason} -> origin={origin_display} avg={avg_display} size={new_size:.4f}"
             )
-            latest_bid = _latest_best_bid()
-            latest_ask = _latest_best_ask()
             fallback_px = avg_px
-            if fallback_px is None:
-                fallback_px = latest_ask if latest_ask is not None else latest_bid
-            if fallback_px is None:
-                fallback_px = 0.0
+            if fallback_px is None or fallback_px <= 0:
+                print(
+                    f"[FATAL][POSITION] {reason} 有仓位但缺少有效 avgPrice，停止脚本以避免成本锚漂移。"
+                )
+                strategy.stop("missing avg price during position sync")
+                stop_event.set()
+                return
+            _anchor_note_position_avg(fallback_px, source=reason)
             strategy.on_buy_filled(fallback_px, total_position=new_size, size=0.0)
             print(
                 f"[STATE] 同步策略持仓 -> price={fallback_px:.4f} size={new_size:.4f}"
@@ -4594,6 +4712,56 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 position_snapshot_cache = snapshot
             return snapshot
 
+        def _confirm_position_anchor_for_sell() -> Optional[Tuple[float, float]]:
+            samples: List[Tuple[float, float]] = []
+            for idx in range(SELL_ANCHOR_CONFIRM_ATTEMPTS):
+                snap = _fetch_position_snapshot(log_errors=True, force=True)
+                if snap is None:
+                    return None
+                avg_px, total_pos, origin = snap
+                avg_val = _coerce_float(avg_px)
+                size_val = _coerce_float(total_pos)
+                if (
+                    avg_val is None
+                    or avg_val <= 0
+                    or size_val is None
+                    or size_val <= 0
+                ):
+                    origin_display = origin or "positions"
+                    print(
+                        "[SELL][ANCHOR_CHECK] 快照缺少有效成本或仓位，"
+                        f"origin={origin_display} avg={avg_px} size={total_pos}"
+                    )
+                    return None
+                samples.append((float(avg_val), float(size_val)))
+                if idx < SELL_ANCHOR_CONFIRM_ATTEMPTS - 1:
+                    if stop_event.wait(SELL_ANCHOR_CONFIRM_INTERVAL_SEC):
+                        return None
+            if len(samples) < 2:
+                return None
+            avg0, size0 = samples[0]
+            avg1, size1 = samples[-1]
+            avg_ok = math.isclose(
+                avg0,
+                avg1,
+                rel_tol=SELL_ANCHOR_MATCH_REL_TOL,
+                abs_tol=SELL_ANCHOR_MATCH_ABS_TOL,
+            )
+            size_ok = math.isclose(
+                size0,
+                size1,
+                rel_tol=POST_BUY_POSITION_SIZE_MATCH_REL_TOL,
+                abs_tol=POST_BUY_POSITION_SIZE_MATCH_ABS_TOL,
+            )
+            if not avg_ok or not size_ok:
+                print(
+                    "[SELL][ANCHOR_CHECK] 双确认未通过，跳过本轮卖出。 "
+                    f"avg=({avg0:.6f},{avg1:.6f}) size=({size0:.4f},{size1:.4f})"
+                )
+                return None
+            _anchor_note_position_avg(avg1, source="[SELL][ANCHOR_CHECK]")
+            return avg1, size1
+
         def _resolve_order_qty() -> Optional[float]:
             candidates = [order_qty, position_size, last_order_size]
             for candidate in candidates:
@@ -4614,15 +4782,22 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return
 
         source_upper = str(source or "").upper()
-        loss_allowed_paths = ("LIQUID", "STOPLOSS", "STOP_LOSS", "STOP-LOSS", "STAGNANT")
+        loss_allowed_paths = ("LIQUID", "STOPLOSS", "STOP_LOSS", "STOP-LOSS")
         loss_allowed = any(key in source_upper for key in loss_allowed_paths)
+        confirmed_sell_anchor_avg: Optional[float] = None
+        if not loss_allowed:
+            confirmed = _confirm_position_anchor_for_sell()
+            if confirmed is None:
+                strategy.on_reject("sell anchor confirmation failed")
+                return
+            confirmed_sell_anchor_avg = confirmed[0]
 
         floor_price = strategy.sell_trigger_price()
         fallback_floor_from_hint = False
-        if floor_price is None:
+        if floor_price is None and loss_allowed:
             floor_price = floor_hint
             fallback_floor_from_hint = floor_price is not None
-        elif floor_hint is not None:
+        elif floor_hint is not None and floor_price is not None:
             # 地板价不得低于“买入均价 + 盈利阈值”，若上游给出更高提示价则取较高值。
             floor_price = max(floor_price, floor_hint)
 
@@ -4662,6 +4837,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 baseline = entry_ref
             if last_buy_ref is not None and last_buy_ref > 0:
                 baseline = max(baseline, last_buy_ref) if baseline is not None else last_buy_ref
+            anchor_entry = _anchor_val("entry_anchor")
+            anchor_last_buy = _anchor_val("last_buy_anchor")
+            if anchor_entry is not None:
+                baseline = max(baseline, anchor_entry) if baseline is not None else anchor_entry
+            if anchor_last_buy is not None:
+                baseline = (
+                    max(baseline, anchor_last_buy) if baseline is not None else anchor_last_buy
+                )
+            if confirmed_sell_anchor_avg is not None:
+                baseline = (
+                    max(baseline, confirmed_sell_anchor_avg)
+                    if baseline is not None
+                    else confirmed_sell_anchor_avg
+                )
             if baseline is not None:
                 baseline_for_hard_rule = baseline
                 profit_pct_cfg = getattr(getattr(strategy, "cfg", None), "profit_pct", None)
@@ -4673,6 +4862,15 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     floor_price = hard_floor
         except Exception as floor_guard_exc:
             print(f"[SELL][GUARD] 硬地板校验失败，沿用当前地板价：{floor_guard_exc}")
+
+        if not loss_allowed and (
+            baseline_for_hard_rule is None or baseline_for_hard_rule <= 0
+        ):
+            print(
+                "[SELL][BLOCK] 缺少稳定成本锚，拒绝正常卖出（清仓/止损路径除外）。"
+            )
+            strategy.on_reject("missing stable cost anchor")
+            return
 
         # 全局硬限制（清仓/止损路径豁免）：
         # 除允许亏本卖出的路径外，卖价必须 >= max(entry_price, last_buy_price) + 2*tick
@@ -5052,77 +5250,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print(f"[REFILL] ========================================\n")
     # ========== Slot Refill 结束 ==========
 
-    def _handle_stagnation_exit(change_ratio: float, window_span: float) -> None:
-        nonlocal exit_after_sell_only_clear, stagnation_triggered
-        if stagnation_triggered:
-            return
-        stagnation_triggered = True
-        print(
-            "[STAGNANT] 价格在 "
-            f"{_fmt_minutes(window_span)} 内波动 {_fmt_pct(change_ratio)} "
-            f"≤ 阈值 {_fmt_pct(stagnation_pct)}，触发退出。"
-        )
-        _maybe_refresh_position_size("[STAGNANT][SYNC]", force=True)
-        if _has_actionable_position():
-            sell_only_event.set()
-            strategy.enable_sell_only("price stagnation")
-            exit_after_sell_only_clear = True
-            floor_hint = _latest_best_bid()
-            if floor_hint is None:
-                floor_hint = _latest_best_ask()
-            if floor_hint is None:
-                floor_hint = _latest_price()
-            _execute_sell(position_size, floor_hint=floor_hint, source="[STAGNANT]")
-        else:
-            strategy.stop("price stagnation")
-            print("[QUEUE] 释放队列：价格停滞且无持仓，已退出。")
-            snap = latest.get(token_id) or {}
-            _cancel_open_buy_orders_before_exit("STAGNATION_NO_POSITION")
-            _record_exit_token(token_id, "STAGNATION_NO_POSITION", {
-                "has_position": False,
-                "change_ratio": change_ratio,
-                "window_span_minutes": window_span / 60.0,
-                "stagnation_threshold": stagnation_pct,
-                "last_bid": float(snap.get("best_bid") or 0.0),
-                "last_ask": float(snap.get("best_ask") or 0.0),
-                "drop_pct_current": _current_drop_pct_for_exit(),
-            })
-            stop_event.set()
-
-    def _handle_no_feed_exit(idle_seconds: float) -> None:
-        nonlocal exit_after_sell_only_clear, stagnation_triggered
-        if stagnation_triggered:
-            return
-        stagnation_triggered = True
-        print(
-            "[STAGNANT] "
-            f"{_fmt_minutes(idle_seconds)} 未收到行情更新，触发退出。"
-        )
-        _maybe_refresh_position_size("[STAGNANT][NO-FEED][SYNC]", force=True)
-        if _has_actionable_position():
-            sell_only_event.set()
-            strategy.enable_sell_only("price stagnation (no feed)")
-            exit_after_sell_only_clear = True
-            floor_hint = _latest_best_bid()
-            if floor_hint is None:
-                floor_hint = _latest_best_ask()
-            if floor_hint is None:
-                floor_hint = _latest_price()
-            _execute_sell(position_size, floor_hint=floor_hint, source="[STAGNANT][NO-FEED]")
-        else:
-            strategy.stop("price stagnation (no feed)")
-            print("[QUEUE] 释放队列：长时间无行情且无持仓，已退出。")
-            snap = latest.get(token_id) or {}
-            _cancel_open_buy_orders_before_exit("NO_FEED_NO_POSITION")
-            _record_exit_token(token_id, "NO_FEED_NO_POSITION", {
-                "has_position": False,
-                "idle_minutes": idle_seconds / 60.0,
-                "last_bid": float(snap.get("best_bid") or 0.0),
-                "last_ask": float(snap.get("best_ask") or 0.0),
-                "drop_pct_current": _current_drop_pct_for_exit(),
-            })
-            stop_event.set()
-
     # --- 所有内部函数已定义，安全执行 sell_only / countdown 初始化 ---
     print(f"[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts={sell_only_start_ts}, market_deadline_ts={market_deadline_ts})")
 
@@ -5298,54 +5425,27 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 _reconcile_empty_long_state("[LOOP]")
 
-                if no_event_exit_seconds > 0 and not stagnation_triggered:
+                if no_event_exit_seconds > 0:
                     with ws_state_lock:
                         last_event_ts = float(ws_state.get("last_event_ts") or 0.0)
                     if last_event_ts <= 0:
                         idle_seconds = now - run_started_at
                         if idle_seconds >= no_event_exit_seconds:
-                            _handle_no_feed_exit(idle_seconds)
-                            if stop_event.is_set():
-                                break
-                            continue
-
-                if stagnation_window_seconds > 0 and not stagnation_triggered:
-                    with ws_state_lock:
-                        last_event_ts = float(ws_state.get("last_event_ts") or 0.0)
-                    if last_event_ts > 0:
-                        idle_seconds = now - last_event_ts
-                        if idle_seconds >= stagnation_window_seconds:
-                            _handle_no_feed_exit(idle_seconds)
-                            if stop_event.is_set():
-                                break
-                            continue
-                    snap = latest.get(token_id) or {}
-                    last_px = float(snap.get("price") or 0.0)
-                    if last_px > 0:
-                        snap_ts = _snapshot_ts(snap)
-                        stagnation_history.append((snap_ts, last_px))
-                        while (
-                            stagnation_history
-                            and snap_ts - stagnation_history[0][0]
-                            > stagnation_window_seconds
-                        ):
-                            stagnation_history.popleft()
-                        if len(stagnation_history) >= 2:
-                            window_span = snap_ts - stagnation_history[0][0]
-                            if window_span >= stagnation_window_seconds:
-                                prices = [p for _, p in stagnation_history]
-                                high = max(prices)
-                                low = min(prices)
-                                if high > 0:
-                                    change_ratio = (high - low) / high
-                                    if change_ratio <= stagnation_pct:
-                                        _handle_stagnation_exit(change_ratio, window_span)
-                                        if stop_event.is_set():
-                                            break
-                                        continue
+                            print(
+                                "[NO_FEED] "
+                                f"{_fmt_minutes(idle_seconds)} 未收到行情更新，释放队列退出。"
+                            )
+                            _cancel_open_buy_orders_before_exit("NO_FEED")
+                            _record_exit_token(token_id, "NO_FEED", {
+                                "idle_minutes": idle_seconds / 60.0,
+                                "drop_pct_current": _current_drop_pct_for_exit(),
+                            })
+                            strategy.stop("no feed exit")
+                            stop_event.set()
+                            break
 
                 # 数据异常超时检查：持续无法获取有效数据则退出（不参与交易机会判定）
-                if data_timeout_seconds > 0 and not stagnation_triggered:
+                if data_timeout_seconds > 0:
                     with ws_state_lock:
                         last_event_ts = float(ws_state.get("last_event_ts") or 0.0)
                     event_age_sec = (
@@ -5454,8 +5554,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     awaiting_is_sell = awaiting_val == ActionType.SELL
                     if not _has_actionable_position(status) and not awaiting_is_sell:
                         print("[COUNTDOWN] 倒计时仅卖出模式下已清仓，脚本将退出。")
-                        if stagnation_triggered:
-                            print("[QUEUE] 释放队列：停滞清仓完成，已退出。")
                         strategy.stop("countdown sell-only cleared position")
                         stop_event.set()
                         break
@@ -6183,6 +6281,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if strategy_supports_total_position:
                         buy_filled_kwargs["total_position"] = position_size
                     strategy.on_buy_filled(**buy_filled_kwargs)
+                    _anchor_note_buy(fill_px, position_avg=pos_avg_price)
                     print(
                         f"[STATE] 买入成交 -> status={buy_status or 'N/A'} price={fill_px:.4f} size={position_size:.4f}"
                     )

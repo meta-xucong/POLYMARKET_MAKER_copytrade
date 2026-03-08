@@ -74,7 +74,6 @@ except ImportError as e:
 
 DEFAULT_GLOBAL_CONFIG = {
     "copytrade_poll_sec": 30.0,
-    "sell_position_poll_interval_sec": 7200.0,
     "command_poll_sec": 5.0,
     "max_concurrent_tasks": 10,
     "max_exit_cleanup_tasks": 3,  # 清仓任务独立槽位，不受 max_concurrent_tasks 限制
@@ -240,12 +239,14 @@ POSITION_CHECK_CACHE_TTL_SEC = 600.0
 # 避免在 copytrade 轮询周期（30s）下重复高频查询。
 POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 1800.0
 SELL_SIGNAL_REPLAY_WARMUP_SEC = 300.0
-EXIT_ORDERBOOK_MISSING_BACKOFF_SEC = 6 * 3600.0
+SOURCE_DETACHED_HOLD_SEC = 20 * 60.0
+EXIT_ORDERBOOK_MISSING_BACKOFF_SCHEDULE_SEC = (5 * 60.0, 15 * 60.0, 30 * 60.0)
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
 SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC = 45.0
 DATA_API_RATE_LIMIT_SEC = 1.0
 DATA_API_TIMEOUT_SEC = 10.0
+DATA_API_POSITION_RETRY_ATTEMPTS = 3
 DATA_API_TRADE_RETRY_ATTEMPTS = 3
 DATA_API_RETRY_BACKOFF_SEC = (1.0, 2.0, 4.0)
 _data_api_last_request_ts = 0.0
@@ -426,6 +427,51 @@ def _extract_position_current_price(entry: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _data_api_get_json_with_retry(
+    url: str,
+    *,
+    params: Dict[str, Any],
+    attempts: int,
+    timeout_sec: float,
+    label: str,
+) -> tuple[Optional[Any], str]:
+    last_err = ""
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            with _data_api_request_lock:
+                global _data_api_last_request_ts
+                now = time.time()
+                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
+                if wait_sec > 0:
+                    time.sleep(wait_sec)
+                _data_api_last_request_ts = time.time()
+
+            resp = requests.get(url, params=params, timeout=max(1.0, float(timeout_sec)))
+            if resp.status_code == 404:
+                return None, "404"
+            # Retry known transient statuses before raise_for_status.
+            if resp.status_code in {429, 500, 502, 503, 504}:
+                last_err = f"{label} transient http {resp.status_code} (attempt={attempt}/{attempts})"
+                if attempt < attempts:
+                    idx = min(attempt - 1, len(DATA_API_RETRY_BACKOFF_SEC) - 1)
+                    time.sleep(max(0.1, float(DATA_API_RETRY_BACKOFF_SEC[idx])))
+                    continue
+                return None, last_err
+            resp.raise_for_status()
+            payload = resp.json()
+            return payload, "ok"
+        except ValueError:
+            last_err = f"{label} decode failed (attempt={attempt}/{attempts})"
+        except Exception as exc:
+            last_err = f"{label} request failed (attempt={attempt}/{attempts}): {exc.__class__.__name__}: {exc}"
+
+        if attempt < attempts:
+            idx = min(attempt - 1, len(DATA_API_RETRY_BACKOFF_SEC) - 1)
+            time.sleep(max(0.1, float(DATA_API_RETRY_BACKOFF_SEC[idx])))
+    return None, (last_err or f"{label} request failed")
+
+
 def _fetch_position_rows_from_data_api(address: str) -> tuple[List[Dict[str, Any]], str]:
     if not address:
         return [], "missing address"
@@ -440,23 +486,17 @@ def _fetch_position_rows_from_data_api(address: str) -> tuple[List[Dict[str, Any
             "offset": offset,
             "sizeThreshold": 0,
         }
-        try:
-            with _data_api_request_lock:
-                global _data_api_last_request_ts
-                now = time.time()
-                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
-                if wait_sec > 0:
-                    time.sleep(wait_sec)
-                _data_api_last_request_ts = time.time()
-            resp = requests.get(url, params=params, timeout=10)
-            if resp.status_code == 404:
-                return [], "positions 404"
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception as exc:
-            return [], f"positions request failed: {exc}"
-        except ValueError:
-            return [], "positions decode failed"
+        payload, info = _data_api_get_json_with_retry(
+            url,
+            params=params,
+            attempts=DATA_API_POSITION_RETRY_ATTEMPTS,
+            timeout_sec=DATA_API_TIMEOUT_SEC,
+            label="positions",
+        )
+        if info == "404":
+            return [], "positions 404"
+        if info != "ok":
+            return [], info
         if not isinstance(payload, list):
             return [], "positions payload invalid"
         positions = payload
@@ -485,23 +525,17 @@ def _fetch_position_size_from_data_api(
             "offset": offset,
             "sizeThreshold": 0,
         }
-        try:
-            with _data_api_request_lock:
-                global _data_api_last_request_ts
-                now = time.time()
-                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
-                if wait_sec > 0:
-                    time.sleep(wait_sec)
-                _data_api_last_request_ts = time.time()
-            resp = requests.get(url, params=params, timeout=10)
-            if resp.status_code == 404:
-                return None, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception as exc:
-            return None, f"数据接口请求失败：{exc}"
-        except ValueError:
-            return None, "数据接口响应解析失败"
+        payload, info = _data_api_get_json_with_retry(
+            url,
+            params=params,
+            attempts=DATA_API_POSITION_RETRY_ATTEMPTS,
+            timeout_sec=DATA_API_TIMEOUT_SEC,
+            label="positions",
+        )
+        if info == "404":
+            return None, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
+        if info != "ok":
+            return None, f"数据接口请求失败：{info}"
 
         if not isinstance(payload, list):
             return None, "数据接口返回格式异常：/positions 应返回列表。"
@@ -520,59 +554,6 @@ def _fetch_position_size_from_data_api(
 
         offset += len(positions)
     return None, "未找到持仓记录"
-
-
-def _fetch_position_snapshot_map_from_data_api(
-    address: str,
-) -> tuple[Dict[str, float], str]:
-    if not address:
-        return {}, "缺少地址，无法查询持仓。"
-    url = f"{DATA_API_ROOT}/positions"
-    limit = 500
-    offset = 0
-    snapshot: Dict[str, float] = {}
-    while True:
-        params = {
-            "user": address,
-            "limit": limit,
-            "offset": offset,
-            "sizeThreshold": 0,
-        }
-        try:
-            with _data_api_request_lock:
-                global _data_api_last_request_ts
-                now = time.time()
-                wait_sec = DATA_API_RATE_LIMIT_SEC - (now - _data_api_last_request_ts)
-                if wait_sec > 0:
-                    time.sleep(wait_sec)
-                _data_api_last_request_ts = time.time()
-            resp = requests.get(url, params=params, timeout=10)
-            if resp.status_code == 404:
-                return {}, "数据接口返回 404（请确认使用 Proxy/Deposit 地址查询 user 参数）"
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception as exc:
-            return {}, f"数据接口请求失败：{exc}"
-        except ValueError:
-            return {}, "数据接口响应解析失败"
-
-        if not isinstance(payload, list):
-            return {}, "数据接口返回格式异常：/positions 应返回列表。"
-        positions = payload
-
-        for pos in positions:
-            if not isinstance(pos, dict):
-                continue
-            token_id = _extract_position_token_id(pos)
-            if not token_id:
-                continue
-            pos_size = float(_extract_position_size(pos) or 0.0)
-            snapshot[token_id] = pos_size
-
-        if not positions:
-            break
-        offset += len(positions)
-    return snapshot, "ok"
 
 
 def _fetch_recent_trades_from_data_api(
@@ -853,9 +834,6 @@ def compute_new_topics(latest: List[Any], handled: set[str]) -> List[str]:
 @dataclass
 class GlobalConfig:
     copytrade_poll_sec: float = DEFAULT_GLOBAL_CONFIG["copytrade_poll_sec"]
-    sell_position_poll_interval_sec: float = DEFAULT_GLOBAL_CONFIG[
-        "sell_position_poll_interval_sec"
-    ]
     command_poll_sec: float = DEFAULT_GLOBAL_CONFIG["command_poll_sec"]
     max_concurrent_tasks: int = DEFAULT_GLOBAL_CONFIG["max_concurrent_tasks"]
     max_exit_cleanup_tasks: int = DEFAULT_GLOBAL_CONFIG["max_exit_cleanup_tasks"]
@@ -1204,13 +1182,6 @@ class GlobalConfig:
                 scheduler.get("copytrade_poll_seconds")
                 or merged.get(
                     "copytrade_poll_sec", DEFAULT_GLOBAL_CONFIG["copytrade_poll_sec"]
-                )
-            ),
-            sell_position_poll_interval_sec=float(
-                scheduler.get("sell_position_poll_interval_sec")
-                or merged.get(
-                    "sell_position_poll_interval_sec",
-                    DEFAULT_GLOBAL_CONFIG["sell_position_poll_interval_sec"],
                 )
             ),
             command_poll_sec=float(
@@ -2002,6 +1973,10 @@ class AutoRunManager:
         self._handled_sell_signals: set[str] = set()
         self._sell_exit_deadlines: Dict[str, float] = {}
         self._position_snapshot_cache: Dict[str, Dict[str, Any]] = {}
+        self._unified_position_rows: List[Dict[str, Any]] = []
+        self._unified_position_snapshot: Dict[str, float] = {}
+        self._unified_position_info: str = ""
+        self._unified_position_ts: float = 0.0
         self._exit_cleanup_retry_counts: Dict[str, int] = {}
         self._startup_sync_retry_needed: bool = True
         self._next_startup_sync_retry_at: float = 0.0
@@ -2048,6 +2023,7 @@ class AutoRunManager:
         self._stoploss_reentry_state_path = self.config.stoploss_reentry_state_path
         self._stoploss_reentry_state_backup_path = self.config.stoploss_reentry_state_backup_path
         self._stoploss_reentry_states: Dict[str, Dict[str, Any]] = {}
+        self._stoploss_quote_cycle_cache: Dict[str, Dict[str, Any]] = {}
         self._load_stoploss_reentry_states()
         
         if MARKET_STATE_CHECKER_AVAILABLE:
@@ -2229,6 +2205,8 @@ class AutoRunManager:
             "reentry_paused_for_day": False,
             "source_detached": False,
             "source_detached_since_ts": 0.0,
+            "source_detached_cleanup_started": False,
+            "source_detached_cleanup_started_ts": 0.0,
             "market_status_last": "",
             "last_price_check_ts": 0.0,
             "last_position_seen_ts": 0.0,
@@ -2278,6 +2256,7 @@ class AutoRunManager:
             "old_last_buy_price",
             "today_realized_loss_pct",
             "source_detached_since_ts",
+            "source_detached_cleanup_started_ts",
             "last_price_check_ts",
             "last_position_seen_ts",
             "closed_final_ts",
@@ -2297,11 +2276,17 @@ class AutoRunManager:
         )
         merged["today_realized_loss_pct"] = max(0.0, float(merged.get("today_realized_loss_pct") or 0.0))
         merged["source_detached_since_ts"] = max(0.0, float(merged.get("source_detached_since_ts") or 0.0))
+        merged["source_detached_cleanup_started_ts"] = max(
+            0.0, float(merged.get("source_detached_cleanup_started_ts") or 0.0)
+        )
         merged["last_position_seen_ts"] = max(0.0, float(merged.get("last_position_seen_ts") or 0.0))
         merged["pending_cleanup_since_ts"] = max(0.0, float(merged.get("pending_cleanup_since_ts") or 0.0))
         merged["probe_seen"] = bool(merged.get("probe_seen", False))
         merged["reentry_paused_for_day"] = bool(merged.get("reentry_paused_for_day", False))
         merged["source_detached"] = bool(merged.get("source_detached", False))
+        merged["source_detached_cleanup_started"] = bool(
+            merged.get("source_detached_cleanup_started", False)
+        )
         merged["loss_date_utc"] = str(merged.get("loss_date_utc") or self._today_utc_date())
         merged["market_status_last"] = str(merged.get("market_status_last") or "")
         merged["last_error"] = str(merged.get("last_error") or "")
@@ -2371,6 +2356,9 @@ class AutoRunManager:
                 state["source_detached"] = detached
                 state["source_detached_since_ts"] = float(max(now, 0.0)) if detached else 0.0
                 state["pending_cleanup_since_ts"] = 0.0
+                if not detached:
+                    state["source_detached_cleanup_started"] = False
+                    state["source_detached_cleanup_started_ts"] = 0.0
                 changed = True
                 continue
             if detached and float(state.get("source_detached_since_ts") or 0.0) <= 0.0:
@@ -2408,12 +2396,113 @@ class AutoRunManager:
     def _estimate_reentry_buyable_price(
         self, token_id: str, position_row: Optional[Dict[str, Any]] = None
     ) -> Optional[float]:
+        # Use live CLOB book first to avoid stale WS cache blocking reentry checks.
+        quote = self._get_stoploss_cycle_quote(token_id)
+        ask = _coerce_float((quote or {}).get("ask"))
+        if ask is not None and ask > 0:
+            return float(ask)
         cache = self._ws_cache.get(token_id) or {}
         ask = _coerce_float(cache.get("best_ask"))
         updated_at = _coerce_float(cache.get("updated_at"))
         if ask is not None and ask > 0 and updated_at is not None and (time.time() - updated_at) <= 120.0:
             return float(ask)
         return None
+
+    @staticmethod
+    def _extract_book_side_best_price(levels: Any, *, is_bid: bool) -> Optional[float]:
+        if not isinstance(levels, list) or not levels:
+            return None
+        best: Optional[float] = None
+        for lv in levels:
+            if isinstance(lv, dict):
+                px = _coerce_float(lv.get("price"))
+                sz = _coerce_float(lv.get("size"))
+                # Ignore empty levels when size is provided.
+                if sz is not None and sz <= 0:
+                    continue
+            elif isinstance(lv, (list, tuple)) and len(lv) >= 1:
+                px = _coerce_float(lv[0])
+            else:
+                px = _coerce_float(lv)
+            if px is None or px <= 0:
+                continue
+            if best is None:
+                best = float(px)
+            elif is_bid:
+                if px > best:
+                    best = float(px)
+            else:
+                if px < best:
+                    best = float(px)
+        return best
+
+    def _fetch_clob_top_of_book(self, token_id: str) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"bid": None, "ask": None, "source": "clob_book", "ok": False}
+        if not token_id:
+            out["error"] = "empty_token"
+            return out
+        try:
+            resp = requests.get(
+                f"{CLOB_API_ROOT}/book",
+                params={"token_id": token_id},
+                timeout=max(1.0, float(CLOB_BOOK_PROBE_TIMEOUT_SEC)),
+            )
+            if resp.status_code == 404:
+                out["error"] = "book_404"
+                return out
+            resp.raise_for_status()
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                out["error"] = "book_payload_invalid"
+                return out
+            bid = self._extract_book_side_best_price(
+                payload.get("bids") if payload.get("bids") is not None else payload.get("buys"),
+                is_bid=True,
+            )
+            ask = self._extract_book_side_best_price(
+                payload.get("asks") if payload.get("asks") is not None else payload.get("sells"),
+                is_bid=False,
+            )
+            if bid is None:
+                bid = _coerce_float(payload.get("best_bid") or payload.get("bid"))
+            if ask is None:
+                ask = _coerce_float(payload.get("best_ask") or payload.get("ask"))
+            if bid is not None and bid > 0:
+                out["bid"] = float(bid)
+            if ask is not None and ask > 0:
+                out["ask"] = float(ask)
+            out["ok"] = bool((out.get("bid") or 0.0) > 0 or (out.get("ask") or 0.0) > 0)
+            if not out["ok"]:
+                out["error"] = "book_empty"
+        except Exception as exc:
+            out["error"] = f"book_request_failed:{exc.__class__.__name__}"
+        return out
+
+    def _get_stoploss_cycle_quote(self, token_id: str) -> Dict[str, Any]:
+        cached = self._stoploss_quote_cycle_cache.get(token_id)
+        if isinstance(cached, dict):
+            return cached
+        quote = self._fetch_clob_top_of_book(token_id)
+        if not bool(quote.get("ok")):
+            # Fallback to WS snapshot to avoid hard-block when /book has transient errors.
+            ws = self._ws_cache.get(token_id) or {}
+            bid = _coerce_float(ws.get("best_bid"))
+            ask = _coerce_float(ws.get("best_ask"))
+            updated_at = _coerce_float(ws.get("updated_at"))
+            if (
+                updated_at is not None
+                and updated_at > 0
+                and (time.time() - updated_at) <= 120.0
+                and ((bid is not None and bid > 0) or (ask is not None and ask > 0))
+            ):
+                quote = {
+                    "bid": float(bid) if bid is not None and bid > 0 else None,
+                    "ask": float(ask) if ask is not None and ask > 0 else None,
+                    "source": "ws_fallback",
+                    "ok": True,
+                }
+        self._stoploss_quote_cycle_cache[token_id] = quote
+        return quote
 
     def _stoploss_is_market_closed(self, token_id: str) -> bool:
         data = self._ws_cache.get(token_id) or {}
@@ -2637,6 +2726,11 @@ class AutoRunManager:
     def _estimate_stoploss_sellable_price(
         self, token_id: str, position_row: Dict[str, Any]
     ) -> Optional[float]:
+        # Prefer live CLOB quote in the current stoploss cycle.
+        quote = self._get_stoploss_cycle_quote(token_id)
+        bid = _coerce_float((quote or {}).get("bid"))
+        if bid is not None and bid > 0:
+            return float(bid)
         ws_bid = 0.0
         ws_age = float("inf")
         try:
@@ -2716,14 +2810,18 @@ class AutoRunManager:
         if not self._position_address:
             return
 
-        rows, info = _fetch_position_rows_from_data_api(self._position_address)
+        rows, _pos_snapshot, info, source = self._refresh_unified_position_snapshot(
+            force_refresh=False,
+            now=now,
+        )
         if info != "ok":
             self._log_throttled(
                 "stoploss_positions_fetch_error",
                 60.0,
-                f"[STOPLOSS][WARN] 持仓查询失败: {info}",
+                f"[STOPLOSS][WARN] 持仓查询失败: {info} source={source}",
             )
             return
+        self._stoploss_quote_cycle_cache = {}
 
         try:
             copytrade_scope = self._build_copytrade_active_token_set()
@@ -2790,18 +2888,49 @@ class AutoRunManager:
             if bool(state.get("source_detached", False)):
                 detached_since = float(state.get("source_detached_since_ts") or now)
                 detached_age = max(0.0, now - detached_since)
-                state["market_status_last"] = "source_detached_guard_hold"
-                state["last_error"] = "source_detached guard hold (skip auto sell)"
+                cleanup_started = bool(state.get("source_detached_cleanup_started", False))
                 state["pending_cleanup_since_ts"] = 0.0
                 state["stoploss_confirm_hits"] = 0
-                self._log_throttled(
-                    f"stoploss_source_detached_hold_{token_id}",
-                    180.0,
-                    (
-                        f"[RISK_GUARD] token={token_id[:20]}... source_detached hold "
-                        f"(no forced sell) detached_for={detached_age:.0f}s"
-                    ),
-                )
+                if detached_age < SOURCE_DETACHED_HOLD_SEC:
+                    state["market_status_last"] = "source_detached_guard_hold"
+                    state["last_error"] = "source_detached guard hold (within grace)"
+                    self._log_throttled(
+                        f"stoploss_source_detached_hold_{token_id}",
+                        180.0,
+                        (
+                            f"[RISK_GUARD] token={token_id[:20]}... source_detached hold "
+                            f"detached_for={detached_age:.0f}s grace={SOURCE_DETACHED_HOLD_SEC:.0f}s"
+                        ),
+                    )
+                elif not cleanup_started:
+                    triggered = self._trigger_sell_exit(
+                        token_id,
+                        self.tasks.get(token_id),
+                    )
+                    if triggered:
+                        state["source_detached_cleanup_started"] = True
+                        state["source_detached_cleanup_started_ts"] = float(now)
+                        state["market_status_last"] = "source_detached_timeout_cleanup_started"
+                        state["last_error"] = ""
+                        print(
+                            f"[RISK_GUARD] token={token_id[:20]}... source_detached timeout -> start one-time cleanup"
+                        )
+                    else:
+                        state["market_status_last"] = "source_detached_timeout_cleanup_suppressed"
+                        state["last_error"] = "source_detached timeout cleanup suppressed"
+                else:
+                    started_ts = float(state.get("source_detached_cleanup_started_ts") or 0.0)
+                    since_started = max(0.0, now - started_ts) if started_ts > 0 else 0.0
+                    state["market_status_last"] = "source_detached_cleanup_started_waiting"
+                    state["last_error"] = "source_detached cleanup already started"
+                    self._log_throttled(
+                        f"stoploss_source_detached_cleanup_wait_{token_id}",
+                        180.0,
+                        (
+                            f"[RISK_GUARD] token={token_id[:20]}... source_detached cleanup already started "
+                            f"wait={since_started:.0f}s"
+                        ),
+                    )
                 state_dirty = True
                 continue
 
@@ -4755,6 +4884,15 @@ class AutoRunManager:
         # 非 0 视作异常，自动补排一次 exit-only cleanup，避免漏清仓。
         if task.end_reason in ("sell signal", "sell signal cleanup"):
             if rc == 0:
+                self._append_exit_token_record(
+                    task.topic_id,
+                    "EXIT_CLEANUP_SUCCESS",
+                    exit_data={
+                        "source": "exit_only_process",
+                        "rc": rc,
+                    },
+                    refillable=False,
+                )
                 self._exit_cleanup_suppressed_until.pop(task.topic_id, None)
                 self._completed_exit_cleanup_tokens.add(task.topic_id)
                 self._exit_cleanup_retry_counts.pop(task.topic_id, None)
@@ -4766,6 +4904,15 @@ class AutoRunManager:
                 )
                 self._clear_manual_intervention_token(task.topic_id)
             else:
+                self._append_exit_token_record(
+                    task.topic_id,
+                    "EXIT_CLEANUP_FAILED",
+                    exit_data={
+                        "source": "exit_only_process",
+                        "rc": rc,
+                    },
+                    refillable=False,
+                )
                 self._completed_exit_cleanup_tokens.discard(task.topic_id)
                 retry_count = self._exit_cleanup_retry_counts.get(task.topic_id, 0) + 1
                 self._exit_cleanup_retry_counts[task.topic_id] = retry_count
@@ -5482,15 +5629,27 @@ class AutoRunManager:
             records = self._load_exit_tokens()
             if not isinstance(records, list) or not records:
                 return
-            kept = [r for r in records if str(r.get("token_id") or "") != token_id]
-            if len(kept) == len(records):
+            kept: List[Dict[str, Any]] = []
+            removed = 0
+            for rec in records:
+                rec_token = str(rec.get("token_id") or "")
+                if rec_token != token_id:
+                    kept.append(rec)
+                    continue
+                reason = str(rec.get("exit_reason") or "").strip().upper()
+                # 保留 cleanup 审计轨迹，其他记录按历史逻辑清理。
+                if reason.startswith("EXIT_CLEANUP_"):
+                    kept.append(rec)
+                else:
+                    removed += 1
+            if removed <= 0:
                 return
             try:
                 self._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
                 with self._exit_tokens_path.open("w", encoding="utf-8") as f:
                     json.dump(kept, f, ensure_ascii=False, indent=2)
                 print(
-                    f"[REFILL] cleaned exit history: token={token_id[:20]}... removed={len(records) - len(kept)}"
+                    f"[REFILL] cleaned exit history: token={token_id[:20]}... removed={removed}"
                 )
             except OSError as exc:
                 print(f"[WARN] failed to clean exit_tokens.json: {exc}")
@@ -6197,7 +6356,27 @@ class AutoRunManager:
             log_file = log_path.open("a", encoding="utf-8")
         except OSError as exc:  # pragma: no cover - 文件系统异常
             print(f"[ERROR] 无法创建清仓日志文件 {log_path}: {exc}")
+            self._append_exit_token_record(
+                token_id,
+                "EXIT_CLEANUP_FAILED",
+                exit_data={
+                    "source": "exit_only_start",
+                    "error": f"log_open_failed: {exc}",
+                },
+                refillable=False,
+            )
             return
+
+        self._append_exit_token_record(
+            token_id,
+            "EXIT_CLEANUP_STARTED",
+            exit_data={
+                "source": "exit_only_start",
+                "config_path": str(cfg_path),
+                "log_path": str(log_path),
+            },
+            refillable=False,
+        )
 
         # 构建命令行参数（不再使用环境变量）
         cmd = [
@@ -6223,6 +6402,15 @@ class AutoRunManager:
         except Exception as exc:  # pragma: no cover - 子进程异常
             log_file.close()
             print(f"[ERROR] 启动清仓进程失败 token={token_id}: {exc}")
+            self._append_exit_token_record(
+                token_id,
+                "EXIT_CLEANUP_FAILED",
+                exit_data={
+                    "source": "exit_only_start",
+                    "error": f"popen_failed: {exc}",
+                },
+                refillable=False,
+            )
             return
         log_file.close()
 
@@ -6338,11 +6526,7 @@ class AutoRunManager:
                 to_cleanup.add(token_id)
 
         for token_id in sorted(to_liquidate):
-            self._trigger_sell_exit(
-                token_id,
-                task=None,
-                trigger_source="startup_reconcile_sell_signal",
-            )
+            self._trigger_sell_exit(token_id, None)
 
         orphan_stats = self._schedule_startup_orphan_profit_sweep(
             copytrade_topics=copytrade_topics,
@@ -6556,11 +6740,7 @@ class AutoRunManager:
 
             if has_position or pos_info != "ok":
                 self._remove_pending_topic(token_id)
-                self._trigger_sell_exit(
-                    token_id,
-                    task,
-                    trigger_source="inactive_copytrade_reconcile",
-                )
+                self._trigger_sell_exit(token_id, task)
                 forced_exit += 1
                 continue
 
@@ -7744,12 +7924,23 @@ class AutoRunManager:
         cutoff_ts = float(self._process_started_at) - float(SELL_SIGNAL_REPLAY_WARMUP_SEC)
         eligible: Dict[str, Dict[str, Any]] = {}
         stale_tokens: List[str] = []
+        stale_tokens_with_position: List[str] = []
         for token_id, entry in sell_signals.items():
             signal_ts = self._coerce_sell_signal_ts(entry)
             if signal_ts is None or signal_ts < cutoff_ts:
-                stale_tokens.append(token_id)
+                if self._has_account_position(token_id):
+                    eligible[token_id] = entry
+                    stale_tokens_with_position.append(token_id)
+                else:
+                    stale_tokens.append(token_id)
                 continue
             eligible[token_id] = entry
+        if stale_tokens_with_position:
+            preview = ", ".join(stale_tokens_with_position[:5])
+            print(
+                "[COPYTRADE][REPLAY_GUARD] 启动期旧 sell 信号存在本地持仓，保留执行: "
+                f"count={len(stale_tokens_with_position)} preview={preview}"
+            )
         if stale_tokens:
             preview = ", ".join(stale_tokens[:5])
             print(
@@ -7764,28 +7955,43 @@ class AutoRunManager:
                 )
         return eligible
 
+    def _compute_orderbook_missing_backoff(
+        self, token_id: str, *, now: float
+    ) -> tuple[float, int]:
+        orderbook_missing_reasons = {"ORDERBOOK_MISSING_EXIT_ONLY", "ORDERBOOK_NOT_FOUND"}
+        recent_missing_ts: List[float] = []
+        for rec in reversed(self._load_exit_tokens()):
+            if str(rec.get("token_id") or "") != token_id:
+                continue
+            reason = str(rec.get("exit_reason") or "").strip().upper()
+            if reason not in orderbook_missing_reasons:
+                continue
+            ts = float(_coerce_float(rec.get("exit_ts")) or 0.0)
+            if ts <= 0:
+                continue
+            recent_missing_ts.append(ts)
+            if len(recent_missing_ts) >= len(EXIT_ORDERBOOK_MISSING_BACKOFF_SCHEDULE_SEC):
+                break
+        if not recent_missing_ts:
+            return 0.0, 0
+        latest_ts = recent_missing_ts[0]
+        streak = len(recent_missing_ts)
+        idx = min(streak, len(EXIT_ORDERBOOK_MISSING_BACKOFF_SCHEDULE_SEC)) - 1
+        backoff_sec = float(EXIT_ORDERBOOK_MISSING_BACKOFF_SCHEDULE_SEC[idx])
+        age = max(0.0, now - latest_ts)
+        if age >= backoff_sec:
+            return 0.0, streak
+        return backoff_sec - age, streak
+
     def _should_suppress_exit_cleanup(self, token_id: str, *, now: float) -> tuple[bool, Optional[str]]:
         until_ts = float(self._exit_cleanup_suppressed_until.get(token_id, 0.0) or 0.0)
         if until_ts > now:
             wait_sec = max(0.0, until_ts - now)
             return True, f"in_memory_backoff:{wait_sec:.0f}s"
-        latest_reason: Optional[str] = None
-        latest_ts = 0.0
-        for rec in reversed(self._load_exit_tokens()):
-            if str(rec.get("token_id") or "") != token_id:
-                continue
-            ts = float(_coerce_float(rec.get("exit_ts")) or 0.0)
-            if ts <= 0:
-                continue
-            latest_reason = str(rec.get("exit_reason") or "").strip().upper()
-            latest_ts = ts
-            break
-        if latest_reason in {"ORDERBOOK_MISSING_EXIT_ONLY", "ORDERBOOK_NOT_FOUND"} and latest_ts > 0:
-            age = max(0.0, now - latest_ts)
-            if age < EXIT_ORDERBOOK_MISSING_BACKOFF_SEC:
-                hold_sec = EXIT_ORDERBOOK_MISSING_BACKOFF_SEC - age
-                self._exit_cleanup_suppressed_until[token_id] = now + hold_sec
-                return True, f"orderbook_missing_backoff:{hold_sec:.0f}s"
+        hold_sec, streak = self._compute_orderbook_missing_backoff(token_id, now=now)
+        if hold_sec > 0:
+            self._exit_cleanup_suppressed_until[token_id] = now + hold_sec
+            return True, f"orderbook_missing_backoff:{hold_sec:.0f}s(streak={streak})"
         return False, None
 
     def _load_copytrade_blacklist(self) -> set[str]:
@@ -7909,11 +8115,7 @@ class AutoRunManager:
 
         if action == "liquidate":
             self._remove_pending_topic(token_id)
-            self._trigger_sell_exit(
-                token_id,
-                task,
-                trigger_source=f"title_blacklist:{source}",
-            )
+            self._trigger_sell_exit(token_id, task)
             if not detail.get("blacklist_with_position_recorded"):
                 self._append_exit_token_record(
                     token_id,
@@ -8070,8 +8272,8 @@ class AutoRunManager:
             self._run_full_sell_signal_recheck(sell_signals)
             self._sell_bootstrap_done = True
             self._next_sell_full_recheck_at = now + max(
-                300.0,
-                float(self.config.sell_position_poll_interval_sec),
+                10.0,
+                float(self._unified_position_cycle_interval_sec()),
             )
             return
 
@@ -8108,7 +8310,7 @@ class AutoRunManager:
                 "[COPYTRADE] SELL 信号触发持仓清仓: "
                 f"token_id={token_id} reason={reason}"
             )
-            self._trigger_sell_exit(token_id, task, trigger_source="sell_signal_incremental")
+            self._trigger_sell_exit(token_id, task)
 
     def _run_full_sell_signal_recheck(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
         """启动首轮 + 周期性兜底：全量检查全部 sell token。"""
@@ -8152,7 +8354,7 @@ class AutoRunManager:
                 "[COPYTRADE] SELL 信号触发持仓清仓: "
                 f"token_id={token_id} reason={reason}"
             )
-            self._trigger_sell_exit(token_id, task, trigger_source="sell_signal_full_recheck")
+            self._trigger_sell_exit(token_id, task)
 
     def _trigger_sell_exit(
         self,
@@ -8160,7 +8362,7 @@ class AutoRunManager:
         task: Optional[TopicTask],
         *,
         trigger_source: str = "unspecified",
-    ) -> None:
+    ) -> bool:
         now = time.time()
         suppressed, suppress_reason = self._should_suppress_exit_cleanup(token_id, now=now)
         if suppressed:
@@ -8172,7 +8374,7 @@ class AutoRunManager:
                     f"source={trigger_source} reason={suppress_reason}"
                 ),
             )
-            return
+            return False
         self._clear_reentry_eligible_token(token_id, reason="sell_exit_triggered")
         self._update_sell_signal_event(token_id, status="processing", note=f"source={trigger_source}")
         if token_id in self.pending_topics:
@@ -8203,8 +8405,32 @@ class AutoRunManager:
             f"running={bool(task and task.is_running())}"
         )
         self._handled_sell_signals.add(token_id)
+        return True
 
-    def _refresh_sell_position_snapshot(self) -> tuple[Dict[str, float], str]:
+    def _unified_position_cycle_interval_sec(self) -> float:
+        # Unified full-position cycle for stoploss + sell-signal full recheck.
+        return 60.0
+
+    def _refresh_unified_position_snapshot(
+        self,
+        *,
+        force_refresh: bool = False,
+        now: Optional[float] = None,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, float], str, str]:
+        ts_now = float(now if now is not None else time.time())
+        ttl = max(10.0, float(self._unified_position_cycle_interval_sec()))
+        if (
+            not force_refresh
+            and self._unified_position_info == "ok"
+            and (ts_now - float(self._unified_position_ts or 0.0)) <= ttl
+        ):
+            return (
+                list(self._unified_position_rows),
+                dict(self._unified_position_snapshot),
+                "ok",
+                "shared_cache",
+            )
+
         if not self._position_address:
             address, origin = _resolve_position_address_from_env()
             self._position_address = address
@@ -8214,16 +8440,45 @@ class AutoRunManager:
                 print(f"[COPYTRADE][WARN] {origin}")
 
         if not self._position_address:
-            return {}, "缺少地址，无法查询持仓。"
+            return [], {}, "缺少地址，无法查询持仓。", "missing_address"
 
-        snapshot, info = _fetch_position_snapshot_map_from_data_api(self._position_address)
+        rows, info = _fetch_position_rows_from_data_api(self._position_address)
+        if info != "ok":
+            # Prefer stale-ok snapshot over hard failure to reduce transient jitter impact.
+            if (
+                self._unified_position_info == "ok"
+                and (ts_now - float(self._unified_position_ts or 0.0)) <= ttl * 2.0
+            ):
+                return (
+                    list(self._unified_position_rows),
+                    dict(self._unified_position_snapshot),
+                    "ok",
+                    f"shared_stale_cache:{info}",
+                )
+            return [], {}, info, "live_error"
+
+        snapshot: Dict[str, float] = {}
+        for row in rows:
+            token_id = _extract_position_token_id(row)
+            if not token_id:
+                continue
+            snapshot[token_id] = float(_extract_position_size(row) or 0.0)
+
+        self._unified_position_rows = list(rows)
+        self._unified_position_snapshot = dict(snapshot)
+        self._unified_position_info = "ok"
+        self._unified_position_ts = ts_now
+        return list(rows), dict(snapshot), "ok", "live"
+
+    def _refresh_sell_position_snapshot(self) -> tuple[Dict[str, float], str]:
+        _rows, snapshot, info, source = self._refresh_unified_position_snapshot(force_refresh=False)
         if info == "ok":
             print(
                 "[COPYTRADE][INFO] SELL 持仓快照已刷新: "
-                f"positions={len(snapshot)}"
+                f"positions={len(snapshot)} source={source}"
             )
         else:
-            print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info}")
+            print(f"[COPYTRADE][INFO] SELL 持仓快照刷新失败 info={info} source={source}")
         return snapshot, info
 
     def _cleanup_old_logs(self) -> None:

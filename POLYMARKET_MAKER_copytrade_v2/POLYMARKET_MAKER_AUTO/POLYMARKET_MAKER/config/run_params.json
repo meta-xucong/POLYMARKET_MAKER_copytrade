@@ -28,8 +28,6 @@
   "enable_incremental_profit_pct": false,
   "incremental_profit_pct_step": 0.0,
   "incremental_profit_pct_cap": 0.03,
-  "stagnation_window_minutes": 120,
-  "stagnation_pct": 0.002,
   "no_event_exit_minutes": 10,
   "signal_timeout_minutes": 20,
   "min_buy_price": 0.01,
