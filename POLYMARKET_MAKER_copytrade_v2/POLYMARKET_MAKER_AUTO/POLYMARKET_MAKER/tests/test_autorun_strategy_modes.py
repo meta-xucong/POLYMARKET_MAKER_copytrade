@@ -675,6 +675,45 @@ def test_start_process_blocks_when_metadata_unverified_without_position():
     assert captured[0][1] == "TITLE_BLACKLIST_METADATA_UNVERIFIED_NO_POSITION"
 
 
+def test_ensure_resume_state_from_live_position_sets_skip_buy():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "restored_1"
+    manager.topic_details[token_id] = {"queue_role": "restored_token"}
+    manager._stoploss_reentry_states[token_id] = manager._default_stoploss_reentry_state(
+        token_id
+    )
+    manager._refresh_unified_position_snapshot = lambda **_kwargs: (  # type: ignore[assignment]
+        [{"asset": token_id, "size": 4.0, "avgPrice": 0.63}],
+        {token_id: 4.0},
+        "ok",
+        "live",
+    )
+
+    manager._ensure_resume_state_from_live_position(token_id)
+
+    resume = (manager.topic_details.get(token_id) or {}).get("resume_state") or {}
+    assert resume.get("has_position") is True
+    assert float(resume.get("position_size") or 0.0) == 4.0
+    assert float(resume.get("entry_price") or 0.0) == 0.63
+    assert resume.get("skip_buy") is True
+
+
+def test_start_process_blocked_when_sell_cleanup_in_flight():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "cleanup_token"
+    manager.pending_exit_topics.append(token_id)
+    manager.topic_details[token_id] = {"queue_role": "restored_token"}
+    manager._hydrate_topic_metadata_for_blacklist = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+    manager._apply_metadata_unverified_guard = lambda *_args, **_kwargs: "verified"  # type: ignore[assignment]
+    manager._enforce_title_blacklist_policy = lambda *_args, **_kwargs: "allowed"  # type: ignore[assignment]
+
+    ok = manager._start_topic_process(token_id)
+
+    assert ok is False
+
+
 def test_hydrate_force_official_check_not_short_circuited_by_local_metadata():
     cfg = GlobalConfig.from_dict({})
     manager = _build_manager(cfg)

@@ -4436,6 +4436,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     run_started_at = time.time()
     data_unhealthy_since: Optional[float] = None
     remote_empty_position_hits: int = 0
+    skip_buy_guard_blocked_hits: int = 0
+    skip_buy_guard_uncertain_hits: int = 0
 
     def _reconcile_empty_long_state(reason: str) -> None:
         nonlocal position_size
@@ -5170,6 +5172,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
     # ========== Slot Refill (回填) 恢复状态 ==========
     # 【修复BUG】将REFILL逻辑移动到 _execute_sell 定义之后，确保可以立即调用挂卖单
+    skip_buy = False
     resume_state = run_cfg.get("resume_state")
     if resume_state and isinstance(resume_state, dict):
         has_position = resume_state.get("has_position", False)
@@ -6071,7 +6074,42 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if latest_pos is None:
                         return None
                     return max(float(latest_pos) - baseline_position, 0.0)
-    
+
+                if _exit_signal_active():
+                    print("[BUY][GUARD] exit signal active, stop before buy")
+                    _force_exit("sell signal file detected (pre-buy guard)")
+                    continue
+
+                if skip_buy:
+                    _maybe_refresh_position_size("[BUY][GUARD][SKIP_BUY]", force=True)
+                    if _has_actionable_position():
+                        skip_buy_guard_blocked_hits += 1
+                        blocked_reason = "position_present"
+                        if remote_empty_position_hits > 0:
+                            skip_buy_guard_uncertain_hits += 1
+                            blocked_reason = (
+                                f"position_sync_uncertain(empty_hits={remote_empty_position_hits})"
+                            )
+                        if (
+                            skip_buy_guard_blocked_hits == 1
+                            or skip_buy_guard_blocked_hits % 10 == 0
+                            or blocked_reason != "position_present"
+                        ):
+                            print(
+                                "[BUY][GUARD][OBS] skip_buy 持续拦截: "
+                                f"blocked_hits={skip_buy_guard_blocked_hits} "
+                                f"uncertain_hits={skip_buy_guard_uncertain_hits} "
+                                f"reason={blocked_reason}"
+                            )
+                        print("[BUY][GUARD] skip_buy=true and position exists, reject buy")
+                        strategy.on_reject("skip_buy guard: existing position")
+                        buy_cooldown_until = time.time() + short_buy_cooldown
+                        continue
+                    skip_buy = False
+                    skip_buy_guard_blocked_hits = 0
+                    skip_buy_guard_uncertain_hits = 0
+                    print("[BUY][GUARD] skip_buy released (no actionable position)")
+
                 if awaiting_buy_passthrough:
                     awaiting_buy_passthrough = False
                 try:
@@ -6390,3 +6428,4 @@ if __name__ == "__main__":
 
     cfg = _load_run_config(cfg_path)
     main(cfg)
+

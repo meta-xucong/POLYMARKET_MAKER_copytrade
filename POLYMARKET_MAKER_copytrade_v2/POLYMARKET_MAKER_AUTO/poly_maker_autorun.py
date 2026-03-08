@@ -6298,6 +6298,14 @@ class AutoRunManager:
             )
             return False
 
+        if self._is_sell_cleanup_in_flight(topic_id):
+            print(
+                f"[SCHED][GUARD] topic={topic_id[:16]}... 清仓进行中，跳过普通启动"
+            )
+            return False
+
+        self._ensure_resume_state_from_live_position(topic_id)
+
         config_data = self._build_run_config(topic_id)
         if not self._apply_token_cycle_buy_gate_and_drop_override(topic_id, config_data):
             return False
@@ -6444,6 +6452,74 @@ class AutoRunManager:
         self._clear_reentry_eligible_token(topic_id, reason="maker_started")
         print(f"[START] topic={topic_id} pid={proc.pid} log={log_path}")
         return True
+
+    def _is_sell_cleanup_in_flight(self, token_id: str) -> bool:
+        if not token_id:
+            return False
+        if token_id in self.pending_exit_topics:
+            return True
+        task = self.tasks.get(token_id)
+        if task and task.is_running() and task.end_reason == "sell signal cleanup":
+            return True
+        detail = self.topic_details.get(token_id) or {}
+        sell_phase = str(detail.get("sell_exit_phase") or "").strip().lower()
+        return sell_phase == "forced_cleanup"
+
+    def _ensure_resume_state_from_live_position(self, token_id: str) -> None:
+        if not token_id:
+            return
+        detail = self.topic_details.setdefault(token_id, {})
+        queue_role = str(detail.get("queue_role") or "").strip().lower()
+        has_existing_resume = isinstance(detail.get("resume_state"), dict)
+        should_probe = queue_role == "restored_token" or has_existing_resume
+        if not should_probe:
+            return
+
+        rows, snapshot, info, source = self._refresh_unified_position_snapshot(
+            force_refresh=False
+        )
+        if info != "ok":
+            print(
+                "[RESUME][SKIP] 持仓快照不可用，保持原配置: "
+                f"token={token_id[:16]}... info={info} source={source}"
+            )
+            return
+
+        size = float(snapshot.get(token_id, 0.0) or 0.0)
+        if size <= POSITION_CLEANUP_DUST_THRESHOLD:
+            return
+
+        row: Optional[Dict[str, Any]] = None
+        for item in rows:
+            if _extract_position_token_id(item) == token_id:
+                row = item
+                break
+
+        entry_price = _extract_position_avg_price(row or {})
+        if entry_price is None or entry_price <= 0:
+            state = self._stoploss_reentry_states.get(token_id) or {}
+            for candidate in (
+                state.get("old_last_buy_price"),
+                state.get("old_entry_price"),
+                detail.get("entry_price"),
+                detail.get("last_buy_price"),
+            ):
+                val = _coerce_float(candidate)
+                if val is not None and val > 0:
+                    entry_price = float(val)
+                    break
+
+        resume_state = {
+            "has_position": True,
+            "position_size": float(size),
+            "entry_price": float(entry_price) if entry_price and entry_price > 0 else None,
+            "skip_buy": True,
+        }
+        detail["resume_state"] = resume_state
+        print(
+            "[RESUME] 检测到已有持仓，强制跳过买入: "
+            f"token={token_id[:16]}... size={size:.4f}"
+        )
 
     def _start_exit_cleanup(self, token_id: str) -> None:
         task = self.tasks.get(token_id)
