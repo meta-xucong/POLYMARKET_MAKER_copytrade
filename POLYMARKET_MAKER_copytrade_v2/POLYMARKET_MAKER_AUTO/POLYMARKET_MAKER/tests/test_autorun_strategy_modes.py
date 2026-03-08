@@ -1838,7 +1838,7 @@ def test_process_exit_forces_log_refresh_for_reentry_hold_recovery(tmp_path):
     assert manager._stoploss_reentry_states["t1"]["state"] == "NORMAL_MAKER"
 
 
-def test_source_detached_with_position_uses_sell_cleanup_chain(tmp_path):
+def test_source_detached_with_position_is_guard_held_without_forced_sell(tmp_path):
     manager = _build_stoploss_manager(tmp_path)
     now = time.time()
     manager._build_copytrade_active_token_set = lambda: set()  # type: ignore[assignment]
@@ -1857,7 +1857,7 @@ def test_source_detached_with_position_uses_sell_cleanup_chain(tmp_path):
         lambda *args, **kwargs: liq_calls.append((args, kwargs)) or {"ok": True}
     )
     sell_calls = []
-    manager._trigger_sell_exit = lambda token_id, task=None: sell_calls.append((token_id, task))  # type: ignore[assignment]
+    manager._trigger_sell_exit = lambda token_id, task=None, **kwargs: sell_calls.append((token_id, task, kwargs))  # type: ignore[assignment]
     old_fetch = autorun_mod._fetch_position_rows_from_data_api
     autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
         [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.9}],
@@ -1869,7 +1869,6 @@ def test_source_detached_with_position_uses_sell_cleanup_chain(tmp_path):
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
     state = manager._stoploss_reentry_states["t1"]
     assert bool(state.get("source_detached", False)) is True
-    assert state.get("market_status_last") == "source_detached_local_risk_exit"
+    assert state.get("market_status_last") == "source_detached_guard_hold"
     assert liq_calls == []
-    assert len(sell_calls) == 1
-    assert sell_calls[0][0] == "t1"
+    assert sell_calls == []

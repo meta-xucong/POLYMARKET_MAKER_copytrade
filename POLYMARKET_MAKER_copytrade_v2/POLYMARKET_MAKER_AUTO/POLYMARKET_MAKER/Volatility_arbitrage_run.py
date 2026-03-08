@@ -1948,6 +1948,14 @@ def _is_balance_or_allowance_error(exc: Exception) -> bool:
     return any(k in text for k in keywords)
 
 
+def _is_missing_orderbook_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "no orderbook exists for the requested token id" in text
+        or ("orderbook" in text and "does not exist" in text)
+    )
+
+
 def _build_exit_price_ladder(base_price: float, min_price: float) -> List[float]:
     """构建清仓 IOC 的价格阶梯，避免一直卡在同一价格。"""
     base = max(float(base_price or 0.0), float(min_price))
@@ -2819,14 +2827,40 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
             # 3. 获取最新 best_bid 价格
             exit_price = MIN_PRICE
+            missing_orderbook = False
             try:
                 best_bid = _fetch_best_price(client, str(token_id), "bid")
                 if best_bid is not None and best_bid.price and best_bid.price > 0:
                     exit_price = float(best_bid.price)
-            except OrderbookNotFoundError:
+            except OrderbookNotFoundError as exc:
                 print(f"[EXIT] orderbook 不存在，使用最低清仓价: {MIN_PRICE}")
+                missing_orderbook = True
+                missing_orderbook_err = exc
             except Exception as exc:
                 print(f"[EXIT] 获取 best_bid 失败: {exc}，使用最低清仓价: {MIN_PRICE}")
+                missing_orderbook_err = exc
+                if _is_missing_orderbook_error(exc):
+                    missing_orderbook = True
+
+            if missing_orderbook:
+                now_ts = time.time()
+                market_ended = _market_has_ended(market_meta, now_ts)
+                reason = "MARKET_CLOSED" if market_ended else "ORDERBOOK_MISSING_EXIT_ONLY"
+                print(
+                    f"[EXIT][STOP] orderbook 缺失，停止 IOC 清仓重试: reason={reason} "
+                    f"token={token_id[:24]}..."
+                )
+                _record_exit_token(
+                    token_id,
+                    reason,
+                    {
+                        "detected_at": "exit_only_loop_best_bid",
+                        "has_position": True,
+                        "remaining_pos": remaining_pos,
+                        "error": str(missing_orderbook_err)[:500],
+                    },
+                )
+                break
 
             # 4. 发出 IOC 卖单（允许部分成交），若 FAK 无法撮合则自动阶梯降价重试
             try:
@@ -2878,6 +2912,25 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                             print("[EXIT][SYNC] 快速复检后持仓未收敛，进入下一轮常规重试")
                     if sync_done and (remaining_pos is None or remaining_pos <= DUST_THRESHOLD):
                         break
+                elif _is_missing_orderbook_error(exc):
+                    now_ts = time.time()
+                    market_ended = _market_has_ended(market_meta, now_ts)
+                    reason = "MARKET_CLOSED" if market_ended else "ORDERBOOK_MISSING_EXIT_ONLY"
+                    print(
+                        f"[EXIT][STOP] IOC 清仓检测到缺失 orderbook，停止重试: reason={reason} "
+                        f"token={token_id[:24]}..."
+                    )
+                    _record_exit_token(
+                        token_id,
+                        reason,
+                        {
+                            "detected_at": "exit_only_loop_ioc",
+                            "has_position": True,
+                            "remaining_pos": remaining_pos,
+                            "error": str(exc)[:500],
+                        },
+                    )
+                    break
                 else:
                     print(f"[EXIT] IOC 清仓卖单失败: {exc}")
 
@@ -4164,6 +4217,24 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                             print("[EXIT][SYNC] 快速复检后持仓未收敛，进入下一轮常规重试")
                     if sync_done and (remaining_pos is None or remaining_pos <= DUST_THRESHOLD):
                         break
+                elif _is_missing_orderbook_error(exc):
+                    now_ts = time.time()
+                    market_ended = _market_has_ended(market_meta, now_ts)
+                    reason = "MARKET_CLOSED" if market_ended else "ORDERBOOK_MISSING_EXIT_ONLY"
+                    print(
+                        f"[EXIT][STOP] IOC 清仓检测到缺失 orderbook，停止重试: reason={reason} "
+                        f"token={token_id[:24]}..."
+                    )
+                    _record_exit_token(
+                        token_id,
+                        reason,
+                        {
+                            "detected_at": "sell_signal_cleanup_ioc",
+                            "has_position": _has_actionable_position(),
+                            "error": str(exc)[:500],
+                        },
+                    )
+                    break
                 else:
                     print(f"[EXIT] IOC 清仓卖单失败: {exc}")
 

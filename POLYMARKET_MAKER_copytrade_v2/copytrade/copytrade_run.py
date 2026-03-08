@@ -421,6 +421,7 @@ def run_once(
                     "token_id": token_id,
                     "source_account": account,
                     "last_seen": last_seen,
+                    "signal_ts": float(action["timestamp"].timestamp()),
                     "introduced_by_buy": True,
                     "status": "pending",
                     "attempts": 0,

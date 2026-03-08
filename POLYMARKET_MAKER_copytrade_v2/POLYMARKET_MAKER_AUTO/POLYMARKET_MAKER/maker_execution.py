@@ -62,6 +62,7 @@ _BACKOFF_MAX_LEVEL = 5  # 2^5 = 32s, 之后固定60s
 _api_backoff_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
 _orderbook_404_state: Dict[str, Dict[str, Any]] = {}
 _ORDERBOOK_404_MAX_CONSECUTIVE = 5
+_MISSING_POSITION_RETRY_SLEEP_SEC = (10, 20, 40, 60, 60)
 # WebSocket 返回 None 连续计数（token_id, side）
 _ws_none_streak: Dict[Tuple[str, str], int] = {}
 _WS_NONE_DEGRADE_THRESHOLD = 3
@@ -1810,11 +1811,14 @@ def maker_sell_follow_ask_with_floor_wait(
                             final_status = "FAILED"
                             print("[MAKER][SELL] 无法获取最新仓位，退出卖出流程。")
                             break
+                        retry_sleep = _MISSING_POSITION_RETRY_SLEEP_SEC[
+                            min(missing_position_retry - 1, len(_MISSING_POSITION_RETRY_SLEEP_SEC) - 1)
+                        ]
                         print(
-                            "[MAKER][SELL] 无法获取最新仓位，等待60s后重试同步。 "
-                            f"(attempt {missing_position_retry}/5)"
+                            "[MAKER][SELL] 无法获取最新仓位，等待后重试同步。 "
+                            f"(attempt {missing_position_retry}/5, sleep={retry_sleep}s)"
                         )
-                        sleep_fn(60)
+                        sleep_fn(float(retry_sleep))
                         continue
                     missing_position_retry = 0
 

@@ -24,6 +24,7 @@ import tempfile
 import threading
 import time
 import traceback
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -238,6 +239,8 @@ POSITION_CHECK_CACHE_TTL_SEC = 600.0
 # 低余额筛查场景下：无持仓 token 启动时检查一次，之后每 30 分钟再复检，
 # 避免在 copytrade 轮询周期（30s）下重复高频查询。
 POSITION_CHECK_NEGATIVE_CACHE_TTL_SEC = 1800.0
+SELL_SIGNAL_REPLAY_WARMUP_SEC = 300.0
+EXIT_ORDERBOOK_MISSING_BACKOFF_SEC = 6 * 3600.0
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
 SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC = 45.0
@@ -2010,6 +2013,7 @@ class AutoRunManager:
         self._next_sell_full_recheck_at: float = 0.0
         self._sell_position_snapshot: Dict[str, float] = {}
         self._sell_position_snapshot_info: str = ""
+        self._exit_cleanup_suppressed_until: Dict[str, float] = {}
         # WS 健康分层清理状态
         self._ws_recent_recovery_ts: Dict[str, float] = {}
         self._ws_prev_stale_state: Dict[str, bool] = {}
@@ -2784,14 +2788,20 @@ class AutoRunManager:
                 continue
 
             if bool(state.get("source_detached", False)):
-                state["market_status_last"] = "source_detached_local_risk_exit"
-                state["last_error"] = ""
+                detached_since = float(state.get("source_detached_since_ts") or now)
+                detached_age = max(0.0, now - detached_since)
+                state["market_status_last"] = "source_detached_guard_hold"
+                state["last_error"] = "source_detached guard hold (skip auto sell)"
                 state["pending_cleanup_since_ts"] = 0.0
-                try:
-                    self._trigger_sell_exit(token_id, task=self.tasks.get(token_id))
-                    print(f"[RISK_GUARD] token={token_id[:20]}... source_detached with local position -> sell_cleanup_chain")
-                except Exception:
-                    pass
+                state["stoploss_confirm_hits"] = 0
+                self._log_throttled(
+                    f"stoploss_source_detached_hold_{token_id}",
+                    180.0,
+                    (
+                        f"[RISK_GUARD] token={token_id[:20]}... source_detached hold "
+                        f"(no forced sell) detached_for={detached_age:.0f}s"
+                    ),
+                )
                 state_dirty = True
                 continue
 
@@ -4745,6 +4755,7 @@ class AutoRunManager:
         # 非 0 视作异常，自动补排一次 exit-only cleanup，避免漏清仓。
         if task.end_reason in ("sell signal", "sell signal cleanup"):
             if rc == 0:
+                self._exit_cleanup_suppressed_until.pop(task.topic_id, None)
                 self._completed_exit_cleanup_tokens.add(task.topic_id)
                 self._exit_cleanup_retry_counts.pop(task.topic_id, None)
                 self._update_sell_signal_event(
@@ -6327,7 +6338,11 @@ class AutoRunManager:
                 to_cleanup.add(token_id)
 
         for token_id in sorted(to_liquidate):
-            self._trigger_sell_exit(token_id, task=None)
+            self._trigger_sell_exit(
+                token_id,
+                task=None,
+                trigger_source="startup_reconcile_sell_signal",
+            )
 
         orphan_stats = self._schedule_startup_orphan_profit_sweep(
             copytrade_topics=copytrade_topics,
@@ -6541,7 +6556,11 @@ class AutoRunManager:
 
             if has_position or pos_info != "ok":
                 self._remove_pending_topic(token_id)
-                self._trigger_sell_exit(token_id, task)
+                self._trigger_sell_exit(
+                    token_id,
+                    task,
+                    trigger_source="inactive_copytrade_reconcile",
+                )
                 forced_exit += 1
                 continue
 
@@ -7676,7 +7695,7 @@ class AutoRunManager:
                 skipped += 1
                 continue
             status = str(item.get("status") or "pending").strip().lower()
-            if status == "done":
+            if status in {"done", "stale_ignored"}:
                 continue
             entry = dict(item)
             entry["status"] = status if status else "pending"
@@ -7691,6 +7710,83 @@ class AutoRunManager:
         if skipped:
             print(f"[COPYTRADE] 已跳过未引入的 sell 信号 {skipped} 条")
         return signals
+
+    @staticmethod
+    def _coerce_sell_signal_ts(entry: Dict[str, Any]) -> Optional[float]:
+        if not isinstance(entry, dict):
+            return None
+        for key in ("signal_ts", "updated_ts", "created_ts"):
+            raw = entry.get(key)
+            ts = _coerce_float(raw)
+            if ts is not None and ts > 0:
+                return float(ts)
+        for key in ("updated_at", "last_seen"):
+            raw_text = str(entry.get(key) or "").strip()
+            if not raw_text:
+                continue
+            normalized = raw_text.replace("Z", "+00:00")
+            try:
+                return float(datetime.fromisoformat(normalized).timestamp())
+            except Exception:
+                continue
+        return None
+
+    def _filter_sell_signals_for_execution(
+        self,
+        sell_signals: Dict[str, Dict[str, Any]],
+        *,
+        now: float,
+    ) -> Dict[str, Dict[str, Any]]:
+        if not sell_signals:
+            return {}
+        if self._sell_bootstrap_done:
+            return sell_signals
+        cutoff_ts = float(self._process_started_at) - float(SELL_SIGNAL_REPLAY_WARMUP_SEC)
+        eligible: Dict[str, Dict[str, Any]] = {}
+        stale_tokens: List[str] = []
+        for token_id, entry in sell_signals.items():
+            signal_ts = self._coerce_sell_signal_ts(entry)
+            if signal_ts is None or signal_ts < cutoff_ts:
+                stale_tokens.append(token_id)
+                continue
+            eligible[token_id] = entry
+        if stale_tokens:
+            preview = ", ".join(stale_tokens[:5])
+            print(
+                "[COPYTRADE][REPLAY_GUARD] 启动期忽略历史 sell 信号: "
+                f"count={len(stale_tokens)} cutoff={cutoff_ts:.0f} preview={preview}"
+            )
+            for token_id in stale_tokens:
+                self._update_sell_signal_event(
+                    token_id,
+                    status="stale_ignored",
+                    note="startup_replay_guard",
+                )
+        return eligible
+
+    def _should_suppress_exit_cleanup(self, token_id: str, *, now: float) -> tuple[bool, Optional[str]]:
+        until_ts = float(self._exit_cleanup_suppressed_until.get(token_id, 0.0) or 0.0)
+        if until_ts > now:
+            wait_sec = max(0.0, until_ts - now)
+            return True, f"in_memory_backoff:{wait_sec:.0f}s"
+        latest_reason: Optional[str] = None
+        latest_ts = 0.0
+        for rec in reversed(self._load_exit_tokens()):
+            if str(rec.get("token_id") or "") != token_id:
+                continue
+            ts = float(_coerce_float(rec.get("exit_ts")) or 0.0)
+            if ts <= 0:
+                continue
+            latest_reason = str(rec.get("exit_reason") or "").strip().upper()
+            latest_ts = ts
+            break
+        if latest_reason in {"ORDERBOOK_MISSING_EXIT_ONLY", "ORDERBOOK_NOT_FOUND"} and latest_ts > 0:
+            age = max(0.0, now - latest_ts)
+            if age < EXIT_ORDERBOOK_MISSING_BACKOFF_SEC:
+                hold_sec = EXIT_ORDERBOOK_MISSING_BACKOFF_SEC - age
+                self._exit_cleanup_suppressed_until[token_id] = now + hold_sec
+                return True, f"orderbook_missing_backoff:{hold_sec:.0f}s"
+        return False, None
 
     def _load_copytrade_blacklist(self) -> set[str]:
         path = self.config.copytrade_blacklist_path
@@ -7813,7 +7909,11 @@ class AutoRunManager:
 
         if action == "liquidate":
             self._remove_pending_topic(token_id)
-            self._trigger_sell_exit(token_id, task)
+            self._trigger_sell_exit(
+                token_id,
+                task,
+                trigger_source=f"title_blacklist:{source}",
+            )
             if not detail.get("blacklist_with_position_recorded"):
                 self._append_exit_token_record(
                     token_id,
@@ -7953,12 +8053,15 @@ class AutoRunManager:
     def _apply_sell_signals(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
         if not sell_signals:
             return
+        now = time.time()
+        sell_signals = self._filter_sell_signals_for_execution(sell_signals, now=now)
+        if not sell_signals:
+            return
         signal_tokens = set(sell_signals.keys())
         # 仅保留当前仍在 sell 文件中的处理记录，
         # 当上游移除并再次写入同一 token 时，允许新一轮 sell 信号重新触发。
         self._handled_sell_signals.intersection_update(signal_tokens)
 
-        now = time.time()
         full_recheck_due = (not self._sell_bootstrap_done) or (
             now >= self._next_sell_full_recheck_at
         )
@@ -8005,7 +8108,7 @@ class AutoRunManager:
                 "[COPYTRADE] SELL 信号触发持仓清仓: "
                 f"token_id={token_id} reason={reason}"
             )
-            self._trigger_sell_exit(token_id, task)
+            self._trigger_sell_exit(token_id, task, trigger_source="sell_signal_incremental")
 
     def _run_full_sell_signal_recheck(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
         """启动首轮 + 周期性兜底：全量检查全部 sell token。"""
@@ -8049,23 +8152,44 @@ class AutoRunManager:
                 "[COPYTRADE] SELL 信号触发持仓清仓: "
                 f"token_id={token_id} reason={reason}"
             )
-            self._trigger_sell_exit(token_id, task)
+            self._trigger_sell_exit(token_id, task, trigger_source="sell_signal_full_recheck")
 
-    def _trigger_sell_exit(self, token_id: str, task: Optional[TopicTask]) -> None:
+    def _trigger_sell_exit(
+        self,
+        token_id: str,
+        task: Optional[TopicTask],
+        *,
+        trigger_source: str = "unspecified",
+    ) -> None:
+        now = time.time()
+        suppressed, suppress_reason = self._should_suppress_exit_cleanup(token_id, now=now)
+        if suppressed:
+            self._log_throttled(
+                f"exit_cleanup_suppressed_{token_id}",
+                120.0,
+                (
+                    f"[EXIT-CLEAN][SUPPRESS] token={token_id[:20]}... "
+                    f"source={trigger_source} reason={suppress_reason}"
+                ),
+            )
+            return
         self._clear_reentry_eligible_token(token_id, reason="sell_exit_triggered")
-        self._update_sell_signal_event(token_id, status="processing")
+        self._update_sell_signal_event(token_id, status="processing", note=f"source={trigger_source}")
         if token_id in self.pending_topics:
             self._remove_pending_topic(token_id)
+        detail = self.topic_details.setdefault(token_id, {})
+        detail["sell_trigger_source"] = str(trigger_source)
+        detail["sell_trigger_ts"] = float(now)
         if task and task.is_running():
             task.no_restart = True
             task.end_reason = "sell signal"
             task.heartbeat("sell signal received")
-            deadline = time.time() + SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC
+            deadline = now + SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC
             self._sell_exit_deadlines[token_id] = deadline
-            detail = self.topic_details.setdefault(token_id, {})
-            detail["sell_exit_requested_at"] = time.time()
+            detail["sell_exit_requested_at"] = now
             detail["sell_exit_deadline_at"] = deadline
             detail["sell_exit_phase"] = "grace"
+            detail["sell_exit_source"] = str(trigger_source)
         self._issue_exit_signal(token_id)
         if not (task and task.is_running()):
             if (
@@ -8074,6 +8198,10 @@ class AutoRunManager:
                 and token_id not in self.pending_burst_topics
             ):
                 self.pending_exit_topics.append(token_id)
+        print(
+            f"[EXIT-CLEAN][TRIGGER] token={token_id[:20]}... source={trigger_source} "
+            f"running={bool(task and task.is_running())}"
+        )
         self._handled_sell_signals.add(token_id)
 
     def _refresh_sell_position_snapshot(self) -> tuple[Dict[str, float], str]:
