@@ -247,6 +247,7 @@ EXIT_ORDERBOOK_MISSING_BACKOFF_SCHEDULE_SEC = (5 * 60.0, 15 * 60.0, 30 * 60.0)
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
 SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC = 45.0
+ALLOWED_IOC_EXIT_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY"}
 DATA_API_RATE_LIMIT_SEC = 1.0
 DATA_API_TIMEOUT_SEC = 10.0
 DATA_API_POSITION_RETRY_ATTEMPTS = 3
@@ -1950,6 +1951,7 @@ class AutoRunManager:
         self._config_mtime_ns: Optional[int] = None
         self.status_path = self.config.runtime_status_path
         self._ws_cache_path = self.config.data_dir / "ws_cache.json"
+        self._orphan_tokens_path = self.config.data_dir / "orphan_tokens.json"
         self._ws_cache_lock = threading.Lock()
         self._ws_cache: Dict[str, Dict[str, Any]] = {}
         # 【修复】添加 topic_details 锁，保护并发修改
@@ -2978,21 +2980,25 @@ class AutoRunManager:
                             )
                             state_dirty = True
                             continue
-                    triggered = self._trigger_sell_exit(
+                    self._mark_token_orphaned(
                         token_id,
-                        self.tasks.get(token_id),
+                        reason="SOURCE_DETACHED_TIMEOUT",
+                        trigger_source="stoploss_source_detached",
+                        task=self.tasks.get(token_id),
+                        note="source detached timeout; token moved to orphan queue",
+                        position_snapshot={
+                            "size": float(pos_size),
+                            "avg_price": _extract_position_avg_price(row),
+                            "cur_price": _extract_position_current_price(row),
+                        },
                     )
-                    if triggered:
-                        state["source_detached_cleanup_started"] = True
-                        state["source_detached_cleanup_started_ts"] = float(now)
-                        state["market_status_last"] = "source_detached_timeout_cleanup_started"
-                        state["last_error"] = ""
-                        print(
-                            f"[RISK_GUARD] token={token_id[:20]}... source_detached timeout -> start one-time cleanup"
-                        )
-                    else:
-                        state["market_status_last"] = "source_detached_timeout_cleanup_suppressed"
-                        state["last_error"] = "source_detached timeout cleanup suppressed"
+                    state["source_detached_cleanup_started"] = True
+                    state["source_detached_cleanup_started_ts"] = float(now)
+                    state["market_status_last"] = "source_detached_timeout_orphan_recorded"
+                    state["last_error"] = ""
+                    print(
+                        f"[RISK_GUARD] token={token_id[:20]}... source_detached timeout -> moved to orphan"
+                    )
                 else:
                     started_ts = float(state.get("source_detached_cleanup_started_ts") or 0.0)
                     since_started = max(0.0, now - started_ts) if started_ts > 0 else 0.0
@@ -4869,7 +4875,13 @@ class AutoRunManager:
                     print(
                         f"[AUTO] topic={task.topic_id} 日志显示市场已结束，自动结束该话题。"
                     )
-                    self._terminate_task(task, reason="market closed (auto)")
+                    self._mark_token_orphaned(
+                        task.topic_id,
+                        reason="MARKET_TERMINAL_DETECTED",
+                        trigger_source="market_closed_auto",
+                        task=task,
+                        note="market closed/resolved detected from child log",
+                    )
                     # 从 copytrade 文件中移除该 token，避免重启后再次加入
                     self._remove_token_from_copytrade_files(task.topic_id)
                 continue
@@ -4888,12 +4900,23 @@ class AutoRunManager:
             if not (task and task.is_running() and task.end_reason == "sell signal"):
                 self._sell_exit_deadlines.pop(token_id, None)
                 continue
+            detail = self.topic_details.setdefault(token_id, {})
+            exit_reason = self._normalize_exit_reason(detail.get("sell_exit_reason"))
+            if not self._is_ioc_exit_reason_allowed(exit_reason):
+                self._sell_exit_deadlines.pop(token_id, None)
+                self._mark_token_orphaned(
+                    token_id,
+                    reason=f"DEADLINE_BLOCKED_{exit_reason or 'UNSPECIFIED'}",
+                    trigger_source="sell_signal_grace_timeout",
+                    task=task,
+                    note="deadline reached but IOC reason not allowed",
+                )
+                continue
 
             print(
                 "[COPYTRADE][WARN] sell signal grace timeout, force terminate and "
                 f"fallback to exit-only cleanup: token_id={token_id}"
             )
-            detail = self.topic_details.setdefault(token_id, {})
             detail["sell_exit_phase"] = "forced_cleanup"
             self._terminate_task(task, reason="sell signal grace timeout -> force cleanup")
             self._sell_exit_deadlines.pop(token_id, None)
@@ -6006,6 +6029,11 @@ class AutoRunManager:
             merged["force_sell_only_on_startup"] = True
         if topic_info.get("startup_skip_if_open_sell"):
             merged["startup_skip_if_open_sell"] = True
+        if topic_info.get("sell_exit_reason"):
+            merged["exit_cleanup_reason"] = str(topic_info.get("sell_exit_reason"))
+        if topic_info.get("sell_trigger_source"):
+            merged["exit_cleanup_source"] = str(topic_info.get("sell_trigger_source"))
+        merged["allow_ioc_exit_reasons"] = sorted(ALLOWED_IOC_EXIT_REASONS)
 
         resume_drop_pct = topic_info.get("resume_drop_pct")
         if resume_drop_pct is not None:
@@ -6595,6 +6623,16 @@ class AutoRunManager:
             return
         self._sell_exit_deadlines.pop(token_id, None)
         detail = self.topic_details.setdefault(token_id, {})
+        exit_reason = self._normalize_exit_reason(detail.get("sell_exit_reason"))
+        if not self._is_ioc_exit_reason_allowed(exit_reason):
+            self._mark_token_orphaned(
+                token_id,
+                reason=f"EXIT_ONLY_BLOCKED_{exit_reason or 'UNSPECIFIED'}",
+                trigger_source=str(detail.get("sell_trigger_source") or "start_exit_cleanup"),
+                task=task,
+                note="exit_only cleanup blocked by IOC reason whitelist",
+            )
+            return
         detail.pop("sell_exit_requested_at", None)
         detail.pop("sell_exit_deadline_at", None)
         detail["sell_exit_phase"] = "forced_cleanup"
@@ -6609,6 +6647,9 @@ class AutoRunManager:
         config_data = self._build_run_config(token_id)
         config_data["exit_only"] = True
         config_data["token_id"] = config_data.get("token_id") or token_id
+        config_data["exit_cleanup_reason"] = exit_reason
+        config_data["exit_cleanup_source"] = str(detail.get("sell_trigger_source") or "")
+        config_data["allow_ioc_exit_reasons"] = sorted(ALLOWED_IOC_EXIT_REASONS)
         cfg_path = self.config.data_dir / f"run_params_{_safe_topic_filename(token_id)}.json"
         _dump_json_file(cfg_path, config_data)
 
@@ -6788,7 +6829,12 @@ class AutoRunManager:
                 to_cleanup.add(token_id)
 
         for token_id in sorted(to_liquidate):
-            self._trigger_sell_exit(token_id, None)
+            self._trigger_sell_exit(
+                token_id,
+                None,
+                trigger_source="startup_reconcile_sell_signal",
+                trigger_reason="COPYTRADE_SELL",
+            )
 
         orphan_stats = self._schedule_startup_orphan_profit_sweep(
             copytrade_topics=copytrade_topics,
@@ -7002,7 +7048,16 @@ class AutoRunManager:
 
             if has_position or pos_info != "ok":
                 self._remove_pending_topic(token_id)
-                self._trigger_sell_exit(token_id, task)
+                self._mark_token_orphaned(
+                    token_id,
+                    reason="INACTIVE_COPYTRADE_LEAK",
+                    trigger_source="inactive_copytrade_reconcile",
+                    task=task,
+                    note=f"pos_info={pos_info}",
+                    position_snapshot={
+                        "size": float(pos_snapshot.get(token_id, 0.0) or 0.0),
+                    },
+                )
                 forced_exit += 1
                 continue
 
@@ -8376,7 +8431,13 @@ class AutoRunManager:
 
         if action == "liquidate":
             self._remove_pending_topic(token_id)
-            self._trigger_sell_exit(token_id, task)
+            self._mark_token_orphaned(
+                token_id,
+                reason="TITLE_BLACKLIST_LIQUIDATE_BLOCKED",
+                trigger_source=f"title_blacklist:{source}",
+                task=task,
+                note="liquidate action downgraded to orphan manual handling",
+            )
             if not detail.get("blacklist_with_position_recorded"):
                 self._append_exit_token_record(
                     token_id,
@@ -8393,7 +8454,7 @@ class AutoRunManager:
                 detail["blacklist_with_position_recorded"] = True
             self._update_handled_topics([token_id])
             print(
-                "[BLACKLIST][TITLE] 命中且有仓位，走清仓通道: "
+                "[BLACKLIST][TITLE] 命中且有仓位，已降级为 orphan 人工处理: "
                 f"token={token_id[:20]}... keyword={matched_keyword} source={source}"
             )
             return "force_liquidate"
@@ -8440,10 +8501,18 @@ class AutoRunManager:
         safe_id = _safe_topic_filename(token_id)
         return self.config.data_dir / f"exit_signal_{safe_id}.json"
 
-    def _issue_exit_signal(self, token_id: str) -> None:
+    def _issue_exit_signal(
+        self,
+        token_id: str,
+        *,
+        trigger_source: str = "unspecified",
+        trigger_reason: str = "UNSPECIFIED",
+    ) -> None:
         path = self._exit_signal_path(token_id)
         payload = {
             "token_id": token_id,
+            "trigger_source": str(trigger_source),
+            "exit_reason": self._normalize_exit_reason(trigger_reason),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         _dump_json_file(path, payload)
@@ -8571,7 +8640,12 @@ class AutoRunManager:
                 "[COPYTRADE] SELL 信号触发持仓清仓: "
                 f"token_id={token_id} reason={reason}"
             )
-            self._trigger_sell_exit(token_id, task)
+            self._trigger_sell_exit(
+                token_id,
+                task,
+                trigger_source="copytrade_sell_signal_incremental",
+                trigger_reason="COPYTRADE_SELL",
+            )
 
     def _run_full_sell_signal_recheck(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
         """启动首轮 + 周期性兜底：全量检查全部 sell token。"""
@@ -8615,7 +8689,12 @@ class AutoRunManager:
                 "[COPYTRADE] SELL 信号触发持仓清仓: "
                 f"token_id={token_id} reason={reason}"
             )
-            self._trigger_sell_exit(token_id, task)
+            self._trigger_sell_exit(
+                token_id,
+                task,
+                trigger_source="copytrade_sell_signal_full_recheck",
+                trigger_reason="COPYTRADE_SELL",
+            )
 
     def _trigger_sell_exit(
         self,
@@ -8623,7 +8702,18 @@ class AutoRunManager:
         task: Optional[TopicTask],
         *,
         trigger_source: str = "unspecified",
+        trigger_reason: str = "UNSPECIFIED",
     ) -> bool:
+        exit_reason = self._normalize_exit_reason(trigger_reason)
+        if not self._is_ioc_exit_reason_allowed(exit_reason):
+            self._mark_token_orphaned(
+                token_id,
+                reason=f"IOC_BLOCKED_{exit_reason or 'UNSPECIFIED'}",
+                trigger_source=trigger_source,
+                task=task,
+                note="trigger requested exit-only cleanup but reason is not whitelisted",
+            )
+            return False
         now = time.time()
         suppressed, suppress_reason = self._should_suppress_exit_cleanup(token_id, now=now)
         if suppressed:
@@ -8642,6 +8732,7 @@ class AutoRunManager:
             self._remove_pending_topic(token_id)
         detail = self.topic_details.setdefault(token_id, {})
         detail["sell_trigger_source"] = str(trigger_source)
+        detail["sell_exit_reason"] = exit_reason
         detail["sell_trigger_ts"] = float(now)
         if task and task.is_running():
             task.no_restart = True
@@ -8653,7 +8744,11 @@ class AutoRunManager:
             detail["sell_exit_deadline_at"] = deadline
             detail["sell_exit_phase"] = "grace"
             detail["sell_exit_source"] = str(trigger_source)
-        self._issue_exit_signal(token_id)
+        self._issue_exit_signal(
+            token_id,
+            trigger_source=trigger_source,
+            trigger_reason=exit_reason,
+        )
         if not (task and task.is_running()):
             if (
                 token_id not in self.pending_exit_topics
@@ -8663,10 +8758,91 @@ class AutoRunManager:
                 self.pending_exit_topics.append(token_id)
         print(
             f"[EXIT-CLEAN][TRIGGER] token={token_id[:20]}... source={trigger_source} "
-            f"running={bool(task and task.is_running())}"
+            f"reason={exit_reason} running={bool(task and task.is_running())}"
         )
         self._handled_sell_signals.add(token_id)
         return True
+
+    @staticmethod
+    def _normalize_exit_reason(reason: Any) -> str:
+        return str(reason or "").strip().upper()
+
+    def _is_ioc_exit_reason_allowed(self, reason: Any) -> bool:
+        normalized = self._normalize_exit_reason(reason)
+        return normalized in ALLOWED_IOC_EXIT_REASONS
+
+    def _append_orphan_token_record(self, record: Dict[str, Any]) -> None:
+        path = self._orphan_tokens_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self._file_io_lock:
+            existing: List[Dict[str, Any]] = []
+            if path.exists():
+                try:
+                    with path.open("r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                    if isinstance(loaded, list):
+                        existing = [x for x in loaded if isinstance(x, dict)]
+                except Exception:
+                    existing = []
+            existing.append(record)
+            if len(existing) > 2000:
+                existing = existing[-2000:]
+            _atomic_json_write(path, existing)
+
+    def _mark_token_orphaned(
+        self,
+        token_id: str,
+        *,
+        reason: str,
+        trigger_source: str,
+        task: Optional[TopicTask] = None,
+        note: str = "",
+        position_snapshot: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not token_id:
+            return
+        now = time.time()
+        detail = self.topic_details.setdefault(token_id, {})
+        detail["orphaned"] = True
+        detail["orphaned_at"] = float(now)
+        detail["orphan_reason"] = str(reason)
+        detail["orphan_trigger_source"] = str(trigger_source)
+        self._sell_exit_deadlines.pop(token_id, None)
+        self._remove_pending_topic(token_id)
+        self._remove_pending_exit_topic(token_id)
+        self._clear_reentry_eligible_token(token_id, reason="orphaned")
+        self._update_sell_signal_event(
+            token_id,
+            status="orphaned",
+            note=f"source={trigger_source} reason={reason}",
+        )
+        active_task = task or self.tasks.get(token_id)
+        if active_task and active_task.is_running():
+            active_task.no_restart = True
+            active_task.end_reason = "orphan detached"
+            active_task.heartbeat(f"orphaned: {reason}")
+            self._terminate_task(active_task, reason=f"orphaned ({reason})")
+        if active_task and not active_task.is_running():
+            self.tasks.pop(token_id, None)
+        if position_snapshot is None:
+            pos_snapshot, pos_info = self._refresh_sell_position_snapshot()
+            position_snapshot = {
+                "size": float(pos_snapshot.get(token_id, 0.0) or 0.0),
+                "snapshot_info": pos_info,
+            }
+        record = {
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            "token_id": token_id,
+            "reason": str(reason),
+            "trigger_source": str(trigger_source),
+            "note": str(note or ""),
+            "position_snapshot": position_snapshot or {},
+        }
+        self._append_orphan_token_record(record)
+        print(
+            f"[ORPHAN] token={token_id[:20]}... reason={reason} source={trigger_source} "
+            f"note={note or '-'}"
+        )
 
     def _unified_position_cycle_interval_sec(self) -> float:
         # Unified full-position cycle for stoploss + sell-signal full recheck.

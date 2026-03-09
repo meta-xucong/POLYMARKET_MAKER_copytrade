@@ -248,11 +248,11 @@ def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
     manager._load_handled_topics()
     manager._refresh_sell_position_snapshot = lambda: ({"t1": 1.0}, "ok")  # type: ignore[assignment]
     captured = []
-    manager._trigger_sell_exit = lambda token_id, task=None: captured.append((token_id, task))  # type: ignore[assignment]
+    manager._trigger_sell_exit = lambda token_id, task=None, **kwargs: captured.append((token_id, task, kwargs))  # type: ignore[assignment]
 
     manager._sync_handled_topics_on_startup()
 
-    assert captured == [("t1", None)]
+    assert captured == [("t1", None, {"trigger_source": "startup_reconcile_sell_signal", "trigger_reason": "COPYTRADE_SELL"})]
 
 
 def test_startup_full_reconcile_cleans_copytrade_token_when_handled_missing(tmp_path):
@@ -1495,7 +1495,7 @@ def test_apply_sell_signals_requires_position_even_with_history(tmp_path):
     manager.handled_topics.add("t1")
 
     triggered = []
-    manager._trigger_sell_exit = lambda token_id, task: triggered.append((token_id, task))  # type: ignore[assignment]
+    manager._trigger_sell_exit = lambda token_id, task, **kwargs: triggered.append((token_id, task, kwargs))  # type: ignore[assignment]
 
     manager._apply_sell_signals(
         {
@@ -2050,8 +2050,6 @@ def test_source_detached_timeout_triggers_cleanup_above_value_threshold(tmp_path
             "source_detached_cleanup_started": False,
         },
     )
-    sell_calls = []
-    manager._trigger_sell_exit = lambda token_id, task=None, **kwargs: sell_calls.append((token_id, task, kwargs)) or True  # type: ignore[assignment]
     old_fetch = autorun_mod._fetch_position_rows_from_data_api
     autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
         [{"asset": "t1", "size": 5.0, "avgPrice": 1.0, "curPrice": 0.8}],
@@ -2062,6 +2060,12 @@ def test_source_detached_timeout_triggers_cleanup_above_value_threshold(tmp_path
     finally:
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
     state = manager._stoploss_reentry_states["t1"]
-    assert state.get("market_status_last") == "source_detached_timeout_cleanup_started"
+    assert state.get("market_status_last") == "source_detached_timeout_orphan_recorded"
     assert bool(state.get("source_detached_cleanup_started", False)) is True
-    assert len(sell_calls) == 1
+    orphan_path = manager.config.data_dir / "orphan_tokens.json"
+    assert orphan_path.exists()
+    rows = json.loads(orphan_path.read_text(encoding="utf-8"))
+    assert isinstance(rows, list) and len(rows) >= 1
+    latest = rows[-1]
+    assert latest.get("token_id") == "t1"
+    assert latest.get("reason") == "SOURCE_DETACHED_TIMEOUT"

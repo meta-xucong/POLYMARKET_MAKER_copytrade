@@ -172,6 +172,10 @@ def _record_exit_token(token_id: str, exit_reason: str, exit_data: Optional[Dict
         # 记录失败时，仅打印到控制台，不中断程序
         print(f"[EXIT_RECORD] 写入退出记录失败: {e}")
 
+
+def _normalize_exit_cleanup_reason(value: Any) -> str:
+    return str(value or "").strip().upper()
+
 # ========== 1) Client：优先 ws 版，回退 rest 版 ==========
 def _get_client():
     try:
@@ -207,6 +211,7 @@ CLOB_API_HOST = "https://clob.polymarket.com"
 GAMMA_ROOT = os.getenv("POLY_GAMMA_ROOT", "https://gamma-api.polymarket.com")
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 API_MIN_ORDER_SIZE = 5.0
+DEFAULT_ALLOWED_IOC_EXIT_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY"}
 _MIN_ORDER_SIZE_CACHE_TTL_SEC = 600.0
 _min_order_size_cache: Dict[str, Tuple[float, float]] = {}
 # 共享WS缓存过期阈值（秒）：
@@ -2902,11 +2907,40 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     }
     exit_only = bool(run_cfg.get("exit_only", False))
     force_sell_only_on_startup = bool(run_cfg.get("force_sell_only_on_startup", False))
+    exit_cleanup_reason = _normalize_exit_cleanup_reason(run_cfg.get("exit_cleanup_reason"))
+    exit_cleanup_source = str(run_cfg.get("exit_cleanup_source") or "").strip()
+    allowed_ioc_exit_reasons = set(DEFAULT_ALLOWED_IOC_EXIT_REASONS)
+    cfg_allowed_ioc = run_cfg.get("allow_ioc_exit_reasons")
+    if isinstance(cfg_allowed_ioc, list):
+        normalized_cfg = {
+            _normalize_exit_cleanup_reason(item) for item in cfg_allowed_ioc if str(item or "").strip()
+        }
+        if normalized_cfg:
+            allowed_ioc_exit_reasons = normalized_cfg
     stale_awaiting_sell_seconds = max(
         float(run_cfg.get("stale_awaiting_sell_seconds", 900.0) or 900.0),
         30.0,
     )
     awaiting_sell_since: Optional[float] = None
+
+    def _ioc_exit_allowed(reason_code: str) -> bool:
+        normalized = _normalize_exit_cleanup_reason(reason_code)
+        return normalized in allowed_ioc_exit_reasons
+
+    def _read_exit_signal_payload() -> Dict[str, Any]:
+        if not exit_signal_path:
+            return {}
+        path = Path(str(exit_signal_path))
+        if not path.exists():
+            return {}
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+        return {}
 
     # ========== Maker 配置（从 global_config 传递）==========
     maker_poll_sec = float(run_cfg.get("maker_poll_sec", 10.0))
@@ -2926,6 +2960,23 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         - 每次循环重新获取最新 best_bid 价格
         - 设置最大重试次数防止死循环
         """
+        if not _ioc_exit_allowed(exit_cleanup_reason):
+            print(
+                "[EXIT][BLOCK] exit_only IOC blocked by whitelist: "
+                f"reason={exit_cleanup_reason or 'UNSPECIFIED'} source={exit_cleanup_source or '-'}"
+            )
+            _record_exit_token(
+                token_id,
+                "IOC_EXIT_BLOCKED",
+                {
+                    "path": "exit_only",
+                    "requested_reason": exit_cleanup_reason or "UNSPECIFIED",
+                    "requested_source": exit_cleanup_source or "",
+                },
+            )
+            strategy.stop("exit-only blocked")
+            stop_event.set()
+            return
         print(f"[EXIT] 收到清仓信号: {reason}")
 
         # 1. 撤销所有挂单
@@ -4245,12 +4296,37 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         except Exception:
             pass
 
-    def _force_exit(reason: str) -> None:
+    def _force_exit(
+        reason: str,
+        *,
+        reason_code: Optional[str] = None,
+        reason_source: Optional[str] = None,
+    ) -> None:
         """
         正在运行的进程收到 exit signal 时的清仓函数。
         使用 IOC 循环卖出，直到持仓全部清完才退出。
         """
         if stop_event.is_set():
+            return
+        normalized_reason = _normalize_exit_cleanup_reason(reason_code or exit_cleanup_reason)
+        normalized_source = str(reason_source or exit_cleanup_source or "").strip()
+        if not _ioc_exit_allowed(normalized_reason):
+            print(
+                "[EXIT][BLOCK] force_exit IOC blocked by whitelist: "
+                f"reason={normalized_reason or 'UNSPECIFIED'} source={normalized_source or '-'}"
+            )
+            _record_exit_token(
+                token_id,
+                "IOC_EXIT_BLOCKED",
+                {
+                    "path": "force_exit",
+                    "requested_reason": normalized_reason or "UNSPECIFIED",
+                    "requested_source": normalized_source,
+                    "trigger": reason,
+                },
+            )
+            strategy.stop("sell signal blocked")
+            stop_event.set()
             return
         print(f"[EXIT] 收到清仓信号: {reason}")
 
@@ -5398,7 +5474,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 )
 
                 if _exit_signal_active():
-                    _force_exit("sell signal file detected")
+                    payload = _read_exit_signal_payload()
+                    _force_exit(
+                        "sell signal file detected",
+                        reason_code=payload.get("exit_reason"),
+                        reason_source=payload.get("trigger_source"),
+                    )
                     break
                 
                 # 低余额信号检测：进入仅卖出模式，撤掉所有买单
@@ -6112,7 +6193,12 @@ def main(run_config: Optional[Dict[str, Any]] = None):
 
                 if _exit_signal_active():
                     print("[BUY][GUARD] exit signal active, stop before buy")
-                    _force_exit("sell signal file detected (pre-buy guard)")
+                    payload = _read_exit_signal_payload()
+                    _force_exit(
+                        "sell signal file detected (pre-buy guard)",
+                        reason_code=payload.get("exit_reason"),
+                        reason_source=payload.get("trigger_source"),
+                    )
                     continue
 
                 if skip_buy:
