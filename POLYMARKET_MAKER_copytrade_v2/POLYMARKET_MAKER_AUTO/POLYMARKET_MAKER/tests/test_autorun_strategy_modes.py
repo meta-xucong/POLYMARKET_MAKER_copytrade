@@ -992,7 +992,7 @@ def test_low_balance_pause_refill_filter_blocks_during_pause_and_releases_after_
     assert released[0]["token_id"] == "x"
 
 
-def test_sell_abandoned_stale_position_is_downgraded_and_persisted(tmp_path):
+def test_sell_abandoned_stale_position_record_is_blocked(tmp_path):
     cfg = GlobalConfig.from_dict({"data_dir": str(tmp_path / "data")})
     manager = _build_manager(cfg)
     manager._has_account_position = lambda _token_id: False  # type: ignore[assignment]
@@ -1012,14 +1012,11 @@ def test_sell_abandoned_stale_position_is_downgraded_and_persisted(tmp_path):
     loaded = manager._load_exit_tokens()
     refillable = manager._filter_refillable_tokens(loaded)
 
-    assert len(refillable) == 1
-    assert refillable[0]["token_id"] == "stale_sell"
-    assert refillable[0]["exit_data"]["has_position"] is False
-    assert refillable[0]["exit_data"]["position_size"] == 0.0
+    assert refillable == []
 
     persisted = manager._load_exit_tokens()
-    assert persisted[0]["exit_data"]["has_position"] is False
-    assert persisted[0]["exit_data"]["position_size"] == 0.0
+    assert persisted[0]["exit_data"]["has_position"] is True
+    assert persisted[0]["exit_data"]["position_size"] == 11.0
 
 
 def test_title_blacklist_with_position_stale_record_remains_blocked(tmp_path):
@@ -1048,7 +1045,7 @@ def test_title_blacklist_with_position_stale_record_remains_blocked(tmp_path):
     assert persisted[0]["exit_data"]["position_size"] == 2.0
 
 
-def test_buy_block_entry_sync_failed_stale_position_is_downgraded(tmp_path):
+def test_buy_block_entry_sync_failed_stale_position_record_is_blocked(tmp_path):
     cfg = GlobalConfig.from_dict({"data_dir": str(tmp_path / "data")})
     manager = _build_manager(cfg)
     manager._has_account_position = lambda _token_id: False  # type: ignore[assignment]
@@ -1068,10 +1065,10 @@ def test_buy_block_entry_sync_failed_stale_position_is_downgraded(tmp_path):
     loaded = manager._load_exit_tokens()
     refillable = manager._filter_refillable_tokens(loaded)
 
-    assert len(refillable) == 1
-    assert refillable[0]["token_id"] == "entry_sync_token"
-    assert refillable[0]["exit_data"]["has_position"] is False
-    assert refillable[0]["exit_data"]["position_size"] == 0.0
+    assert refillable == []
+    persisted = manager._load_exit_tokens()
+    assert persisted[0]["exit_data"]["has_position"] is True
+    assert persisted[0]["exit_data"]["position_size"] == 3.0
 
 
 def test_buy_block_trigger_unavailable_stale_record_remains_blocked(tmp_path):

@@ -138,6 +138,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "startup_orphan_profit_sweep_enabled": True,
     "startup_orphan_profit_sweep_min_profit_pct": 0.01,
     "startup_orphan_profit_sweep_skip_if_open_sell": True,
+    # 启动前买入硬门控：position=0 且 open_sell=0 连续命中 N 次才允许 BUY
+    "startup_double_zero_confirm_hits": 2,
+    "startup_double_zero_probe_interval_sec": 1.0,
     # Pending 软淘汰（避免无数据 token 长期卡在 pending）
     "enable_pending_soft_eviction": True,
     "pending_soft_eviction_minutes": 45.0,
@@ -1048,6 +1051,12 @@ class GlobalConfig:
     startup_orphan_profit_sweep_skip_if_open_sell: bool = bool(
         DEFAULT_GLOBAL_CONFIG["startup_orphan_profit_sweep_skip_if_open_sell"]
     )
+    startup_double_zero_confirm_hits: int = int(
+        DEFAULT_GLOBAL_CONFIG.get("startup_double_zero_confirm_hits", 2)
+    )
+    startup_double_zero_probe_interval_sec: float = float(
+        DEFAULT_GLOBAL_CONFIG.get("startup_double_zero_probe_interval_sec", 1.0)
+    )
     enable_pending_soft_eviction: bool = DEFAULT_GLOBAL_CONFIG[
         "enable_pending_soft_eviction"
     ]
@@ -1805,6 +1814,24 @@ class GlobalConfig:
                     "startup_orphan_profit_sweep_skip_if_open_sell",
                     merged.get("startup_orphan_profit_sweep_skip_if_open_sell", True),
                 )
+            ),
+            startup_double_zero_confirm_hits=max(
+                1,
+                int(
+                    scheduler.get(
+                        "startup_double_zero_confirm_hits",
+                        merged.get("startup_double_zero_confirm_hits", 2),
+                    )
+                ),
+            ),
+            startup_double_zero_probe_interval_sec=max(
+                0.0,
+                float(
+                    scheduler.get(
+                        "startup_double_zero_probe_interval_sec",
+                        merged.get("startup_double_zero_probe_interval_sec", 1.0),
+                    )
+                ),
             ),
             enable_pending_soft_eviction=bool(
                 scheduler.get(
@@ -5990,6 +6017,12 @@ class AutoRunManager:
         # Maker 子进程配置（从 global_config 传递）
         merged["maker_poll_sec"] = self.config.maker_poll_sec
         merged["maker_position_sync_interval"] = self.config.maker_position_sync_interval
+        merged["startup_double_zero_confirm_hits"] = int(
+            max(1, self.config.startup_double_zero_confirm_hits)
+        )
+        merged["startup_double_zero_probe_interval_sec"] = float(
+            max(0.0, self.config.startup_double_zero_probe_interval_sec)
+        )
         merged["strategy_mode"] = "aggressive" if self._is_aggressive_mode() else "classic"
         
         # 【重构】处理exhausted状态（3次refill后）
@@ -6023,9 +6056,6 @@ class AutoRunManager:
                 merged["classic_keep_orders_by_price"] = True
                 merged["classic_keep_orders_price_hint"] = round(float(price_hint), 6)
                 merged["classic_keep_orders_price_threshold"] = threshold
-        if is_exhausted and self.config.exhausted_keep_orders:
-            # 3次refill后，强制保留卖单（临终关怀模式）
-            base_keep_orders = True
         merged["keep_sell_orders_on_timeout"] = base_keep_orders
         
         # 传递exhausted_enable_reentry参数（用于Volatility_arbitrage_run.py）
@@ -7502,11 +7532,6 @@ class AutoRunManager:
             "BUY_BLOCK_TRIGGER_UNAVAILABLE",
             "TITLE_BLACKLIST_WITH_POSITION",
         }
-        STALE_POSITION_DOWNGRADE_REASONS = {
-            "SELL_ABANDONED",
-            "BUY_BLOCK_ENTRY_SYNC_FAILED",
-        }
-
         now = time.time()
         cooldown_with_position_seconds = (
             self.config.refill_cooldown_minutes_with_position * 60.0
@@ -7576,21 +7601,13 @@ class AutoRunManager:
             if bool(exit_data.get("has_position", False)):
                 if not self._has_account_position(token_id):
                     if exit_reason in POSITION_REQUIRED_REASONS:
-                        if exit_reason not in STALE_POSITION_DOWNGRADE_REASONS:
-                            skip_stats["stale_position_record"] = (
-                                skip_stats.get("stale_position_record", 0) + 1
-                            )
-                            print(
-                                f"[REFILL] skip stale position refill: token={token_id[:20]}... reason={exit_reason}"
-                            )
-                            continue
-                        skip_stats["stale_position_downgraded"] = (
-                            skip_stats.get("stale_position_downgraded", 0) + 1
+                        skip_stats["stale_position_record"] = (
+                            skip_stats.get("stale_position_record", 0) + 1
                         )
                         print(
-                            "[REFILL] stale position downgraded to no-position: "
-                            f"token={token_id[:20]}... reason={exit_reason}"
+                            f"[REFILL] skip stale position refill: token={token_id[:20]}... reason={exit_reason}"
                         )
+                        continue
                     else:
                         skip_stats["downgraded_to_no_position"] = (
                             skip_stats.get("downgraded_to_no_position", 0) + 1
@@ -7879,6 +7896,9 @@ class AutoRunManager:
             self.topic_details[token_id]["resume_state"] = resume_state
             self.topic_details[token_id]["refill_retry_count"] = retry_count
             self.topic_details[token_id]["refill_exit_reason"] = exit_reason
+            # Fail-closed: 回填启动前必须先检查是否仍有残留 SELL 挂单。
+            # 若存在残留卖单，子进程会在 startup guard 直接拒绝启动，避免买卖并发错位。
+            self.topic_details[token_id]["startup_skip_if_open_sell"] = True
             # 区分有持仓和无持仓的refill token，便于低余额时区分处理
             if has_position:
                 self.topic_details[token_id]["queue_role"] = "refill_with_position"

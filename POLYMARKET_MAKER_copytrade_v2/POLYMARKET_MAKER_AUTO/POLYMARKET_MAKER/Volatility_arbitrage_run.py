@@ -2550,16 +2550,51 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         )
 
     startup_skip_if_open_sell = bool(run_cfg.get("startup_skip_if_open_sell", False))
+    startup_double_zero_confirm_hits = max(
+        1, int(_coerce_float(run_cfg.get("startup_double_zero_confirm_hits")) or 2)
+    )
+    startup_double_zero_probe_interval_sec = max(
+        0.0, float(_coerce_float(run_cfg.get("startup_double_zero_probe_interval_sec")) or 1.0)
+    )
     if startup_skip_if_open_sell:
-        try:
-            open_sell_count = _count_open_sell_orders_for_token(client, token_id)
-        except Exception as exc:
-            open_sell_count = 0
-            print(f"[INIT][WARN] open sell probe failed, continue: {exc}")
-        if open_sell_count > 0:
+        zero_hits = 0
+        attempts = startup_double_zero_confirm_hits
+        for probe_idx in range(1, attempts + 1):
+            open_sell_count: Optional[int] = None
+            has_position = False
+            position_note = "unknown"
+            open_sell_note = "ok"
+            try:
+                open_sell_count = _count_open_sell_orders_for_token(client, token_id)
+            except Exception as exc:
+                open_sell_note = f"error:{exc}"
+            try:
+                _avg_px, total_pos, origin_note = _lookup_position_avg_price(client, token_id)
+                has_position = bool(_coerce_float(total_pos) and float(total_pos or 0.0) > 0.0)
+                position_note = origin_note or "positions"
+            except Exception as exc:
+                position_note = f"error:{exc}"
+            is_zero = (open_sell_count == 0) and (not has_position)
+            if is_zero:
+                zero_hits += 1
+            else:
+                zero_hits = 0
+            open_sell_display = "?" if open_sell_count is None else str(open_sell_count)
             print(
-                "[INIT] startup skip enabled: existing SELL open orders detected, "
-                f"token={token_id} count={open_sell_count}, exiting."
+                "[INIT][BUY_GATE] startup double-zero probe: "
+                f"token={token_id} idx={probe_idx}/{attempts} "
+                f"open_sell={open_sell_display} open_sell_note={open_sell_note} "
+                f"has_position={has_position} position_note={position_note} "
+                f"hits={zero_hits}/{startup_double_zero_confirm_hits}"
+            )
+            if zero_hits >= startup_double_zero_confirm_hits:
+                break
+            if probe_idx < attempts and startup_double_zero_probe_interval_sec > 0:
+                time.sleep(startup_double_zero_probe_interval_sec)
+        if zero_hits < startup_double_zero_confirm_hits:
+            print(
+                "[INIT] startup skip enabled: double-zero check failed, "
+                f"token={token_id}, exiting."
             )
             return
 
