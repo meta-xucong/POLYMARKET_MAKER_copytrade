@@ -138,6 +138,11 @@ DEFAULT_GLOBAL_CONFIG = {
     "startup_orphan_profit_sweep_enabled": True,
     "startup_orphan_profit_sweep_min_profit_pct": 0.01,
     "startup_orphan_profit_sweep_skip_if_open_sell": True,
+    # orphan token 自动恢复探测（仅恢复到 maker 管理，不触发 IOC 清仓）
+    "orphan_recovery_enabled": True,
+    "orphan_recovery_probe_interval_sec": 600.0,
+    "orphan_recovery_max_backoff_sec": 7200.0,
+    "orphan_recovery_max_attempts": 8,
     # 启动前买入硬门控：position=0 且 open_sell=0 连续命中 N 次才允许 BUY
     "startup_double_zero_confirm_hits": 2,
     "startup_double_zero_probe_interval_sec": 1.0,
@@ -1052,6 +1057,18 @@ class GlobalConfig:
     startup_orphan_profit_sweep_skip_if_open_sell: bool = bool(
         DEFAULT_GLOBAL_CONFIG["startup_orphan_profit_sweep_skip_if_open_sell"]
     )
+    orphan_recovery_enabled: bool = bool(
+        DEFAULT_GLOBAL_CONFIG.get("orphan_recovery_enabled", True)
+    )
+    orphan_recovery_probe_interval_sec: float = float(
+        DEFAULT_GLOBAL_CONFIG.get("orphan_recovery_probe_interval_sec", 600.0)
+    )
+    orphan_recovery_max_backoff_sec: float = float(
+        DEFAULT_GLOBAL_CONFIG.get("orphan_recovery_max_backoff_sec", 7200.0)
+    )
+    orphan_recovery_max_attempts: int = int(
+        DEFAULT_GLOBAL_CONFIG.get("orphan_recovery_max_attempts", 8)
+    )
     startup_double_zero_confirm_hits: int = int(
         DEFAULT_GLOBAL_CONFIG.get("startup_double_zero_confirm_hits", 2)
     )
@@ -1816,6 +1833,39 @@ class GlobalConfig:
                     merged.get("startup_orphan_profit_sweep_skip_if_open_sell", True),
                 )
             ),
+            orphan_recovery_enabled=bool(
+                scheduler.get(
+                    "orphan_recovery_enabled",
+                    merged.get("orphan_recovery_enabled", True),
+                )
+            ),
+            orphan_recovery_probe_interval_sec=max(
+                30.0,
+                float(
+                    scheduler.get(
+                        "orphan_recovery_probe_interval_sec",
+                        merged.get("orphan_recovery_probe_interval_sec", 600.0),
+                    )
+                ),
+            ),
+            orphan_recovery_max_backoff_sec=max(
+                60.0,
+                float(
+                    scheduler.get(
+                        "orphan_recovery_max_backoff_sec",
+                        merged.get("orphan_recovery_max_backoff_sec", 7200.0),
+                    )
+                ),
+            ),
+            orphan_recovery_max_attempts=max(
+                1,
+                int(
+                    scheduler.get(
+                        "orphan_recovery_max_attempts",
+                        merged.get("orphan_recovery_max_attempts", 8),
+                    )
+                ),
+            ),
             startup_double_zero_confirm_hits=max(
                 1,
                 int(
@@ -1977,6 +2027,7 @@ class AutoRunManager:
         self._next_refill_check: float = 0.0
         self._next_stoploss_check: float = 0.0
         self._next_inactive_token_reconcile_check: float = 0.0
+        self._next_orphan_recovery_probe_check: float = 0.0
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
         # Shared WS 等待保护
         self._shared_ws_wait_failures: Dict[str, int] = {}
@@ -3896,6 +3947,14 @@ class AutoRunManager:
                         self._reconcile_inactive_copytrade_tokens()
                         self._next_inactive_token_reconcile_check = now + float(
                             self.config.inactive_token_reconcile_interval_sec
+                        )
+                    if (
+                        self.config.orphan_recovery_enabled
+                        and now >= self._next_orphan_recovery_probe_check
+                    ):
+                        self._run_orphan_recovery_probe(now)
+                        self._next_orphan_recovery_probe_check = now + float(
+                            self.config.orphan_recovery_probe_interval_sec
                         )
                     if self.config.enable_stoploss and now >= self._next_stoploss_check:
                         self._run_stoploss_check(now)
@@ -8789,6 +8848,180 @@ class AutoRunManager:
                 existing = existing[-2000:]
             _atomic_json_write(path, existing)
 
+    def _load_orphan_token_records(self) -> List[Dict[str, Any]]:
+        path = self._orphan_tokens_path
+        if not path.exists():
+            return []
+        with self._file_io_lock:
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if not isinstance(loaded, list):
+                    return []
+                return [item for item in loaded if isinstance(item, dict)]
+            except Exception:
+                return []
+
+    @staticmethod
+    def _coerce_orphan_record_ts(record: Dict[str, Any]) -> float:
+        for key in ("updated_ts", "probe_ts", "next_probe_at"):
+            ts = _coerce_float(record.get(key))
+            if ts is not None and ts > 0:
+                return float(ts)
+        raw_text = str(record.get("updated_at") or "").strip()
+        if raw_text:
+            normalized = raw_text.replace("Z", "+00:00")
+            try:
+                return float(datetime.fromisoformat(normalized).timestamp())
+            except Exception:
+                pass
+        return 0.0
+
+    def _load_latest_orphan_states(self) -> Dict[str, Dict[str, Any]]:
+        latest: Dict[str, Dict[str, Any]] = {}
+        for record in self._load_orphan_token_records():
+            token_id = str(record.get("token_id") or "").strip()
+            if not token_id:
+                continue
+            prev = latest.get(token_id)
+            prev_ts = self._coerce_orphan_record_ts(prev) if prev else 0.0
+            curr_ts = self._coerce_orphan_record_ts(record)
+            if prev is None or curr_ts >= prev_ts:
+                latest[token_id] = dict(record)
+        return latest
+
+    def _orphan_probe_delay_sec(self, attempts: int) -> float:
+        base = max(30.0, float(self.config.orphan_recovery_probe_interval_sec))
+        max_backoff = max(base, float(self.config.orphan_recovery_max_backoff_sec))
+        # 指数退避：base, 2*base, 4*base...
+        delay = base * (2 ** max(0, int(attempts) - 1))
+        return max(30.0, min(float(delay), max_backoff))
+
+    def _run_orphan_recovery_probe(self, now: float) -> None:
+        latest = self._load_latest_orphan_states()
+        if not latest:
+            return
+        due_tokens: List[Tuple[str, Dict[str, Any]]] = []
+        for token_id, state in latest.items():
+            status = str(state.get("status") or "orphaned").strip().lower()
+            if status in {"recovered", "manual_only"}:
+                continue
+            next_probe_at = _coerce_float(state.get("next_probe_at"))
+            if next_probe_at is None:
+                due_tokens.append((token_id, state))
+                continue
+            if next_probe_at > 0 and float(next_probe_at) <= now:
+                due_tokens.append((token_id, state))
+        if not due_tokens:
+            return
+
+        try:
+            copytrade_active = self._build_copytrade_active_token_set()
+        except Exception as exc:
+            print(f"[ORPHAN][WARN] recovery probe skipped: copytrade read failed: {exc}")
+            return
+        pos_snapshot, pos_info = self._refresh_sell_position_snapshot()
+        sell_signals = self._load_copytrade_sell_signals()
+
+        recovered = 0
+        failed = 0
+        for token_id, state in due_tokens:
+            attempts = max(0, int(_coerce_float(state.get("probe_attempts")) or 0))
+            next_attempt = attempts + 1
+            reason = ""
+
+            tracked = (
+                token_id in self.tasks
+                or token_id in self.pending_topics
+                or token_id in self.pending_burst_topics
+                or token_id in self.pending_exit_topics
+            )
+            if tracked:
+                continue
+            if token_id not in copytrade_active:
+                reason = "copytrade_not_active"
+            elif token_id in sell_signals:
+                reason = "sell_signal_active"
+            elif pos_info != "ok":
+                reason = f"position_unavailable:{pos_info}"
+            else:
+                pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
+                if pos_size <= POSITION_CLEANUP_DUST_THRESHOLD:
+                    reason = "no_position"
+
+            if not reason:
+                self._hydrate_topic_metadata_for_blacklist(token_id)
+                title_policy = self._enforce_title_blacklist_policy(
+                    token_id, source="orphan_recovery_probe"
+                )
+                if title_policy in {"blocked_no_position", "force_liquidate", "force_sell_only"}:
+                    reason = f"title_policy:{title_policy}"
+            if not reason and self._stoploss_is_market_closed(token_id):
+                reason = "market_closed_or_resolved"
+
+            if reason:
+                if next_attempt >= int(self.config.orphan_recovery_max_attempts):
+                    self._append_orphan_token_record(
+                        {
+                            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                            "updated_ts": float(now),
+                            "token_id": token_id,
+                            "status": "manual_only",
+                            "probe_attempts": int(next_attempt),
+                            "next_probe_at": 0.0,
+                            "reason": str(state.get("reason") or ""),
+                            "trigger_source": "orphan_recovery_probe",
+                            "note": f"max_attempts_reached last_reason={reason}",
+                        }
+                    )
+                else:
+                    delay = self._orphan_probe_delay_sec(next_attempt)
+                    self._append_orphan_token_record(
+                        {
+                            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                            "updated_ts": float(now),
+                            "token_id": token_id,
+                            "status": "probe_failed",
+                            "probe_attempts": int(next_attempt),
+                            "next_probe_at": float(now + delay),
+                            "reason": str(state.get("reason") or ""),
+                            "trigger_source": "orphan_recovery_probe",
+                            "note": reason,
+                        }
+                    )
+                failed += 1
+                continue
+
+            detail = self.topic_details.setdefault(token_id, {})
+            detail.pop("orphaned", None)
+            detail.pop("orphaned_at", None)
+            detail.pop("orphan_reason", None)
+            detail.pop("orphan_trigger_source", None)
+            detail["queue_role"] = "orphan_recovery"
+            detail["schedule_lane"] = "base"
+            self._remove_pending_exit_topic(token_id)
+            self._enqueue_pending_topic(token_id)
+            self._append_orphan_token_record(
+                {
+                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                    "updated_ts": float(now),
+                    "token_id": token_id,
+                    "status": "recovered",
+                    "probe_attempts": int(next_attempt),
+                    "next_probe_at": 0.0,
+                    "reason": str(state.get("reason") or ""),
+                    "trigger_source": "orphan_recovery_probe",
+                    "note": "requeued_to_maker",
+                }
+            )
+            recovered += 1
+
+        if recovered or failed:
+            print(
+                "[ORPHAN][PROBE] "
+                f"due={len(due_tokens)} recovered={recovered} failed={failed}"
+            )
+
     def _mark_token_orphaned(
         self,
         token_id: str,
@@ -8832,10 +9065,14 @@ class AutoRunManager:
             }
         record = {
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            "updated_ts": float(now),
             "token_id": token_id,
             "reason": str(reason),
             "trigger_source": str(trigger_source),
             "note": str(note or ""),
+            "status": "orphaned",
+            "probe_attempts": 0,
+            "next_probe_at": float(now + self._orphan_probe_delay_sec(1)),
             "position_snapshot": position_snapshot or {},
         }
         self._append_orphan_token_record(record)
@@ -9465,4 +9702,3 @@ def main(argv: Optional[List[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
-
