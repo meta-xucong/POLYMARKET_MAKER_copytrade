@@ -3148,6 +3148,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     f"exit-only cleanup 未完成，remaining={float(final_pos):.6f}"
                 )
 
+        _clear_exit_signal_after_flat("exit_only_cleanup")
         strategy.stop("sell signal")
         stop_event.set()
 
@@ -4275,6 +4276,20 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     def _exit_signal_active() -> bool:
         return bool(exit_signal_path and exit_signal_path.exists())
 
+    def _clear_exit_signal_after_flat(source: str) -> None:
+        if not exit_signal_path:
+            return
+        try:
+            exit_signal_path.unlink()
+            print(f"[EXIT] 清仓完成后已删除 exit signal: source={source}")
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            print(
+                f"[EXIT][WARN] 清仓完成但删除 exit signal 失败: "
+                f"source={source} error={exc}"
+            )
+
     def _safe_topic_filename(topic_id: str) -> str:
         """与调度层保持一致的文件名安全化处理"""
         return topic_id.replace("/", "_").replace("\\", "_")
@@ -4472,6 +4487,18 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 f"[EXIT][WARN] 达到最大清仓次数 {MAX_ITERATIONS}，"
                 f"剩余持仓={final_pos:.4f}（可能需要人工处理）"
             )
+
+        final_snapshot, _ = _fetch_position_snapshot_with_cache(
+            client=client,
+            token_id=token_id,
+            cache=None,
+            cache_ts=0.0,
+            log_errors=True,
+            force=True,
+        )
+        final_pos = final_snapshot[1] if final_snapshot else 0.0
+        if (final_pos or 0.0) <= DUST_THRESHOLD:
+            _clear_exit_signal_after_flat("force_exit")
 
         strategy.stop("sell signal")
         stop_event.set()
@@ -6549,4 +6576,3 @@ if __name__ == "__main__":
 
     cfg = _load_run_config(cfg_path)
     main(cfg)
-

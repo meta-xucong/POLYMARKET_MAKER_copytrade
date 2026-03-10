@@ -107,7 +107,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "refill_check_interval_sec": 60.0,
     # 单阈值两步止损（首次50%，冷却后仍未恢复则全清）
     "stoploss": {
-        "enabled": False,
+        "enabled": True,
         "check_interval_sec": 60.0,
         "drawdown_pct": 0.20,
         "base_drawdown_pct": 0.05,
@@ -2026,6 +2026,7 @@ class AutoRunManager:
         self._refill_retry_counts: Dict[str, int] = {}  # token_id -> 已重试次数
         self._next_refill_check: float = 0.0
         self._next_stoploss_check: float = 0.0
+        self._next_exit_signal_reconcile_check: float = 0.0
         self._next_inactive_token_reconcile_check: float = 0.0
         self._next_orphan_recovery_probe_check: float = 0.0
         self._refilled_tokens: set[str] = set()  # 已回填的token（避免重复回填）
@@ -3935,6 +3936,11 @@ class AutoRunManager:
                     self._process_commands()
                     self._poll_tasks()
                     self._enforce_sell_exit_deadlines()
+                    if now >= self._next_exit_signal_reconcile_check:
+                        self._reconcile_exit_signals()
+                        self._next_exit_signal_reconcile_check = now + max(
+                            30.0, float(self.config.copytrade_poll_sec)
+                        )
                     self._schedule_pending_exit_cleanup()
                     self._schedule_pending_topics()
                     self._purge_inactive_tasks()
@@ -5440,6 +5446,12 @@ class AutoRunManager:
                 topic_id = self.pending_burst_topics.pop(0)
             else:
                 topic_id = self.pending_topics.pop(0)
+            if self._block_topic_start_for_active_sell(
+                topic_id,
+                source=f"schedule_{lane}",
+            ):
+                checks_remaining -= 1
+                continue
             # 启动前检查市场状态，若已关闭则跳过（不重新入队）
             if self._check_market_closed_before_start(topic_id):
                 checks_remaining -= 1
@@ -5614,12 +5626,15 @@ class AutoRunManager:
         if deferred:
             self.pending_exit_topics.extend(deferred)
 
-    def _enqueue_pending_topic(self, topic_id: str) -> None:
+    def _enqueue_pending_topic(self, topic_id: str) -> bool:
         if not topic_id:
-            return
+            return False
+        if self._block_topic_start_for_active_sell(topic_id, source="enqueue_base"):
+            return False
         if topic_id not in self.pending_topics:
             self.pending_topics.append(topic_id)
         self._pending_first_seen.setdefault(topic_id, time.time())
+        return True
 
     def _rebalance_burst_to_base_queue(self) -> None:
         """【已废弃】在新 Burst/Base 隔离逻辑下，不再将 pending burst token 移到 base。"""
@@ -5670,9 +5685,11 @@ class AutoRunManager:
             f"[SCHED][REBALANCE] base空位回挪 {len(moved)} 个 token 到pending_base（burst_wait={len(self.pending_burst_topics)}）"
         )
 
-    def _enqueue_burst_topic(self, topic_id: str, *, promote: bool = False) -> None:
+    def _enqueue_burst_topic(self, topic_id: str, *, promote: bool = False) -> bool:
         if not topic_id:
-            return
+            return False
+        if self._block_topic_start_for_active_sell(topic_id, source="enqueue_burst"):
+            return False
         if topic_id in self.pending_topics or topic_id in self.pending_burst_topics:
             self._remove_pending_topic(topic_id)
         if topic_id in self.pending_burst_topics:
@@ -5682,7 +5699,7 @@ class AutoRunManager:
                 except ValueError:
                     pass
                 self.pending_burst_topics.insert(0, topic_id)
-            return
+            return True
         if promote:
             self.pending_burst_topics.insert(0, topic_id)
         else:
@@ -5692,6 +5709,7 @@ class AutoRunManager:
         detail = self.topic_details.setdefault(topic_id, {})
         if not detail.get("queue_role"):
             detail["queue_role"] = "burst_candidate"
+        return True
 
     def _remove_burst_topic(self, topic_id: str) -> None:
         if topic_id in self.pending_burst_topics:
@@ -6457,6 +6475,8 @@ class AutoRunManager:
             print(
                 f"[SCHED][GUARD] topic={topic_id[:16]}... 清仓进行中，跳过普通启动"
             )
+            return False
+        if self._block_topic_start_for_active_sell(topic_id, source="before_start"):
             return False
 
         self._ensure_resume_state_from_live_position(topic_id)
@@ -7718,8 +7738,16 @@ class AutoRunManager:
                         skip_stats["stale_position_record"] = (
                             skip_stats.get("stale_position_record", 0) + 1
                         )
+                        record["refillable"] = False
+                        record["stale_position_record"] = True
+                        record["stale_position_detected_at"] = time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)
+                        )
+                        record["stale_position_detected_ts"] = float(now)
+                        stale_position_downgraded += 1
                         print(
-                            f"[REFILL] skip stale position refill: token={token_id[:20]}... reason={exit_reason}"
+                            "[REFILL] finalize stale position record: "
+                            f"token={token_id[:20]}... reason={exit_reason}"
                         )
                         continue
                     else:
@@ -7986,6 +8014,11 @@ class AutoRunManager:
                     token_id,
                     source=str(exit_reason or "").strip().upper(),
                 )
+            if self._block_topic_start_for_active_sell(
+                token_id,
+                source="refill",
+            ):
+                continue
 
             # 增加重试计数
             self._refill_retry_counts[token_id] = self._refill_retry_counts.get(token_id, 0) + 1
@@ -8024,7 +8057,8 @@ class AutoRunManager:
                 self.topic_details[token_id].pop("resume_drop_pct", None)
 
             # 加入pending队列
-            self._enqueue_pending_topic(token_id)
+            if not self._enqueue_pending_topic(token_id):
+                continue
 
             state_hint = "有持仓→等待卖出" if has_position else "无持仓→等待买入"
             print(
@@ -8161,7 +8195,9 @@ class AutoRunManager:
                     else:
                         detail = self.topic_details.setdefault(topic_id, {})
                         detail["queue_role"] = "new_token"
-                        self._enqueue_burst_topic(topic_id, promote=False)
+                        if self._enqueue_burst_topic(topic_id, promote=False):
+                            added_topics.append(topic_id)
+                        continue
                     added_topics.append(topic_id)
                 if defer_new_topics and added_topics:
                     print(
@@ -8560,6 +8596,59 @@ class AutoRunManager:
         safe_id = _safe_topic_filename(token_id)
         return self.config.data_dir / f"exit_signal_{safe_id}.json"
 
+    def _has_exit_signal_file(self, token_id: str) -> bool:
+        return bool(token_id) and self._exit_signal_path(token_id).exists()
+
+    def _active_sell_block_reason(
+        self,
+        token_id: str,
+        *,
+        sell_signals: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Optional[str]:
+        if not token_id:
+            return None
+        if self._has_exit_signal_file(token_id):
+            return "exit_signal_active"
+        signal_map = (
+            sell_signals
+            if sell_signals is not None
+            else self._load_copytrade_sell_signals()
+        )
+        if token_id in signal_map:
+            return "sell_signal_active"
+        return None
+
+    def _block_topic_start_for_active_sell(
+        self,
+        token_id: str,
+        *,
+        source: str,
+        sell_signals: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> bool:
+        reason = self._active_sell_block_reason(token_id, sell_signals=sell_signals)
+        if not reason:
+            return False
+
+        has_position = self._has_account_position(token_id)
+        print(
+            f"[BUY_GATE][BLOCK] token={token_id[:20]}... "
+            f"reason={reason} has_position={has_position} source={source}"
+        )
+        self._remove_pending_topic(token_id)
+        if has_position and not self._is_sell_cleanup_in_flight(token_id):
+            if reason == "sell_signal_active" and not self._has_exit_signal_file(token_id):
+                self._issue_exit_signal(
+                    token_id,
+                    trigger_source=f"{source}_buy_gate",
+                    trigger_reason="COPYTRADE_SELL",
+                )
+            self.pending_exit_topics.append(token_id)
+            print(
+                f"[EXIT-SIGNAL][REQUEUE] token={token_id[:20]}... "
+                f"reason={reason} source={source}"
+            )
+        return True
+
     def _issue_exit_signal(
         self,
         token_id: str,
@@ -8621,6 +8710,59 @@ class AutoRunManager:
             "pos_size": normalized_pos_size,
         }
         return has_position
+
+    def _reconcile_exit_signals(self) -> None:
+        signal_paths = sorted(self.config.data_dir.glob("exit_signal_*.json"))
+        if not signal_paths:
+            return
+
+        for path in signal_paths:
+            try:
+                with self._file_io_lock:
+                    payload = _load_json_file(path)
+            except Exception as exc:
+                print(f"[EXIT-SIGNAL][WARN] 读取失败 path={path.name} error={exc}")
+                continue
+
+            token_id = ""
+            if isinstance(payload, dict):
+                token_id = str(payload.get("token_id") or "").strip()
+            if not token_id:
+                token_id = path.stem.replace("exit_signal_", "", 1)
+            if not token_id:
+                continue
+
+            if token_id in self.pending_topics or token_id in self.pending_burst_topics:
+                self._remove_pending_topic(token_id)
+                print(
+                    f"[EXIT-SIGNAL][BLOCK] token={token_id[:20]}... "
+                    "reason=exit_signal_active"
+                )
+
+            has_position = self._has_account_position(token_id, force_refresh=True)
+            task = self.tasks.get(token_id)
+            has_running_task = bool(task and task.is_running())
+            if has_position:
+                if not has_running_task and not self._is_sell_cleanup_in_flight(token_id):
+                    self.pending_exit_topics.append(token_id)
+                    print(
+                        f"[EXIT-SIGNAL][REQUEUE] token={token_id[:20]}... "
+                        "reason=signal_with_position_no_task"
+                    )
+                continue
+
+            try:
+                path.unlink()
+                print(
+                    f"[EXIT-SIGNAL][GC] token={token_id[:20]}... "
+                    "reason=no_position"
+                )
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                print(
+                    f"[EXIT-SIGNAL][WARN] 无法删除残留信号 token={token_id[:20]}... error={exc}"
+                )
 
     def _has_position_for_sell_signal(
         self,
