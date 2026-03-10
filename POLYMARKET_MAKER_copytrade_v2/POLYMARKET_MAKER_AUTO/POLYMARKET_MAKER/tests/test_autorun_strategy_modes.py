@@ -1577,6 +1577,9 @@ def _build_stoploss_manager(tmp_path, *, mode="classic", stoploss_overrides=None
         "reentry_line_ticks": 2,
         "reentry_zone_lower_pct": 0.02,
         "probe_break_pct": 0.05,
+        "clear_confirm_timeout_sec": 180.0,
+        "clear_confirm_retry_interval_sec": 1800.0,
+        "clear_confirm_max_retries": 3,
         "daily_reentry_loss_circuit_breaker_pct": 0.10,
         "drawdown_step_per_cycle_pct": 0.01,
         "max_tokens_per_cycle": 1,
@@ -2241,3 +2244,108 @@ def test_reentry_fill_above_line_is_recovered_into_reentry_hold(tmp_path):
     assert bool(state.get("last_reentry_above_line", False)) is True
     assert abs(float(state.get("last_reentry_above_line_price") or 0.0) - 0.885) < 1e-9
     assert "resume_state" in manager.topic_details["t1"]
+
+
+def test_stoploss_fill_pending_confirm_is_finalized_on_later_flat_snapshot(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager.topic_details["t1"] = {"resume_state": {"profit_pct": 0.023}, "floor_price": 0.95}
+    manager._ws_cache["t1"] = {"best_bid": 0.90, "updated_at": now}
+    manager._total_liquidation.liquidate_single_token_taker = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: {
+            "ok": False,
+            "before_size": 20.0,
+            "after_size": 20.0,
+            "filled_size": 20.0,
+            "executed_avg_price": 0.8973,
+            "executed_price_source": "response_fill",
+            "requested_size": kwargs.get("target_size", 20.0),
+        }
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    snapshots = iter(
+        [
+            ([{"asset": "t1", "size": 20.0, "avgPrice": 1.0, "curPrice": 0.9}], "ok"),
+            ([{"asset": "t1", "size": 20.0, "avgPrice": 1.0, "curPrice": 0.9}], "ok"),
+            ([], "ok"),
+        ]
+    )
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: next(snapshots)  # type: ignore[assignment]
+    try:
+        manager._run_stoploss_check(now)
+        manager._run_stoploss_check(now + 61.0)
+        state = manager._stoploss_reentry_states["t1"]
+        assert state["state"] == "STOPLOSS_CLEAR_PENDING_CONFIRM"
+        manager._run_stoploss_check(now + 240.0)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_EXITED_WAITING_WINDOW"
+    rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
+    reasons = [row.get("exit_reason") for row in rows]
+    assert "STOPLOSS_CLEAR_PENDING_CONFIRM" in reasons
+    assert reasons[-1] == "STOPLOSS_FULL_CLEAR"
+
+
+def test_stoploss_pending_confirm_schedules_retry_before_escalation(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_CLEAR_PENDING_CONFIRM",
+            "stop_exit_ts": now - 300.0,
+            "pending_confirm_started_ts": now - 181.0,
+            "pending_confirm_next_retry_ts": now - 1.0,
+            "pending_confirm_retry_count": 0,
+            "pending_confirm_before_size": 5.0,
+            "pending_confirm_after_size_snapshot": 5.0,
+            "pending_confirm_filled_size": 5.0,
+            "pending_confirm_exec_price": 0.49,
+            "pending_confirm_exec_price_source": "response_fill",
+            "pending_confirm_drawdown": -0.055,
+        },
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: ([{"asset": "t1", "size": 5.0, "avgPrice": 0.52, "curPrice": 0.49}], "ok")  # type: ignore[assignment]
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_CLEAR_PENDING_CONFIRM"
+    assert int(state["pending_confirm_retry_count"]) == 1
+    assert float(state["pending_confirm_next_retry_ts"]) > now
+    rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
+    assert rows[-1]["exit_reason"] == "STOPLOSS_CLEAR_CONFIRM_RETRY_SCHEDULED"
+
+
+def test_stoploss_pending_confirm_escalates_after_max_retries(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_CLEAR_PENDING_CONFIRM",
+            "stop_exit_ts": now - 7200.0,
+            "pending_confirm_started_ts": now - 181.0,
+            "pending_confirm_next_retry_ts": now - 1.0,
+            "pending_confirm_retry_count": 3,
+            "pending_confirm_before_size": 5.0,
+            "pending_confirm_after_size_snapshot": 5.0,
+            "pending_confirm_filled_size": 5.0,
+            "pending_confirm_exec_price": 0.49,
+            "pending_confirm_exec_price_source": "response_fill",
+            "pending_confirm_drawdown": -0.055,
+        },
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: ([{"asset": "t1", "size": 5.0, "avgPrice": 0.52, "curPrice": 0.49}], "ok")  # type: ignore[assignment]
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_CLEAR_PENDING_ESCALATED"
+    rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
+    assert rows[-1]["exit_reason"] == "STOPLOSS_CLEAR_CONFIRM_ESCALATED"
