@@ -116,6 +116,7 @@ DEFAULT_GLOBAL_CONFIG = {
         "reentry_window_cooldown_minutes": 120.0,
         "next_stoploss_cooldown_minutes": 30.0,
         "reentry_extra_delay_after_5_cuts_hours": 24.0,
+        "reentry_timeout_hours": 168.0,
         "reentry_line_ticks": 2,
         "reentry_zone_lower_pct": 0.02,
         "probe_break_pct": 0.05,
@@ -993,6 +994,9 @@ class GlobalConfig:
     stoploss_reentry_extra_delay_after_5_cuts_hours: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_extra_delay_after_5_cuts_hours", 24.0)
     )
+    stoploss_reentry_timeout_hours: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_timeout_hours", 168.0)
+    )
     stoploss_reentry_line_ticks: int = int(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_line_ticks", 2)
     )
@@ -1622,6 +1626,18 @@ class GlobalConfig:
                         merged.get(
                             "stoploss_reentry_extra_delay_after_5_cuts_hours",
                             cls.stoploss_reentry_extra_delay_after_5_cuts_hours,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_reentry_timeout_hours=max(
+                1.0,
+                float(
+                    stoploss_cfg.get(
+                        "reentry_timeout_hours",
+                        merged.get(
+                            "stoploss_reentry_timeout_hours",
+                            cls.stoploss_reentry_timeout_hours,
                         ),
                     )
                 ),
@@ -2279,6 +2295,7 @@ class AutoRunManager:
             "reentry_earliest_ts": 0.0,
             "next_stoploss_earliest_ts": 0.0,
             "old_maker_floor_price": None,
+            "old_maker_profit_pct": None,
             "old_entry_price": None,
             "old_last_buy_price": None,
             "today_realized_loss_pct": 0.0,
@@ -2296,6 +2313,8 @@ class AutoRunManager:
             "closed_final_ts": 0.0,
             "closed_final_reason": "",
             "pending_cleanup_since_ts": 0.0,
+            "last_reentry_above_line": False,
+            "last_reentry_above_line_price": None,
         }
 
     def _normalize_stoploss_reentry_state_record(
@@ -2333,6 +2352,7 @@ class AutoRunManager:
             "reentry_earliest_ts",
             "next_stoploss_earliest_ts",
             "old_maker_floor_price",
+            "old_maker_profit_pct",
             "old_entry_price",
             "old_last_buy_price",
             "today_realized_loss_pct",
@@ -2873,6 +2893,39 @@ class AutoRunManager:
         self._remove_token_from_copytrade_files(token_id)
         self._position_snapshot_cache.pop(token_id, None)
 
+    def _abandon_stoploss_reentry(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        event_name: str = "STOPLOSS_REENTRY_ABANDONED",
+        reason: str,
+        now: float,
+        note: str = "",
+    ) -> None:
+        stop_exit_ts = max(0.0, float(state.get("stop_exit_ts") or 0.0))
+        waited_seconds = max(0.0, now - stop_exit_ts) if stop_exit_ts > 0.0 else 0.0
+        state_name = str(state.get("state") or "unknown")
+        last_error = str(state.get("last_error") or "")
+        self._append_exit_token_record(
+            token_id,
+            str(event_name),
+            exit_data={
+                "abandon_reason": str(reason),
+                "state_name": state_name,
+                "stop_exit_ts": stop_exit_ts,
+                "waited_seconds": waited_seconds,
+                "last_error": last_error,
+                "note": str(note or ""),
+            },
+            refillable=False,
+        )
+        print(
+            f"[STOPLOSS][ABANDON] token={token_id[:20]}... reason={reason} "
+            f"state={state_name} waited={waited_seconds:.0f}s note={note or '-'}"
+        )
+        self._remove_stoploss_reentry_state(token_id)
+
     def _run_stoploss_check(self, now: float) -> None:
         if not bool(getattr(self.config, "enable_stoploss", False)):
             return
@@ -2935,6 +2988,7 @@ class AutoRunManager:
         window_cd = max(0.0, float(self.config.stoploss_reentry_window_cooldown_minutes)) * 60.0
         next_stoploss_cd = max(0.0, float(self.config.stoploss_next_stoploss_cooldown_minutes)) * 60.0
         extra_reentry_cd = max(0.0, float(self.config.stoploss_reentry_extra_delay_after_5_cuts_hours)) * 3600.0
+        reentry_timeout_sec = max(1.0, float(self.config.stoploss_reentry_timeout_hours)) * 3600.0
         line_ticks = max(1, int(self.config.stoploss_reentry_line_ticks))
         zone_lower_pct = max(0.0, float(self.config.stoploss_reentry_zone_lower_pct))
         probe_break_pct = max(0.0, float(self.config.stoploss_probe_break_pct))
@@ -3017,19 +3071,24 @@ class AutoRunManager:
                             else None
                         )
                         if est_value is not None and est_value < threshold:
-                            state["market_status_last"] = "source_detached_timeout_value_below_threshold"
-                            state["last_error"] = (
-                                f"source_detached value_below_threshold "
+                            note = (
+                                f"source detached low value parked as orphan "
                                 f"value={est_value:.4f} threshold={threshold:.4f}"
                             )
-                            self._log_throttled(
-                                f"stoploss_source_detached_value_skip_{token_id}",
-                                180.0,
-                                (
-                                    f"[RISK_GUARD] token={token_id[:20]}... source_detached timeout skip cleanup "
-                                    f"value={est_value:.4f} < threshold={threshold:.4f}"
-                                ),
+                            self._mark_token_orphaned(
+                                token_id,
+                                reason="SOURCE_DETACHED_LOW_VALUE",
+                                trigger_source="stoploss_source_detached",
+                                task=self.tasks.get(token_id),
+                                note=note,
+                                position_snapshot={
+                                    "size": float(pos_size),
+                                    "avg_price": _extract_position_avg_price(row),
+                                    "cur_price": _extract_position_current_price(row),
+                                    "est_value": float(est_value),
+                                },
                             )
+                            self._remove_stoploss_reentry_state(token_id)
                             state_dirty = True
                             continue
                     self._mark_token_orphaned(
@@ -3163,6 +3222,7 @@ class AutoRunManager:
             state["old_entry_price"] = float(avg_price)
             state["old_last_buy_price"] = float(avg_price)
             state["old_maker_floor_price"] = _coerce_float((self.topic_details.get(token_id) or {}).get("floor_price"))
+            state["old_maker_profit_pct"] = float(self._resolve_profit_pct_for_token(token_id))
             state["market_status_last"] = "stoploss_exited"
             state["last_error"] = ""
             state["reentry_quote_missing_hits"] = 0
@@ -3180,6 +3240,8 @@ class AutoRunManager:
                     "drawdown": drawdown,
                     "before_size": before_size,
                     "after_size": after_size,
+                    "phase": "waiting_reentry",
+                    "lifecycle_terminal": False,
                 },
                 refillable=False,
             )
@@ -3198,13 +3260,25 @@ class AutoRunManager:
                 continue
             if self._rollover_stoploss_daily_fields(state, today):
                 state_dirty = True
+            state_name = str(state.get("state") or "NORMAL_MAKER")
             if self._stoploss_is_market_closed(token_id):
-                print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason=market_closed_no_position")
-                self._remove_stoploss_reentry_state(token_id)
+                if state_name in {
+                    "STOPLOSS_EXITED_WAITING_WINDOW",
+                    "STOPLOSS_EXITED_WAITING_PROBE",
+                    "STOPLOSS_EXITED_WAITING_REBOUND",
+                }:
+                    self._abandon_stoploss_reentry(
+                        token_id,
+                        state,
+                        reason="market_closed",
+                        now=now,
+                    )
+                else:
+                    print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason=market_closed_no_position")
+                    self._remove_stoploss_reentry_state(token_id)
                 state_dirty = True
                 continue
 
-            state_name = str(state.get("state") or "NORMAL_MAKER")
             if state_name in {
                 "STOPLOSS_EXITED_WAITING_WINDOW",
                 "STOPLOSS_EXITED_WAITING_PROBE",
@@ -3214,8 +3288,13 @@ class AutoRunManager:
                 not_in_follow_list = token_id not in copytrade_token_scope
                 if has_sell_signal or not_in_follow_list:
                     reason = "target_sell_signal_while_waiting_reentry" if has_sell_signal else "target_not_following_while_waiting_reentry"
-                    print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason={reason}")
-                    self._remove_stoploss_reentry_state(token_id)
+                    self._abandon_stoploss_reentry(
+                        token_id,
+                        state,
+                        event_name="STOPLOSS_REENTRY_CANCELED",
+                        reason=reason,
+                        now=now,
+                    )
                     state_dirty = True
                     if has_sell_signal:
                         self._remove_token_from_copytrade_files(token_id)
@@ -3225,6 +3304,16 @@ class AutoRunManager:
                             status="processed",
                             note="skip_reentry_after_target_sell",
                         )
+                    continue
+                stop_exit_ts = float(state.get("stop_exit_ts") or 0.0)
+                if stop_exit_ts > 0.0 and (now - stop_exit_ts) >= reentry_timeout_sec:
+                    self._abandon_stoploss_reentry(
+                        token_id,
+                        state,
+                        reason="reentry_timeout",
+                        now=now,
+                    )
+                    state_dirty = True
                     continue
 
             if bool(state.get("source_detached", False)):
@@ -3238,6 +3327,33 @@ class AutoRunManager:
                     self._remove_stoploss_reentry_state(token_id)
                     state_dirty = True
                 continue
+            if state_name == "REENTRY_HOLD":
+                first_seen = float(state.get("pending_cleanup_since_ts") or 0.0)
+                if first_seen <= 0.0:
+                    state["pending_cleanup_since_ts"] = float(now)
+                    state["last_error"] = "reentry hold no-position pending cleanup"
+                    state_dirty = True
+                    continue
+                if (now - first_seen) >= max(1.0, float(self.config.stoploss_check_interval_sec)):
+                    self._append_exit_token_record(
+                        token_id,
+                        "STOPLOSS_REENTRY_HOLD_CLOSED",
+                        exit_data={
+                            "reason": "reentry_hold_no_position",
+                            "state_name": state_name,
+                            "waited_seconds": max(0.0, now - first_seen),
+                            "last_error": str(state.get("last_error") or ""),
+                        },
+                        refillable=False,
+                    )
+                    print(
+                        f"[STATE_SYNC] remove state token={token_id[:20]}... "
+                        "reason=reentry_hold_no_position"
+                    )
+                    self._remove_stoploss_reentry_state(token_id)
+                    state_dirty = True
+                continue
+
             state["pending_cleanup_since_ts"] = 0.0
 
             if bool(state.get("reentry_paused_for_day", False)):
@@ -3346,15 +3462,19 @@ class AutoRunManager:
             exec_buy = _coerce_float(reenter.get("executed_avg_price"))
             if exec_buy is None or exec_buy <= 0:
                 exec_buy = quote
+            recovered_above_line = False
             if reentry_line > 0 and float(exec_buy) > reentry_line + 1e-12:
-                state["rebound_confirm_hits"] = 0
+                recovered_above_line = True
                 state["last_error"] = f"reentry price above line buy={float(exec_buy):.6f} line={reentry_line:.6f}"
-                print(f"[RISK_GUARD] token={token_id[:20]}... {state['last_error']}")
-                state_dirty = True
-                continue
+                print(
+                    f"[RISK_GUARD] token={token_id[:20]}... {state['last_error']} -> "
+                    "recovering into managed reentry hold"
+                )
 
             hold_floor = _coerce_float(state.get("old_maker_floor_price"))
-            hold_profit = self._resolve_profit_pct_for_token(token_id)
+            hold_profit = _coerce_float(state.get("old_maker_profit_pct"))
+            if hold_profit is None or hold_profit < 0:
+                hold_profit = self._resolve_profit_pct_for_token(token_id)
             self._queue_reentry_task_after_buy(
                 token_id,
                 position_size=after_size,
@@ -3368,7 +3488,12 @@ class AutoRunManager:
             state["probe_confirm_hits"] = 0
             state["rebound_confirm_hits"] = 0
             state["next_stoploss_earliest_ts"] = float(now + next_stoploss_cd)
-            state["last_error"] = ""
+            state["last_reentry_above_line"] = bool(recovered_above_line)
+            state["last_reentry_above_line_price"] = (
+                float(exec_buy) if recovered_above_line else None
+            )
+            if not recovered_above_line:
+                state["last_error"] = ""
             print(
                 f"[REENTRY_EXEC] token={token_id[:20]}... success buy={float(exec_buy):.6f} "
                 f"size={after_size:.4f} state=REENTRY_HOLD next_stoploss_in={next_stoploss_cd:.0f}s"
