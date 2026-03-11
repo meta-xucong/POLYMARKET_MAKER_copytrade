@@ -1426,3 +1426,44 @@ def test_reenter_single_token_taker_rejects_stale_ask_quote():
         assert resp.get("ok") is False
         assert "stale taker ask quote" in str(resp.get("error") or "")
         assert place_calls == []
+
+
+def test_single_token_ioc_liquidation_blocks_non_whitelist_reason_and_records_audit():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        audit_rows = []
+        autorun = _Autorun(cfg, running_tasks=0)
+        autorun._append_exit_token_record = (  # type: ignore[attr-defined]
+            lambda token_id, exit_reason, **kwargs: audit_rows.append(
+                (token_id, exit_reason, kwargs)
+            )
+        )
+
+        place_calls = []
+        mgr._cached_client = object()
+        mgr._place_sell_ioc = lambda *_args, **_kwargs: place_calls.append(True)
+
+        resp = mgr.liquidate_single_token_taker(
+            autorun,
+            "t1",
+            target_size=3.0,
+            reason="SOURCE_DETACHED_TIMEOUT",
+            max_attempts=1,
+        )
+
+        assert resp.get("ok") is False
+        assert resp.get("blocked") is True
+        assert resp.get("ioc_allowed") is False
+        assert resp.get("reason") == "SOURCE_DETACHED_TIMEOUT"
+        assert place_calls == []
+        assert len(audit_rows) == 1
+        token_id, exit_reason, kwargs = audit_rows[0]
+        assert token_id == "t1"
+        assert exit_reason == "IOC_BLOCKED_NON_WHITELIST"
+        exit_data = kwargs.get("exit_data") or {}
+        assert exit_data.get("source") == "total_liquidation_single_token_taker"
+        assert exit_data.get("requested_reason") == "SOURCE_DETACHED_TIMEOUT"

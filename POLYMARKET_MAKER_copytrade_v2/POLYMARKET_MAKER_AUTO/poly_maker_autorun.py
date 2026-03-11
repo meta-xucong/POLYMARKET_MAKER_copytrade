@@ -125,9 +125,7 @@ DEFAULT_GLOBAL_CONFIG = {
         "clear_confirm_max_retries": 3,
         "daily_reentry_loss_circuit_breaker_pct": 0.10,
         "drawdown_step_per_cycle_pct": 0.01,
-        "min_age_minutes": 720.0,
-        "first_cut_ratio": 0.50,
-        "second_cut_cooldown_minutes": 1440.0,
+        "min_age_minutes": 5.0,
         "confirm_rounds": 2,
         "min_maker_order_size": 5.0,
         "max_tokens_per_cycle": 3,
@@ -1025,15 +1023,7 @@ class GlobalConfig:
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_step_per_cycle_pct", 0.01)
     )
     stoploss_min_age_minutes: float = float(
-        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_age_minutes", 720.0)
-    )
-    stoploss_first_cut_ratio: float = float(
-        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("first_cut_ratio", 0.50)
-    )
-    stoploss_second_cut_cooldown_minutes: float = float(
-        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
-            "second_cut_cooldown_minutes", 1440.0
-        )
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_age_minutes", 5.0)
     )
     stoploss_confirm_rounds: int = int(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("confirm_rounds", 2)
@@ -1779,32 +1769,6 @@ class GlobalConfig:
                     )
                 ),
             ),
-            stoploss_first_cut_ratio=max(
-                0.0,
-                min(
-                    1.0,
-                    float(
-                        stoploss_cfg.get(
-                            "first_cut_ratio",
-                            merged.get(
-                                "stoploss_first_cut_ratio", cls.stoploss_first_cut_ratio
-                            ),
-                        )
-                    ),
-                ),
-            ),
-            stoploss_second_cut_cooldown_minutes=max(
-                0.0,
-                float(
-                    stoploss_cfg.get(
-                        "second_cut_cooldown_minutes",
-                        merged.get(
-                            "stoploss_second_cut_cooldown_minutes",
-                            cls.stoploss_second_cut_cooldown_minutes,
-                        ),
-                    )
-                ),
-            ),
             stoploss_confirm_rounds=max(
                 1,
                 int(
@@ -2356,6 +2320,7 @@ class AutoRunManager:
             "market_status_last": "",
             "last_price_check_ts": 0.0,
             "last_position_seen_ts": 0.0,
+            "position_opened_ts": 0.0,
             "last_error": "",
             "reentry_quote_missing_hits": 0,
             "closed_final_ts": 0.0,
@@ -2420,6 +2385,7 @@ class AutoRunManager:
             "source_detached_cleanup_started_ts",
             "last_price_check_ts",
             "last_position_seen_ts",
+            "position_opened_ts",
             "closed_final_ts",
             "pending_cleanup_since_ts",
             "pending_confirm_started_ts",
@@ -2448,6 +2414,7 @@ class AutoRunManager:
             0.0, float(merged.get("source_detached_cleanup_started_ts") or 0.0)
         )
         merged["last_position_seen_ts"] = max(0.0, float(merged.get("last_position_seen_ts") or 0.0))
+        merged["position_opened_ts"] = max(0.0, float(merged.get("position_opened_ts") or 0.0))
         merged["pending_cleanup_since_ts"] = max(0.0, float(merged.get("pending_cleanup_since_ts") or 0.0))
         merged["pending_confirm_started_ts"] = max(
             0.0, float(merged.get("pending_confirm_started_ts") or 0.0)
@@ -3364,6 +3331,7 @@ class AutoRunManager:
             pos_size = float(_extract_position_size(row) or 0.0)
             if pos_size <= dust:
                 state["stoploss_confirm_hits"] = 0
+                state["position_opened_ts"] = 0.0
                 state_dirty = True
                 continue
             avg_price = _extract_position_avg_price(row)
@@ -3372,6 +3340,24 @@ class AutoRunManager:
                 state["last_error"] = "missing avg price"
                 state_dirty = True
                 continue
+            position_opened_ts = float(state.get("position_opened_ts") or 0.0)
+            if position_opened_ts <= 0.0:
+                state["position_opened_ts"] = float(now)
+                state["stoploss_confirm_hits"] = 0
+                state["last_error"] = "stoploss age gate initialized"
+                state_dirty = True
+                continue
+            min_age_seconds = max(0.0, float(self.config.stoploss_min_age_minutes)) * 60.0
+            if min_age_seconds > 0.0:
+                position_age = max(0.0, float(now) - position_opened_ts)
+                if position_age < min_age_seconds:
+                    state["stoploss_confirm_hits"] = 0
+                    state["last_error"] = (
+                        f"stoploss age gate active age={position_age:.0f}s "
+                        f"required={min_age_seconds:.0f}s"
+                    )
+                    state_dirty = True
+                    continue
             if float(state.get("next_stoploss_earliest_ts") or 0.0) > now:
                 state["stoploss_confirm_hits"] = 0
                 state_dirty = True
@@ -3401,23 +3387,64 @@ class AutoRunManager:
                 break
             action_count += 1
 
+            self._append_exit_token_record(
+                token_id,
+                "STOPLOSS_IOC_STARTED",
+                exit_data={
+                    "source": "stoploss_v4",
+                    "drawdown": drawdown,
+                    "avg_price": float(avg_price),
+                    "sellable_price": float(sellable_price),
+                    "target_size": float(pos_size),
+                    "confirm_hits": hits,
+                    "threshold_pct": threshold,
+                },
+                refillable=False,
+            )
             self._prepare_token_for_stoploss_execution(token_id)
             liq = self._total_liquidation.liquidate_single_token_taker(
                 self,
                 token_id,
                 target_size=pos_size,
-                reason="stoploss_v4_full_clear",
+                reason="STOPLOSS_REENTRY",
             )
             liq_after = _coerce_float(liq.get("after_size"))
             liq_before = _coerce_float(liq.get("before_size"))
             after_size = max(0.0, liq_after if liq_after is not None else pos_size)
             before_size = max(0.0, liq_before if liq_before is not None else pos_size)
             filled_size = max(0.0, _coerce_float(liq.get("filled_size")) or 0.0)
+            if bool(liq.get("blocked")):
+                state["stoploss_confirm_hits"] = 0
+                state["last_error"] = str(liq.get("error") or "stoploss IOC blocked")
+                self._append_exit_token_record(
+                    token_id,
+                    "STOPLOSS_IOC_BLOCKED",
+                    exit_data={
+                        "source": "stoploss_v4",
+                        "reason": str(liq.get("reason") or "UNSPECIFIED"),
+                        "error": str(liq.get("error") or ""),
+                    },
+                    refillable=False,
+                )
+                state_dirty = True
+                continue
             if filled_size <= 0.0 and before_size > after_size:
                 filled_size = max(0.0, before_size - after_size)
             if filled_size <= dust:
                 state["stoploss_confirm_hits"] = 0
                 state["last_error"] = f"stoploss clear no_fill remain={after_size:.4f}"
+                self._append_exit_token_record(
+                    token_id,
+                    "STOPLOSS_IOC_NO_FILL",
+                    exit_data={
+                        "source": "stoploss_v4",
+                        "before_size": before_size,
+                        "after_size": after_size,
+                        "filled_size": filled_size,
+                        "error": str(liq.get("error") or ""),
+                    },
+                    refillable=False,
+                )
                 state_dirty = True
                 continue
 
@@ -4065,6 +4092,13 @@ class AutoRunManager:
                 continue
             if item.get("status") != status:
                 item["status"] = status
+                changed = True
+            terminal = status in {"done", "stale_ignored", "canceled", "superseded"}
+            if terminal and item.get("active", True):
+                item["active"] = False
+                changed = True
+            if terminal and not item.get("consumed_at"):
+                item["consumed_at"] = now_iso
                 changed = True
             if attempts is not None:
                 try:
@@ -6312,7 +6346,24 @@ class AutoRunManager:
                 token_id,
                 source=str(exit_reason or "").strip().upper(),
             )
-        
+        merged_exit_data = dict(exit_data or {})
+        trigger_source = str(
+            merged_exit_data.get("trigger_source")
+            or merged_exit_data.get("source")
+            or merged_exit_data.get("requested_source")
+            or ""
+        ).strip()
+        trigger_reason = str(
+            merged_exit_data.get("trigger_reason")
+            or merged_exit_data.get("requested_reason")
+            or str(exit_reason or "").strip().upper()
+        ).strip()
+        trigger_path = str(
+            merged_exit_data.get("trigger_path")
+            or merged_exit_data.get("path")
+            or ""
+        ).strip()
+
         # 【修改】使用文件锁保护，与清理器保持一致
         with self._file_io_lock:
             records = self._load_exit_tokens()
@@ -6323,7 +6374,10 @@ class AutoRunManager:
                     "token_id": token_id,
                     "exit_ts": time.time(),
                     "exit_reason": exit_reason,
-                    "exit_data": exit_data or {},
+                    "exit_data": merged_exit_data,
+                    "trigger_source": trigger_source,
+                    "trigger_reason": trigger_reason,
+                    "trigger_path": trigger_path,
                     "refillable": refillable,
                 }
             )
@@ -6335,36 +6389,8 @@ class AutoRunManager:
                 print(f"[WARN] 写入 exit_tokens.json 失败: {exc}")
 
     def _remove_exit_token_records(self, token_id: str) -> None:
-        if not token_id:
-            return
-        with self._file_io_lock:
-            records = self._load_exit_tokens()
-            if not isinstance(records, list) or not records:
-                return
-            kept: List[Dict[str, Any]] = []
-            removed = 0
-            for rec in records:
-                rec_token = str(rec.get("token_id") or "")
-                if rec_token != token_id:
-                    kept.append(rec)
-                    continue
-                reason = str(rec.get("exit_reason") or "").strip().upper()
-                # 保留 cleanup 审计轨迹，其他记录按历史逻辑清理。
-                if reason.startswith("EXIT_CLEANUP_"):
-                    kept.append(rec)
-                else:
-                    removed += 1
-            if removed <= 0:
-                return
-            try:
-                self._exit_tokens_path.parent.mkdir(parents=True, exist_ok=True)
-                with self._exit_tokens_path.open("w", encoding="utf-8") as f:
-                    json.dump(kept, f, ensure_ascii=False, indent=2)
-                print(
-                    f"[REFILL] cleaned exit history: token={token_id[:20]}... removed={removed}"
-                )
-            except OSError as exc:
-                print(f"[WARN] failed to clean exit_tokens.json: {exc}")
+        # Keep full audit history for postmortem analysis.
+        return
 
     def _evict_stale_pending_topics(self) -> None:
         if not self.config.enable_pending_soft_eviction:
@@ -7874,18 +7900,17 @@ class AutoRunManager:
     # ========== 市场关闭时自动清理 token ==========
     def _remove_token_from_copytrade_files(self, token_id: str) -> None:
         """
-        从 copytrade JSON 文件中移除指定的 token，避免重启后再次加入队列。
+        将 copytrade JSON 文件中的指定 token 标记为失效，避免重启后再次加入队列。
 
-        会从以下文件中移除：
+        会标记以下文件中的记录失效：
         - tokens_from_copytrade.json
         - copytrade_sell_signals.json
         """
         if not token_id:
             return
 
-        # 【修改】使用文件锁保护所有文件操作
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with self._file_io_lock:
-            # 1. 从 tokens_from_copytrade.json 移除
             tokens_path = self.config.copytrade_tokens_path
             if tokens_path.exists():
                 try:
@@ -7893,25 +7918,29 @@ class AutoRunManager:
                         data = json.load(f)
 
                     if isinstance(data, dict) and "tokens" in data:
-                        original_count = len(data["tokens"])
-                        data["tokens"] = [
-                            t for t in data["tokens"]
-                            if _topic_id_from_entry(t) != token_id
-                        ]
-                        removed_count = original_count - len(data["tokens"])
-
-                        if removed_count > 0:
+                        invalidated = 0
+                        for item in data["tokens"]:
+                            if not isinstance(item, dict):
+                                continue
+                            if _topic_id_from_entry(item) != token_id:
+                                continue
+                            if item.get("active", True):
+                                item["active"] = False
+                                invalidated += 1
+                            item["invalidated_at"] = now_iso
+                            item["invalidate_reason"] = "cleanup_consumed"
+                            item["invalidate_source"] = "_remove_token_from_copytrade_files"
+                        if invalidated > 0:
                             data["updated_at"] = time.strftime(
                                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                             )
                             _atomic_json_write(tokens_path, data)
                             print(
-                                f"[CLEANUP] 已从 tokens_from_copytrade.json 移除 token={token_id[:20]}..."
+                                f"[CLEANUP] 已将 tokens_from_copytrade.json 标记失效 token={token_id[:20]}..."
                             )
                 except (json.JSONDecodeError, OSError) as exc:
                     print(f"[CLEANUP] 更新 tokens_from_copytrade.json 失败: {exc}")
 
-            # 2. 从 copytrade_sell_signals.json 移除
             signals_path = self.config.copytrade_sell_signals_path
             if signals_path.exists():
                 try:
@@ -7919,20 +7948,33 @@ class AutoRunManager:
                         data = json.load(f)
 
                     if isinstance(data, dict) and "sell_tokens" in data:
-                        original_count = len(data["sell_tokens"])
-                        data["sell_tokens"] = [
-                            t for t in data["sell_tokens"]
-                            if _topic_id_from_entry(t) != token_id
-                        ]
-                        removed_count = original_count - len(data["sell_tokens"])
-
-                        if removed_count > 0:
+                        invalidated = 0
+                        for item in data["sell_tokens"]:
+                            if not isinstance(item, dict):
+                                continue
+                            if _topic_id_from_entry(item) != token_id:
+                                continue
+                            if item.get("active", True):
+                                item["active"] = False
+                                invalidated += 1
+                            if str(item.get("status") or "").strip().lower() not in {
+                                "done",
+                                "stale_ignored",
+                                "canceled",
+                                "superseded",
+                            }:
+                                item["status"] = "done"
+                            item["consumed_at"] = now_iso
+                            item["invalidated_at"] = now_iso
+                            item["invalidate_reason"] = "cleanup_consumed"
+                            item["invalidate_source"] = "_remove_token_from_copytrade_files"
+                        if invalidated > 0:
                             data["updated_at"] = time.strftime(
                                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                             )
                             _atomic_json_write(signals_path, data)
                             print(
-                                f"[CLEANUP] 已从 copytrade_sell_signals.json 移除 token={token_id[:20]}..."
+                                f"[CLEANUP] 已将 copytrade_sell_signals.json 标记失效 token={token_id[:20]}..."
                             )
                 except (json.JSONDecodeError, OSError) as exc:
                     print(f"[CLEANUP] 更新 copytrade_sell_signals.json 失败: {exc}")
@@ -8672,6 +8714,8 @@ class AutoRunManager:
         for item in raw_tokens:
             if not isinstance(item, dict):
                 continue
+            if not bool(item.get("active", True)):
+                continue
             if not bool(item.get("introduced_by_buy", False)):
                 skipped_not_buy += 1
                 continue
@@ -8723,6 +8767,8 @@ class AutoRunManager:
                 continue
             token_id = item.get("token_id") or item.get("tokenId")
             if not token_id:
+                continue
+            if not bool(item.get("active", True)):
                 continue
             if not item.get("introduced_by_buy", False):
                 skipped += 1
@@ -9039,7 +9085,9 @@ class AutoRunManager:
         return self.config.data_dir / f"exit_signal_{safe_id}.json"
 
     def _has_exit_signal_file(self, token_id: str) -> bool:
-        return bool(token_id) and self._exit_signal_path(token_id).exists()
+        if not token_id:
+            return False
+        return self._is_exit_signal_payload_active(self._load_exit_signal_payload(token_id))
 
     def _active_sell_block_reason(
         self,
@@ -9099,12 +9147,64 @@ class AutoRunManager:
         trigger_reason: str = "UNSPECIFIED",
     ) -> None:
         path = self._exit_signal_path(token_id)
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         payload = {
             "token_id": token_id,
+            "active": True,
+            "status": "pending",
+            "trigger_path": "exit_signal",
             "trigger_source": str(trigger_source),
             "exit_reason": self._normalize_exit_reason(trigger_reason),
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "trigger_reason": self._normalize_exit_reason(trigger_reason),
+            "issued_at": now_iso,
+            "updated_at": now_iso,
         }
+        _dump_json_file(path, payload)
+
+    def _load_exit_signal_payload(self, token_id: str) -> Dict[str, Any]:
+        path = self._exit_signal_path(token_id)
+        if not path.exists():
+            return {}
+        try:
+            with self._file_io_lock:
+                payload = _load_json_file(path)
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _is_exit_signal_payload_active(payload: Dict[str, Any]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        token_id = str(payload.get("token_id") or "").strip()
+        if not token_id:
+            return False
+        if not bool(payload.get("active", True)):
+            return False
+        status = str(payload.get("status") or "pending").strip().lower()
+        return status not in {"done", "canceled", "stale_ignored", "failed"}
+
+    def _mark_exit_signal_inactive(
+        self,
+        token_id: str,
+        *,
+        status: str,
+        source: str,
+        invalidate_reason: str,
+    ) -> None:
+        path = self._exit_signal_path(token_id)
+        if not path.exists():
+            return
+        payload = self._load_exit_signal_payload(token_id)
+        if not payload:
+            payload = {"token_id": token_id}
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        payload["active"] = False
+        payload["status"] = str(status or "done")
+        payload["consumed_at"] = now_iso
+        payload["consumed_by"] = str(source or "")
+        payload["invalidate_reason"] = str(invalidate_reason or "")
+        payload["updated_at"] = now_iso
         _dump_json_file(path, payload)
 
     def _has_account_position(self, token_id: str, *, force_refresh: bool = False) -> bool:
@@ -9173,6 +9273,8 @@ class AutoRunManager:
                 token_id = path.stem.replace("exit_signal_", "", 1)
             if not token_id:
                 continue
+            if isinstance(payload, dict) and not self._is_exit_signal_payload_active(payload):
+                continue
 
             if token_id in self.pending_topics or token_id in self.pending_burst_topics:
                 self._remove_pending_topic(token_id)
@@ -9193,18 +9295,16 @@ class AutoRunManager:
                     )
                 continue
 
-            try:
-                path.unlink()
-                print(
-                    f"[EXIT-SIGNAL][GC] token={token_id[:20]}... "
-                    "reason=no_position"
-                )
-            except FileNotFoundError:
-                continue
-            except OSError as exc:
-                print(
-                    f"[EXIT-SIGNAL][WARN] 无法删除残留信号 token={token_id[:20]}... error={exc}"
-                )
+            self._mark_exit_signal_inactive(
+                token_id,
+                status="done",
+                source="reconcile_exit_signals",
+                invalidate_reason="no_position",
+            )
+            print(
+                f"[EXIT-SIGNAL][GC] token={token_id[:20]}... "
+                "reason=no_position"
+            )
 
     def _has_position_for_sell_signal(
         self,
@@ -9652,6 +9752,8 @@ class AutoRunManager:
             "updated_ts": float(now),
             "token_id": token_id,
             "reason": str(reason),
+            "trigger_reason": str(reason),
+            "trigger_path": "orphan",
             "trigger_source": str(trigger_source),
             "note": str(note or ""),
             "status": "orphaned",

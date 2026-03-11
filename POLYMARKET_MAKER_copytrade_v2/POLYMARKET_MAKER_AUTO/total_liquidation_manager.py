@@ -75,6 +75,7 @@ class LiquidationConfig:
 class TotalLiquidationManager:
     """全局清仓管理器：监控活跃度 -> 触发清仓 -> 硬重置。"""
 
+    _ALLOWED_SINGLE_TOKEN_IOC_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY"}
     _COLLATERAL_DECIMALS = 6
     _TOKEN_SCOPE_COPYTRADE = "copytrade"
     _TOKEN_SCOPE_ALL_POSITIONS = "all_positions"
@@ -130,6 +131,41 @@ class TotalLiquidationManager:
         with self.state_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         self._state = dict(payload)
+
+    @classmethod
+    def _normalize_ioc_reason(cls, reason: Any) -> str:
+        return str(reason or "").strip().upper()
+
+    def _record_blocked_single_token_ioc(
+        self,
+        autorun: Any,
+        token_id: str,
+        *,
+        requested_reason: str,
+        target_size: Optional[float],
+    ) -> None:
+        append_exit_record = getattr(autorun, "_append_exit_token_record", None)
+        if not callable(append_exit_record):
+            return
+        try:
+            append_exit_record(
+                token_id,
+                "IOC_BLOCKED_NON_WHITELIST",
+                exit_data={
+                    "source": "total_liquidation_single_token_taker",
+                    "requested_reason": requested_reason or "UNSPECIFIED",
+                    "requested_target_size": (
+                        float(target_size) if target_size is not None else None
+                    ),
+                    "allowed_reasons": sorted(self._ALLOWED_SINGLE_TOKEN_IOC_REASONS),
+                },
+                refillable=False,
+            )
+        except Exception as exc:
+            print(
+                "[GLB_LIQ][WARN] failed to persist blocked IOC audit: "
+                f"token={token_id[:20]}... error={exc}"
+            )
 
     def _get_last_trigger_ts(self) -> float:
         value = self._state.get("last_trigger_ts")
@@ -1110,6 +1146,34 @@ class TotalLiquidationManager:
         token_id = str(token_id or "").strip()
         if not token_id:
             return {"ok": False, "error": "missing token_id"}
+        normalized_reason = self._normalize_ioc_reason(reason)
+        if normalized_reason not in self._ALLOWED_SINGLE_TOKEN_IOC_REASONS:
+            print(
+                "[GLB_LIQ][BLOCK] single-token IOC blocked by whitelist: "
+                f"token={token_id[:20]}... reason={normalized_reason or 'UNSPECIFIED'}"
+            )
+            self._record_blocked_single_token_ioc(
+                autorun,
+                token_id,
+                requested_reason=normalized_reason,
+                target_size=target_size,
+            )
+            return {
+                "ok": False,
+                "blocked": True,
+                "ioc_allowed": False,
+                "token_id": token_id,
+                "requested_size": max(0.0, float(target_size or 0.0)),
+                "filled_size": 0.0,
+                "before_size": None,
+                "after_size": None,
+                "attempts": 0,
+                "reason": normalized_reason,
+                "error": (
+                    "single-token IOC blocked by whitelist "
+                    f"reason={normalized_reason or 'UNSPECIFIED'}"
+                ),
+            }
 
         client = self._get_cached_client()
         if client is None:
@@ -1125,7 +1189,7 @@ class TotalLiquidationManager:
                 "before_size": before_size,
                 "after_size": 0.0,
                 "attempts": 0,
-                "reason": reason,
+                "reason": normalized_reason,
             }
 
         requested_size = before_size
@@ -1143,7 +1207,7 @@ class TotalLiquidationManager:
                 "before_size": before_size,
                 "after_size": before_size,
                 "attempts": 0,
-                "reason": reason,
+                "reason": normalized_reason,
             }
 
         # 先撤单，避免 maker/遗留订单和 taker 冲突。
@@ -1198,7 +1262,7 @@ class TotalLiquidationManager:
             "after_size": after_size,
             "remaining_target": remaining_target,
             "attempts": attempts,
-            "reason": reason,
+            "reason": normalized_reason,
             "error": last_error,
             "executed_avg_price": executed_avg_price,
             "executed_price_source": "response_fill" if executed_size > 1e-9 else ("ioc_quote_fallback" if executed_avg_price is not None else "unknown"),

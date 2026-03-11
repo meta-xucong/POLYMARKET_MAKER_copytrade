@@ -183,6 +183,7 @@ def _load_token_map(path: Path) -> Dict[str, Dict[str, Any]]:
         key = str(token_id)
         entry = dict(item)
         entry.setdefault("introduced_by_buy", False)
+        entry.setdefault("active", True)
         mapping[key] = entry
     return mapping
 
@@ -201,6 +202,7 @@ def _load_sell_signals(path: Path) -> Dict[str, Dict[str, Any]]:
             continue
         entry = dict(item)
         entry.setdefault("introduced_by_buy", False)
+        entry.setdefault("active", True)
         entry.setdefault("status", "pending")
         try:
             entry["attempts"] = int(entry.get("attempts", 0) or 0)
@@ -228,9 +230,7 @@ def _write_tokens(path: Path, mapping: Dict[str, Dict[str, Any]]) -> None:
         ts = _parse_last_seen(entry.get("last_seen"))
         return ts.timestamp() if ts else 0.0
 
-    tokens = [
-        entry for entry in mapping.values() if bool(entry.get("introduced_by_buy", False))
-    ]
+    tokens = [entry for entry in mapping.values() if bool(entry.get("introduced_by_buy", False))]
     tokens = sorted(tokens, key=_sort_key, reverse=True)
     payload = {
         "updated_at": _utc_now_iso(),
@@ -327,17 +327,27 @@ def run_once(
     for token_id in list(token_map.keys()):
         entry = token_map.get(token_id) or {}
         if token_id in blacklist_tokens or not bool(entry.get("introduced_by_buy", False)):
-            del token_map[token_id]
+            entry["active"] = False
+            entry["invalidated_at"] = _utc_now_iso()
+            entry["invalidate_reason"] = (
+                "blacklist" if token_id in blacklist_tokens else "not_introduced_by_buy"
+            )
             changed = True
 
     for token_id, entry in list(sell_map.items()):
         if token_id in blacklist_tokens:
-            del sell_map[token_id]
+            entry["active"] = False
+            entry["status"] = "stale_ignored"
+            entry["updated_at"] = _utc_now_iso()
+            entry["invalidate_reason"] = "blacklist"
             sell_changed = True
             continue
         token_entry = token_map.get(token_id)
         if not token_entry or not token_entry.get("introduced_by_buy", False):
-            del sell_map[token_id]
+            entry["active"] = False
+            entry["status"] = "stale_ignored"
+            entry["updated_at"] = _utc_now_iso()
+            entry["invalidate_reason"] = "missing_buy_introduction"
             sell_changed = True
             continue
         if not entry.get("introduced_by_buy", False):
@@ -396,6 +406,7 @@ def run_once(
                 "token_id": token_id,
                 "source_account": account,
                 "last_seen": last_seen,
+                "active": True,
             }
             # 保留 existing 的 introduced_by_buy 标记，避免被覆盖丢失
             if existing and existing.get("introduced_by_buy", False):
@@ -423,6 +434,7 @@ def run_once(
                     "last_seen": last_seen,
                     "signal_ts": float(action["timestamp"].timestamp()),
                     "introduced_by_buy": True,
+                    "active": True,
                     "status": "pending",
                     "attempts": 0,
                 }

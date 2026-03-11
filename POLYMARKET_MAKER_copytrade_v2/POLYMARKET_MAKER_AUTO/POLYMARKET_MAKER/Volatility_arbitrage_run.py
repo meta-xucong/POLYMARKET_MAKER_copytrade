@@ -2942,6 +2942,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             pass
         return {}
 
+    def _exit_signal_payload_active(payload: Dict[str, Any]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if not bool(payload.get("active", True)):
+            return False
+        status = str(payload.get("status") or "pending").strip().lower()
+        return status not in {"done", "canceled", "stale_ignored", "failed"}
+
     # ========== Maker 配置（从 global_config 传递）==========
     maker_poll_sec = float(run_cfg.get("maker_poll_sec", 10.0))
     maker_position_sync_interval = float(run_cfg.get("maker_position_sync_interval", POSITION_SYNC_INTERVAL))
@@ -4274,19 +4282,28 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return None
 
     def _exit_signal_active() -> bool:
-        return bool(exit_signal_path and exit_signal_path.exists())
+        return _exit_signal_payload_active(_read_exit_signal_payload())
 
     def _clear_exit_signal_after_flat(source: str) -> None:
         if not exit_signal_path:
             return
         try:
-            exit_signal_path.unlink()
-            print(f"[EXIT] 清仓完成后已删除 exit signal: source={source}")
-        except FileNotFoundError:
-            return
+            payload = _read_exit_signal_payload()
+            if not payload:
+                payload = {"token_id": str(token_id or "")}
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            payload["active"] = False
+            payload["status"] = "done"
+            payload["consumed_at"] = now_iso
+            payload["consumed_by"] = str(source or "")
+            payload["invalidate_reason"] = "position_flat"
+            payload["updated_at"] = now_iso
+            with exit_signal_path.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            print(f"[EXIT] 清仓完成后已失效化 exit signal: source={source}")
         except OSError as exc:
             print(
-                f"[EXIT][WARN] 清仓完成但删除 exit signal 失败: "
+                f"[EXIT][WARN] 清仓完成但失效化 exit signal 失败: "
                 f"source={source} error={exc}"
             )
 
