@@ -168,12 +168,16 @@ def _parse_last_seen(value: Any) -> Optional[datetime]:
     return None
 
 
-def _load_token_map(path: Path) -> Dict[str, Dict[str, Any]]:
+def _load_token_state(path: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     payload = _load_json(path)
     tokens = payload.get("tokens") if isinstance(payload, dict) else []
+    archived = payload.get("archived_tokens") if isinstance(payload, dict) else []
     mapping: Dict[str, Dict[str, Any]] = {}
+    archived_mapping: Dict[str, Dict[str, Any]] = {}
     if not isinstance(tokens, list):
-        return mapping
+        tokens = []
+    if not isinstance(archived, list):
+        archived = []
     for item in tokens:
         if not isinstance(item, dict):
             continue
@@ -184,16 +188,30 @@ def _load_token_map(path: Path) -> Dict[str, Dict[str, Any]]:
         entry = dict(item)
         entry.setdefault("introduced_by_buy", False)
         entry.setdefault("active", True)
+        if not bool(entry.get("active", True)):
+            archived_mapping[key] = entry
+            continue
         mapping[key] = entry
-    return mapping
+    for item in archived:
+        if not isinstance(item, dict):
+            continue
+        token_id = item.get("token_id") or item.get("tokenId")
+        if not token_id:
+            continue
+        archived_mapping[str(token_id)] = dict(item)
+    return mapping, archived_mapping
 
 
-def _load_sell_signals(path: Path) -> Dict[str, Dict[str, Any]]:
+def _load_sell_signal_state(path: Path) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     payload = _load_json(path)
     signals = payload.get("sell_tokens") if isinstance(payload, dict) else []
+    archived = payload.get("archived_sell_tokens") if isinstance(payload, dict) else []
     mapping: Dict[str, Dict[str, Any]] = {}
+    archived_mapping: Dict[str, Dict[str, Any]] = {}
     if not isinstance(signals, list):
-        return mapping
+        signals = []
+    if not isinstance(archived, list):
+        archived = []
     for item in signals:
         if not isinstance(item, dict):
             continue
@@ -208,35 +226,82 @@ def _load_sell_signals(path: Path) -> Dict[str, Dict[str, Any]]:
             entry["attempts"] = int(entry.get("attempts", 0) or 0)
         except (TypeError, ValueError):
             entry["attempts"] = 0
+        status = str(entry.get("status") or "pending").strip().lower()
+        if (not bool(entry.get("active", True))) or status in {"done", "stale_ignored", "canceled", "superseded"}:
+            archived_mapping[str(token_id)] = entry
+            continue
         mapping[str(token_id)] = entry
-    return mapping
+    for item in archived:
+        if not isinstance(item, dict):
+            continue
+        token_id = item.get("token_id") or item.get("tokenId")
+        if not token_id:
+            continue
+        archived_mapping[str(token_id)] = dict(item)
+    return mapping, archived_mapping
 
 
-def _write_sell_signals(path: Path, mapping: Dict[str, Dict[str, Any]]) -> None:
+def _write_sell_signals(
+    path: Path,
+    mapping: Dict[str, Dict[str, Any]],
+    archived_mapping: Dict[str, Dict[str, Any]],
+) -> None:
     def _sort_key(entry: Dict[str, Any]) -> float:
         ts = _parse_last_seen(entry.get("last_seen"))
         return ts.timestamp() if ts else 0.0
 
     tokens = sorted(mapping.values(), key=_sort_key, reverse=True)
+    archived_tokens = sorted(archived_mapping.values(), key=_sort_key, reverse=True)
     payload = {
         "updated_at": _utc_now_iso(),
         "sell_tokens": tokens,
+        "archived_sell_tokens": archived_tokens,
     }
     _write_json(path, payload)
 
 
-def _write_tokens(path: Path, mapping: Dict[str, Dict[str, Any]]) -> None:
+def _write_tokens(
+    path: Path,
+    mapping: Dict[str, Dict[str, Any]],
+    archived_mapping: Dict[str, Dict[str, Any]],
+) -> None:
     def _sort_key(entry: Dict[str, Any]) -> float:
         ts = _parse_last_seen(entry.get("last_seen"))
         return ts.timestamp() if ts else 0.0
 
     tokens = [entry for entry in mapping.values() if bool(entry.get("introduced_by_buy", False))]
     tokens = sorted(tokens, key=_sort_key, reverse=True)
+    archived_tokens = sorted(archived_mapping.values(), key=_sort_key, reverse=True)
     payload = {
         "updated_at": _utc_now_iso(),
         "tokens": tokens,
+        "archived_tokens": archived_tokens,
     }
     _write_json(path, payload)
+
+
+def _archive_record(
+    active_mapping: Dict[str, Dict[str, Any]],
+    archived_mapping: Dict[str, Dict[str, Any]],
+    token_id: str,
+    *,
+    reason: str,
+    source: str,
+    status: Optional[str] = None,
+) -> bool:
+    entry = dict(active_mapping.pop(token_id, {}) or archived_mapping.get(token_id) or {})
+    if not entry:
+        return False
+    now_iso = _utc_now_iso()
+    entry["active"] = False
+    entry["invalidated_at"] = now_iso
+    entry["invalidate_reason"] = str(reason)
+    entry["invalidate_source"] = str(source)
+    entry["updated_at"] = now_iso
+    if status is not None:
+        entry["status"] = str(status)
+    archived_mapping[token_id] = entry
+    return True
 
 
 def _load_blacklist_tokens(path: Path) -> set[str]:
@@ -316,8 +381,8 @@ def run_once(
         state = {}
     state.setdefault("targets", {})
 
-    token_map = _load_token_map(token_output_path)
-    sell_map = _load_sell_signals(sell_signal_path)
+    token_map, archived_token_map = _load_token_state(token_output_path)
+    sell_map, archived_sell_map = _load_sell_signal_state(sell_signal_path)
     blacklist_tokens = _load_blacklist_tokens(blacklist_path)
 
     now_ms = int(time.time() * 1000)
@@ -327,28 +392,37 @@ def run_once(
     for token_id in list(token_map.keys()):
         entry = token_map.get(token_id) or {}
         if token_id in blacklist_tokens or not bool(entry.get("introduced_by_buy", False)):
-            entry["active"] = False
-            entry["invalidated_at"] = _utc_now_iso()
-            entry["invalidate_reason"] = (
+            changed = _archive_record(
+                token_map,
+                archived_token_map,
+                token_id,
+                reason=(
                 "blacklist" if token_id in blacklist_tokens else "not_introduced_by_buy"
-            )
-            changed = True
+                ),
+                source="run_once_preflight",
+            ) or changed
 
     for token_id, entry in list(sell_map.items()):
         if token_id in blacklist_tokens:
-            entry["active"] = False
-            entry["status"] = "stale_ignored"
-            entry["updated_at"] = _utc_now_iso()
-            entry["invalidate_reason"] = "blacklist"
-            sell_changed = True
+            sell_changed = _archive_record(
+                sell_map,
+                archived_sell_map,
+                token_id,
+                reason="blacklist",
+                source="run_once_preflight",
+                status="stale_ignored",
+            ) or sell_changed
             continue
         token_entry = token_map.get(token_id)
         if not token_entry or not token_entry.get("introduced_by_buy", False):
-            entry["active"] = False
-            entry["status"] = "stale_ignored"
-            entry["updated_at"] = _utc_now_iso()
-            entry["invalidate_reason"] = "missing_buy_introduction"
-            sell_changed = True
+            sell_changed = _archive_record(
+                sell_map,
+                archived_sell_map,
+                token_id,
+                reason="missing_buy_introduction",
+                source="run_once_preflight",
+                status="stale_ignored",
+            ) or sell_changed
             continue
         if not entry.get("introduced_by_buy", False):
             entry["introduced_by_buy"] = True
@@ -448,18 +522,21 @@ def run_once(
                     sell_changed = True
 
     if changed:
-        _write_tokens(token_output_path, token_map)
+        _write_tokens(token_output_path, token_map, archived_token_map)
         logger.info("tokens output updated: %s (total=%s)", token_output_path, len(token_map))
     else:
         logger.info("no token updates, total=%s", len(token_map))
+        _write_tokens(token_output_path, token_map, archived_token_map)
 
     if sell_changed:
-        _write_sell_signals(sell_signal_path, sell_map)
+        _write_sell_signals(sell_signal_path, sell_map, archived_sell_map)
         logger.info(
             "sell signal output updated: %s (total=%s)",
             sell_signal_path,
             len(sell_map),
         )
+    else:
+        _write_sell_signals(sell_signal_path, sell_map, archived_sell_map)
 
     _write_json(state_path, state)
 

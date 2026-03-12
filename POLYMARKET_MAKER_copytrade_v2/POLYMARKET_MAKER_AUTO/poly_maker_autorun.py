@@ -7900,9 +7900,9 @@ class AutoRunManager:
     # ========== 市场关闭时自动清理 token ==========
     def _remove_token_from_copytrade_files(self, token_id: str) -> None:
         """
-        将 copytrade JSON 文件中的指定 token 标记为失效，避免重启后再次加入队列。
+        将 copytrade JSON 文件中的指定 token 归档，避免重启后再次加入队列。
 
-        会标记以下文件中的记录失效：
+        会处理以下文件中的记录：
         - tokens_from_copytrade.json
         - copytrade_sell_signals.json
         """
@@ -7918,25 +7918,35 @@ class AutoRunManager:
                         data = json.load(f)
 
                     if isinstance(data, dict) and "tokens" in data:
+                        archived_tokens = data.get("archived_tokens")
+                        if not isinstance(archived_tokens, list):
+                            archived_tokens = []
+                        remaining_tokens = []
                         invalidated = 0
                         for item in data["tokens"]:
                             if not isinstance(item, dict):
+                                remaining_tokens.append(item)
                                 continue
                             if _topic_id_from_entry(item) != token_id:
+                                remaining_tokens.append(item)
                                 continue
-                            if item.get("active", True):
-                                item["active"] = False
-                                invalidated += 1
+                            invalidated += 1
+                            item = dict(item)
+                            item["active"] = False
                             item["invalidated_at"] = now_iso
                             item["invalidate_reason"] = "cleanup_consumed"
                             item["invalidate_source"] = "_remove_token_from_copytrade_files"
+                            item["updated_at"] = now_iso
+                            archived_tokens.append(item)
                         if invalidated > 0:
+                            data["tokens"] = remaining_tokens
+                            data["archived_tokens"] = archived_tokens
                             data["updated_at"] = time.strftime(
                                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                             )
                             _atomic_json_write(tokens_path, data)
                             print(
-                                f"[CLEANUP] 已将 tokens_from_copytrade.json 标记失效 token={token_id[:20]}..."
+                                f"[CLEANUP] 已将 tokens_from_copytrade.json 归档 token={token_id[:20]}..."
                             )
                 except (json.JSONDecodeError, OSError) as exc:
                     print(f"[CLEANUP] 更新 tokens_from_copytrade.json 失败: {exc}")
@@ -7948,15 +7958,21 @@ class AutoRunManager:
                         data = json.load(f)
 
                     if isinstance(data, dict) and "sell_tokens" in data:
+                        archived_tokens = data.get("archived_sell_tokens")
+                        if not isinstance(archived_tokens, list):
+                            archived_tokens = []
+                        remaining_tokens = []
                         invalidated = 0
                         for item in data["sell_tokens"]:
                             if not isinstance(item, dict):
+                                remaining_tokens.append(item)
                                 continue
                             if _topic_id_from_entry(item) != token_id:
+                                remaining_tokens.append(item)
                                 continue
-                            if item.get("active", True):
-                                item["active"] = False
-                                invalidated += 1
+                            invalidated += 1
+                            item = dict(item)
+                            item["active"] = False
                             if str(item.get("status") or "").strip().lower() not in {
                                 "done",
                                 "stale_ignored",
@@ -7968,13 +7984,17 @@ class AutoRunManager:
                             item["invalidated_at"] = now_iso
                             item["invalidate_reason"] = "cleanup_consumed"
                             item["invalidate_source"] = "_remove_token_from_copytrade_files"
+                            item["updated_at"] = now_iso
+                            archived_tokens.append(item)
                         if invalidated > 0:
+                            data["sell_tokens"] = remaining_tokens
+                            data["archived_sell_tokens"] = archived_tokens
                             data["updated_at"] = time.strftime(
                                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
                             )
                             _atomic_json_write(signals_path, data)
                             print(
-                                f"[CLEANUP] 已将 copytrade_sell_signals.json 标记失效 token={token_id[:20]}..."
+                                f"[CLEANUP] 已将 copytrade_sell_signals.json 归档 token={token_id[:20]}..."
                             )
                 except (json.JSONDecodeError, OSError) as exc:
                     print(f"[CLEANUP] 更新 copytrade_sell_signals.json 失败: {exc}")

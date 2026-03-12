@@ -296,10 +296,13 @@ def test_startup_full_reconcile_cleans_copytrade_token_when_handled_missing(tmp_
 
     payload = json.loads(tokens_path.read_text(encoding="utf-8"))
     rows = [item for item in payload.get("tokens", []) if isinstance(item, dict)]
+    archived_rows = [item for item in payload.get("archived_tokens", []) if isinstance(item, dict)]
     token_row = next((item for item in rows if item.get("token_id") == "ghost_token"), None)
-    assert isinstance(token_row, dict)
-    assert token_row.get("active") is False
-    assert token_row.get("invalidate_reason") == "cleanup_consumed"
+    archived_row = next((item for item in archived_rows if item.get("token_id") == "ghost_token"), None)
+    assert token_row is None
+    assert isinstance(archived_row, dict)
+    assert archived_row.get("active") is False
+    assert archived_row.get("invalidate_reason") == "cleanup_consumed"
     assert "ghost_token" not in manager.pending_topics
     assert "ghost_token" not in manager.pending_burst_topics
     assert manager._startup_sync_retry_needed is False
@@ -2071,11 +2074,14 @@ def test_process_exit_sell_cleanup_success_sets_follow_cooldown(tmp_path):
     assert cooldown_until > time.time() + 23 * 3600.0
     sell_payload = json.loads(sell_path.read_text(encoding="utf-8"))
     sell_rows = sell_payload.get("sell_tokens") or []
+    archived_sell_rows = sell_payload.get("archived_sell_tokens") or []
     sell_row = next((x for x in sell_rows if str(x.get("token_id")) == "t1"), None)
-    assert isinstance(sell_row, dict)
-    assert sell_row.get("status") == "done"
-    assert sell_row.get("active") is False
-    assert str(sell_row.get("consumed_at") or "").strip()
+    archived_sell_row = next((x for x in archived_sell_rows if str(x.get("token_id")) == "t1"), None)
+    assert sell_row is None
+    assert isinstance(archived_sell_row, dict)
+    assert archived_sell_row.get("status") == "done"
+    assert archived_sell_row.get("active") is False
+    assert str(archived_sell_row.get("consumed_at") or "").strip()
 
 
 def test_remove_token_from_copytrade_files_soft_invalidates_records(tmp_path):
@@ -2120,20 +2126,32 @@ def test_remove_token_from_copytrade_files_soft_invalidates_records(tmp_path):
     manager._remove_token_from_copytrade_files("t1")
 
     tokens_payload = json.loads(tokens_path.read_text(encoding="utf-8"))
-    token_row = next(x for x in tokens_payload["tokens"] if x["token_id"] == "t1")
+    token_row = next((x for x in tokens_payload["tokens"] if x["token_id"] == "t1"), None)
     keep_row = next(x for x in tokens_payload["tokens"] if x["token_id"] == "keep")
-    assert token_row["active"] is False
-    assert token_row["invalidate_reason"] == "cleanup_consumed"
-    assert str(token_row.get("invalidated_at") or "").strip()
+    archived_token_row = next(
+        (x for x in tokens_payload.get("archived_tokens", []) if x["token_id"] == "t1"),
+        None,
+    )
+    assert token_row is None
+    assert isinstance(archived_token_row, dict)
+    assert archived_token_row["active"] is False
+    assert archived_token_row["invalidate_reason"] == "cleanup_consumed"
+    assert str(archived_token_row.get("invalidated_at") or "").strip()
     assert keep_row["active"] is True
 
     sell_payload = json.loads(sell_path.read_text(encoding="utf-8"))
-    sell_row = next(x for x in sell_payload["sell_tokens"] if x["token_id"] == "t1")
+    sell_row = next((x for x in sell_payload["sell_tokens"] if x["token_id"] == "t1"), None)
     keep_sell = next(x for x in sell_payload["sell_tokens"] if x["token_id"] == "keep")
-    assert sell_row["active"] is False
-    assert sell_row["status"] == "done"
-    assert sell_row["invalidate_reason"] == "cleanup_consumed"
-    assert str(sell_row.get("consumed_at") or "").strip()
+    archived_sell_row = next(
+        (x for x in sell_payload.get("archived_sell_tokens", []) if x["token_id"] == "t1"),
+        None,
+    )
+    assert sell_row is None
+    assert isinstance(archived_sell_row, dict)
+    assert archived_sell_row["active"] is False
+    assert archived_sell_row["status"] == "done"
+    assert archived_sell_row["invalidate_reason"] == "cleanup_consumed"
+    assert str(archived_sell_row.get("consumed_at") or "").strip()
     assert keep_sell["active"] is True
 
 
