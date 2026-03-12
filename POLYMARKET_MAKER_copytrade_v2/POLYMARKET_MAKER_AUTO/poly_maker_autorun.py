@@ -255,6 +255,7 @@ POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
 SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC = 45.0
 ALLOWED_IOC_EXIT_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY"}
+ALLOWED_EXIT_SIGNAL_REASONS = ALLOWED_IOC_EXIT_REASONS | {"TOTAL_LIQUIDATION"}
 DATA_API_RATE_LIMIT_SEC = 1.0
 DATA_API_TIMEOUT_SEC = 10.0
 DATA_API_POSITION_RETRY_ATTEMPTS = 3
@@ -6529,7 +6530,18 @@ class AutoRunManager:
             merged["token_id"] = topic_info.get("token_id")
         if not merged.get("token_id"):
             merged["token_id"] = topic_id
-        merged["exit_signal_path"] = str(self._exit_signal_path(topic_id))
+        include_exit_signal = bool(topic_info.get("sell_exit_reason"))
+        if not include_exit_signal:
+            resume_state = topic_info.get("resume_state")
+            include_exit_signal = bool(
+                isinstance(resume_state, dict) and resume_state.get("has_position")
+            )
+        if not include_exit_signal:
+            include_exit_signal = self._has_account_position(topic_id)
+        if include_exit_signal:
+            merged["exit_signal_path"] = str(self._exit_signal_path(topic_id))
+        else:
+            merged.pop("exit_signal_path", None)
         if topic_info.get("yes_token"):
             merged["yes_token"] = topic_info.get("yes_token")
         if topic_info.get("no_token"):
@@ -6565,7 +6577,7 @@ class AutoRunManager:
             merged["exit_cleanup_reason"] = str(topic_info.get("sell_exit_reason"))
         if topic_info.get("sell_trigger_source"):
             merged["exit_cleanup_source"] = str(topic_info.get("sell_trigger_source"))
-        merged["allow_ioc_exit_reasons"] = sorted(ALLOWED_IOC_EXIT_REASONS)
+        merged["allow_ioc_exit_reasons"] = sorted(ALLOWED_EXIT_SIGNAL_REASONS)
 
         resume_drop_pct = topic_info.get("resume_drop_pct")
         if resume_drop_pct is not None:
@@ -7349,6 +7361,7 @@ class AutoRunManager:
         tokens_with_sell_signal = set(sell_signals.keys())
         to_liquidate: set[str] = set()
         to_reactivate: set[str] = set()
+        to_queue_buy: set[str] = set()
         to_cleanup: set[str] = set()
 
         for token_id in sorted(to_reconcile):
@@ -7357,10 +7370,12 @@ class AutoRunManager:
             has_sell_signal = token_id in tokens_with_sell_signal
             if has_sell_signal and has_position:
                 to_liquidate.add(token_id)
+            elif has_sell_signal:
+                to_cleanup.add(token_id)
             elif has_position:
                 to_reactivate.add(token_id)
             else:
-                to_cleanup.add(token_id)
+                to_queue_buy.add(token_id)
 
         for token_id in sorted(to_liquidate):
             self._trigger_sell_exit(
@@ -7401,12 +7416,38 @@ class AutoRunManager:
                 detail["schedule_lane"] = "base"
                 self._enqueue_pending_topic(token_id)
 
+        for token_id in sorted(to_queue_buy):
+            if token_id in self.pending_burst_topics:
+                self._remove_pending_topic(token_id)
+            if token_id not in self.pending_topics:
+                detail = self.topic_details.setdefault(token_id, {})
+                copytrade_detail = copytrade_entry_map.get(token_id) or {}
+                if copytrade_detail.get("title") and not detail.get("title"):
+                    detail["title"] = copytrade_detail.get("title")
+                if copytrade_detail.get("slug") and not detail.get("slug"):
+                    detail["slug"] = copytrade_detail.get("slug")
+
+                self._hydrate_topic_metadata_for_blacklist(token_id)
+                title_policy = self._enforce_title_blacklist_policy(
+                    token_id, source="startup_reconcile"
+                )
+                if title_policy in {
+                    "blocked_no_position",
+                    "force_liquidate",
+                    "force_sell_only",
+                }:
+                    continue
+
+                detail["queue_role"] = "startup_reconcile_buy"
+                detail["schedule_lane"] = "base"
+                self._enqueue_pending_topic(token_id)
+
         for token_id in sorted(to_cleanup):
             self._remove_token_from_copytrade_files(token_id)
             self._purge_token_runtime_state(token_id)
             self._remove_from_handled_topics(token_id)
 
-        keep_handled = to_reactivate | to_liquidate
+        keep_handled = to_reactivate | to_liquidate | to_queue_buy
         stale_topics = self.handled_topics - copytrade_topics - active_tasks
         changed = False
         if keep_handled:
@@ -7426,6 +7467,7 @@ class AutoRunManager:
             f"total={len(self.handled_topics)} "
             f"reconciled={len(to_reconcile)} "
             f"reactivated={len(to_reactivate)} "
+            f"queued_buy={len(to_queue_buy)} "
             f"liquidating={len(to_liquidate)} "
             f"cleaned={len(to_cleanup)} "
             f"stale_removed={len(stale_topics)} "
@@ -9165,7 +9207,21 @@ class AutoRunManager:
         *,
         trigger_source: str = "unspecified",
         trigger_reason: str = "UNSPECIFIED",
-    ) -> None:
+        require_position: bool = True,
+    ) -> bool:
+        normalized_reason = self._normalize_exit_reason(trigger_reason)
+        if normalized_reason not in ALLOWED_EXIT_SIGNAL_REASONS:
+            print(
+                f"[EXIT-SIGNAL][SKIP] token={token_id[:20]}... "
+                f"illegal_reason={normalized_reason or 'UNSPECIFIED'} source={trigger_source}"
+            )
+            return False
+        if require_position and not self._has_account_position(token_id):
+            print(
+                f"[EXIT-SIGNAL][SKIP] token={token_id[:20]}... "
+                f"reason={normalized_reason} source={trigger_source} no_position"
+            )
+            return False
         path = self._exit_signal_path(token_id)
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         payload = {
@@ -9174,12 +9230,13 @@ class AutoRunManager:
             "status": "pending",
             "trigger_path": "exit_signal",
             "trigger_source": str(trigger_source),
-            "exit_reason": self._normalize_exit_reason(trigger_reason),
-            "trigger_reason": self._normalize_exit_reason(trigger_reason),
+            "exit_reason": normalized_reason,
+            "trigger_reason": normalized_reason,
             "issued_at": now_iso,
             "updated_at": now_iso,
         }
         _dump_json_file(path, payload)
+        return True
 
     def _load_exit_signal_payload(self, token_id: str) -> Dict[str, Any]:
         path = self._exit_signal_path(token_id)
@@ -9226,6 +9283,36 @@ class AutoRunManager:
         payload["invalidate_reason"] = str(invalidate_reason or "")
         payload["updated_at"] = now_iso
         _dump_json_file(path, payload)
+
+    def _finalize_sell_lifecycle_without_position(
+        self,
+        token_id: str,
+        *,
+        task: Optional[TopicTask],
+        source: str,
+        reason: str,
+    ) -> None:
+        if not token_id:
+            return
+        if task and task.is_running():
+            task.no_restart = True
+            task.end_reason = "sell signal lifecycle ended without position"
+            task.heartbeat("sell signal arrived before local position")
+            self._terminate_task(task, reason="sell signal lifecycle ended without position")
+        self.tasks.pop(token_id, None)
+        self._mark_exit_signal_inactive(
+            token_id,
+            status="done",
+            source=source,
+            invalidate_reason="sell_signal_without_position",
+        )
+        self._remove_token_from_copytrade_files(token_id)
+        self._purge_token_runtime_state(token_id)
+        self._remove_from_handled_topics(token_id)
+        print(
+            "[COPYTRADE] SELL 信号终结当前 token 生命周期（无本地持仓）: "
+            f"token_id={token_id} source={source} reason={reason}"
+        )
 
     def _has_account_position(self, token_id: str, *, force_refresh: bool = False) -> bool:
         if not token_id:
@@ -9392,15 +9479,20 @@ class AutoRunManager:
                 self._sell_position_snapshot_info,
             )
             if not has_position:
-                print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={reason}")
                 print(
-                    "[COPYTRADE] 忽略 sell 信号（强约束：无持仓不清仓）: "
-                    f"token_id={token_id}"
+                    "[COPYTRADE] SELL 信号终结本轮 token（无本地持仓，不执行清仓）: "
+                    f"token_id={token_id} info={reason}"
+                )
+                self._finalize_sell_lifecycle_without_position(
+                    token_id,
+                    task=task,
+                    source="copytrade_sell_signal_incremental",
+                    reason=reason,
                 )
                 self._handled_sell_signals.add(token_id)
                 continue
             print(
-                "[COPYTRADE] SELL 信号触发持仓清仓: "
+            "[COPYTRADE] SELL 信号触发持仓清仓: "
                 f"token_id={token_id} reason={reason}"
             )
             self._trigger_sell_exit(
@@ -9441,10 +9533,15 @@ class AutoRunManager:
                 info,
             )
             if not has_position:
-                print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={reason}")
                 print(
-                    "[COPYTRADE] 忽略 sell 信号（强约束：无持仓不清仓）: "
-                    f"token_id={token_id}"
+                    "[COPYTRADE] SELL 信号终结本轮 token（无本地持仓，不执行清仓）: "
+                    f"token_id={token_id} info={reason}"
+                )
+                self._finalize_sell_lifecycle_without_position(
+                    token_id,
+                    task=task,
+                    source="copytrade_sell_signal_full_recheck",
+                    reason=reason,
                 )
                 self._handled_sell_signals.add(token_id)
                 continue

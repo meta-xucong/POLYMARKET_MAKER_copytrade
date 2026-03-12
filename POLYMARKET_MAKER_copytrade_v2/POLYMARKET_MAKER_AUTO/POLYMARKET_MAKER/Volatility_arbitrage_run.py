@@ -211,7 +211,7 @@ CLOB_API_HOST = "https://clob.polymarket.com"
 GAMMA_ROOT = os.getenv("POLY_GAMMA_ROOT", "https://gamma-api.polymarket.com")
 DATA_API_ROOT = os.getenv("POLY_DATA_API_ROOT", "https://data-api.polymarket.com")
 API_MIN_ORDER_SIZE = 5.0
-DEFAULT_ALLOWED_IOC_EXIT_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY"}
+DEFAULT_ALLOWED_IOC_EXIT_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY", "TOTAL_LIQUIDATION"}
 _MIN_ORDER_SIZE_CACHE_TTL_SEC = 600.0
 _min_order_size_cache: Dict[str, Tuple[float, float]] = {}
 # 共享WS缓存过期阈值（秒）：

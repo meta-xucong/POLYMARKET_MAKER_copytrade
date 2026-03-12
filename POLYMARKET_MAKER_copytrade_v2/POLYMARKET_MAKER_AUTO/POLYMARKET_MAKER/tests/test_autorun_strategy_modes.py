@@ -50,7 +50,7 @@ def test_compute_new_topics_dedupes_token_ids():
     assert got == ["t1"]
 
 
-def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
+def test_sync_handled_topics_on_startup_keeps_active_buy_without_position(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
     handled_path = copytrade_dir / "handled_topics.json"
@@ -91,9 +91,13 @@ def test_sync_handled_topics_on_startup_trims_stale_entries(tmp_path):
 
     # 现行语义：copytrade 中存在但无活跃任务的 token 将从 handled 中移除，
     # 以便后续重新进入调度启动。
-    assert manager.handled_topics == set()
+    assert manager.handled_topics == {"keep_token"}
+    assert "keep_token" in manager.pending_topics
+    detail = manager.topic_details.get("keep_token") or {}
+    assert detail.get("queue_role") == "startup_reconcile_buy"
+    assert detail.get("schedule_lane") == "base"
     payload = json.loads(handled_path.read_text(encoding="utf-8"))
-    assert payload.get("topics") == []
+    assert payload.get("topics") == ["keep_token"]
 
 
 def test_sync_startup_skips_destructive_changes_when_position_snapshot_unavailable(tmp_path):
@@ -197,11 +201,15 @@ def test_refresh_topics_retries_startup_sync_and_purges_runtime_state(tmp_path):
     manager._refresh_topics()
 
     assert manager._startup_sync_retry_needed is False
-    assert "keep_token" not in manager.topic_details
-    assert "keep_token" not in manager._pending_first_seen
-    assert "keep_token" not in manager._shared_ws_wait_failures
-    assert "keep_token" not in manager._clob_book_probe_cache
-    assert "keep_token" not in manager._position_snapshot_cache
+    assert "keep_token" in manager.topic_details
+    assert "keep_token" in manager.pending_topics
+    detail = manager.topic_details.get("keep_token") or {}
+    assert detail.get("queue_role") == "startup_reconcile_buy"
+    assert detail.get("schedule_lane") == "base"
+    assert "keep_token" in manager._pending_first_seen
+    assert "keep_token" in manager._shared_ws_wait_failures
+    assert "keep_token" in manager._clob_book_probe_cache
+    assert "keep_token" in manager._position_snapshot_cache
 
 
 def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
@@ -255,7 +263,7 @@ def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
     assert captured == [("t1", None, {"trigger_source": "startup_reconcile_sell_signal", "trigger_reason": "COPYTRADE_SELL"})]
 
 
-def test_startup_full_reconcile_cleans_copytrade_token_when_handled_missing(tmp_path):
+def test_startup_full_reconcile_preserves_active_buy_token_when_handled_missing(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
     handled_path = copytrade_dir / "handled_topics.json"
@@ -299,12 +307,13 @@ def test_startup_full_reconcile_cleans_copytrade_token_when_handled_missing(tmp_
     archived_rows = [item for item in payload.get("archived_tokens", []) if isinstance(item, dict)]
     token_row = next((item for item in rows if item.get("token_id") == "ghost_token"), None)
     archived_row = next((item for item in archived_rows if item.get("token_id") == "ghost_token"), None)
-    assert token_row is None
-    assert isinstance(archived_row, dict)
-    assert archived_row.get("active") is False
-    assert archived_row.get("invalidate_reason") == "cleanup_consumed"
-    assert "ghost_token" not in manager.pending_topics
+    assert isinstance(token_row, dict)
+    assert archived_row is None
+    assert "ghost_token" in manager.pending_topics
     assert "ghost_token" not in manager.pending_burst_topics
+    detail = manager.topic_details.get("ghost_token") or {}
+    assert detail.get("queue_role") == "startup_reconcile_buy"
+    assert detail.get("schedule_lane") == "base"
     assert manager._startup_sync_retry_needed is False
 
 
@@ -2235,6 +2244,165 @@ def test_reconcile_exit_signal_soft_invalidates_when_position_missing(tmp_path):
     assert payload["consumed_by"] == "reconcile_exit_signals"
     assert payload["invalidate_reason"] == "no_position"
     assert str(payload.get("consumed_at") or "").strip()
+
+
+def test_build_run_config_omits_exit_signal_path_for_buy_without_position(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    manager.topic_details["buy_token"] = {
+        "token_id": "buy_token",
+        "queue_role": "startup_reconcile_buy",
+        "schedule_lane": "base",
+    }
+    manager._has_account_position = lambda token_id, force_refresh=False: False  # type: ignore[assignment]
+
+    run_cfg = manager._build_run_config("buy_token")
+
+    assert "exit_signal_path" not in run_cfg
+
+
+def test_issue_exit_signal_rejects_illegal_reason_and_no_position(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    token_id = "t1"
+    manager._has_account_position = lambda _token_id, force_refresh=False: False  # type: ignore[assignment]
+
+    wrote = manager._issue_exit_signal(
+        token_id,
+        trigger_source="unit_test",
+        trigger_reason="UNSPECIFIED",
+    )
+    assert wrote is False
+    assert manager._exit_signal_path(token_id).exists() is False
+
+    wrote = manager._issue_exit_signal(
+        token_id,
+        trigger_source="unit_test",
+        trigger_reason="COPYTRADE_SELL",
+    )
+    assert wrote is False
+    assert manager._exit_signal_path(token_id).exists() is False
+
+
+def test_apply_sell_signals_archives_token_and_stops_buy_when_no_position(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [
+                    {"token_id": "t1", "introduced_by_buy": True, "active": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "sell_tokens": [
+                    {
+                        "token_id": "t1",
+                        "introduced_by_buy": True,
+                        "status": "pending",
+                        "active": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": ["t1"]}),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager.topic_details["t1"] = {"token_id": "t1"}
+    manager.pending_topics.append("t1")
+
+    task = TopicTask(topic_id="t1", process=None, log_path=tmp_path / "t1.log")
+    task.status = "running"
+    task.no_restart = False
+
+    class _DummyProc:
+        def __init__(self):
+            self.pid = 123
+            self.terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    task.process = _DummyProc()
+    manager.tasks["t1"] = task
+    terminated: list[str] = []
+
+    def _fake_terminate(task_obj, reason):
+        terminated.append(reason)
+        task_obj.process = None
+        task_obj.status = "stopped"
+
+    manager._terminate_task = _fake_terminate  # type: ignore[assignment]
+    manager._refresh_sell_position_snapshot = lambda: ({}, "ok")  # type: ignore[assignment]
+    manager._has_position_for_sell_signal = (  # type: ignore[assignment]
+        lambda token_id, snapshot, snapshot_info: (False, "snapshot_no_position_confirmed")
+    )
+
+    manager._apply_sell_signals(
+        {
+            "t1": {
+                "token_id": "t1",
+                "status": "pending",
+                "introduced_by_buy": True,
+                "signal_ts": time.time(),
+            }
+        }
+    )
+
+    assert terminated == ["sell signal lifecycle ended without position"]
+    assert "t1" not in manager.tasks
+    assert "t1" not in manager.pending_topics
+    assert "t1" not in manager.handled_topics
+    tokens_payload = json.loads(tokens_path.read_text(encoding="utf-8"))
+    assert tokens_payload["tokens"] == []
+    archived_token_row = tokens_payload["archived_tokens"][0]
+    assert archived_token_row["token_id"] == "t1"
+    assert archived_token_row["invalidate_reason"] == "cleanup_consumed"
+    sell_payload = json.loads(sell_path.read_text(encoding="utf-8"))
+    assert sell_payload["sell_tokens"] == []
+    archived_sell_row = sell_payload["archived_sell_tokens"][0]
+    assert archived_sell_row["token_id"] == "t1"
+    assert archived_sell_row["status"] == "done"
+    assert archived_sell_row["invalidate_reason"] == "cleanup_consumed"
+
+
+def test_build_run_config_includes_total_liquidation_reason(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+
+    run_cfg = manager._build_run_config("t1")
+
+    assert "TOTAL_LIQUIDATION" in set(run_cfg.get("allow_ioc_exit_reasons") or [])
 
 
 def test_remove_exit_token_records_keeps_full_history(tmp_path):
