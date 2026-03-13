@@ -762,6 +762,25 @@ def _ceil_to_precision(value: float, decimals: int) -> float:
     return math.ceil(value * factor - 1e-12) / factor
 
 
+def _ticks_for_price_move(
+    anchor_price: float,
+    pct: float,
+    tick: float,
+    *,
+    min_ticks: int = 1,
+    coarse_tick_ratio: float = 0.03,
+    coarse_min_ticks: int = 2,
+) -> int:
+    if tick <= 0:
+        return max(1, int(min_ticks))
+    anchor = max(float(anchor_price), float(tick))
+    effective_min = max(1, int(min_ticks))
+    if float(tick) / anchor >= float(coarse_tick_ratio):
+        effective_min = max(effective_min, int(coarse_min_ticks))
+    target_ticks = int(math.ceil((anchor * max(0.0, float(pct))) / float(tick) - 1e-12))
+    return max(effective_min, target_ticks)
+
+
 def _scale_order_size_by_volume(
     base_size: float,
     total_volume: float,
@@ -2368,6 +2387,8 @@ class AutoRunManager:
             "pending_confirm_exec_price": None,
             "pending_confirm_exec_price_source": "",
             "pending_confirm_drawdown": 0.0,
+            "nofill_retry_count": 0,
+            "nofill_next_retry_ts": 0.0,
             "last_reentry_above_line": False,
             "last_reentry_above_line_price": None,
         }
@@ -2397,6 +2418,9 @@ class AutoRunManager:
         )
         merged["pending_confirm_retry_count"] = max(
             0, int(_coerce_float(merged.get("pending_confirm_retry_count")) or 0)
+        )
+        merged["nofill_retry_count"] = max(
+            0, int(_coerce_float(merged.get("nofill_retry_count")) or 0)
         )
         for key in (
             "next_stoploss_threshold_pct",
@@ -2428,6 +2452,7 @@ class AutoRunManager:
             "pending_confirm_filled_size",
             "pending_confirm_exec_price",
             "pending_confirm_drawdown",
+            "nofill_next_retry_ts",
         ):
             val = _coerce_float(merged.get(key))
             merged[key] = float(val) if val is not None else None
@@ -2465,6 +2490,7 @@ class AutoRunManager:
             0.0, float(merged.get("pending_confirm_filled_size") or 0.0)
         )
         merged["pending_confirm_drawdown"] = float(merged.get("pending_confirm_drawdown") or 0.0)
+        merged["nofill_next_retry_ts"] = max(0.0, float(merged.get("nofill_next_retry_ts") or 0.0))
         merged["probe_seen"] = bool(merged.get("probe_seen", False))
         merged["reentry_paused_for_day"] = bool(merged.get("reentry_paused_for_day", False))
         merged["source_detached"] = bool(merged.get("source_detached", False))
@@ -2601,6 +2627,55 @@ class AutoRunManager:
             if val is not None and val > 0:
                 return float(val)
         return 0.0001
+
+    def _stoploss_threshold_ticks(
+        self,
+        *,
+        anchor_price: float,
+        threshold_pct: float,
+        tick: float,
+    ) -> int:
+        return _ticks_for_price_move(
+            anchor_price,
+            threshold_pct,
+            tick,
+            min_ticks=1,
+            coarse_min_ticks=2,
+        )
+
+    def _build_stoploss_reentry_band(
+        self,
+        *,
+        token_id: str,
+        exec_price: float,
+        line_ticks: int,
+        zone_lower_pct: float,
+        probe_break_pct: float,
+    ) -> Tuple[float, float, float]:
+        tick = max(1e-8, float(self._estimate_token_tick_size(token_id, None)))
+        reentry_line_epsilon = min(float(tick) * 0.1, 1e-6)
+        reentry_line = max(0.0, float(exec_price) - reentry_line_epsilon)
+        zone_lower_ticks = _ticks_for_price_move(
+            exec_price,
+            zone_lower_pct,
+            tick,
+            min_ticks=1,
+            coarse_min_ticks=1,
+        )
+        zone_lower = max(0.0, float(exec_price) - float(zone_lower_ticks) * tick)
+        if zone_lower >= reentry_line:
+            zone_lower = max(0.0, reentry_line - float(tick))
+        probe_ticks = _ticks_for_price_move(
+            exec_price,
+            probe_break_pct,
+            tick,
+            min_ticks=1,
+            coarse_min_ticks=2,
+        )
+        probe_line = max(0.0, float(exec_price) - float(probe_ticks) * tick)
+        if probe_line >= zone_lower:
+            probe_line = max(0.0, zone_lower - float(tick))
+        return (reentry_line, zone_lower, probe_line)
 
     def _resolve_profit_pct_for_token(self, token_id: str) -> float:
         detail = self.topic_details.get(token_id) or {}
@@ -3065,6 +3140,47 @@ class AutoRunManager:
         # skip this round instead of using non-executable curPrice snapshots.
         return None
 
+    def _confirm_stoploss_ioc_fill_via_data_api(
+        self,
+        token_id: str,
+        *,
+        before_size: float,
+        observed_after_size: float,
+    ) -> tuple[float, float, str]:
+        token_id = str(token_id or "").strip()
+        before_size = max(0.0, float(before_size or 0.0))
+        best_after = max(0.0, float(observed_after_size or 0.0))
+        if before_size <= 0.0 or not token_id:
+            return best_after, max(0.0, before_size - best_after), "skip:no_before_size"
+
+        address = str(self._position_address or "").strip()
+        if not address:
+            address, _ = _resolve_position_address_from_env()
+            self._position_address = address
+        if not address:
+            return best_after, max(0.0, before_size - best_after), "skip:no_position_address"
+
+        probe_schedule = (1.0, 2.0, 4.0)
+        last_info = "unconfirmed"
+        for delay_sec in probe_schedule:
+            if delay_sec > 0:
+                time.sleep(float(delay_sec))
+            size, info = _fetch_position_size_from_data_api(address, token_id)
+            info_text = str(info or "")
+            last_info = info_text or "unconfirmed"
+            if size is None:
+                if "未找到持仓记录" in info_text:
+                    confirmed_after = 0.0
+                else:
+                    continue
+            else:
+                confirmed_after = max(0.0, float(size))
+            if confirmed_after < best_after:
+                best_after = confirmed_after
+            if best_after <= 1e-6 or (before_size - best_after) > 1e-6:
+                break
+        return best_after, max(0.0, before_size - best_after), last_info
+
     def _prepare_token_for_stoploss_execution(self, token_id: str) -> None:
         self._remove_pending_topic(token_id)
         self._remove_pending_exit_topic(token_id)
@@ -3075,6 +3191,33 @@ class AutoRunManager:
             self._terminate_task(task, reason="stoploss liquidation")
         if task:
             self.tasks.pop(token_id, None)
+
+    def _queue_stoploss_nofill_sell_only(
+        self,
+        token_id: str,
+        *,
+        position_size: float,
+        entry_price: Optional[float],
+        note: str,
+    ) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        task = self.tasks.get(token_id)
+        if task and task.is_running():
+            return
+        detail = self.topic_details.setdefault(token_id, {})
+        detail["force_sell_only_on_startup"] = True
+        detail["queue_role"] = "stoploss_nofill_sell_only"
+        detail["schedule_lane"] = "base"
+        detail["resume_state"] = {
+            "has_position": True,
+            "position_size": float(max(0.0, position_size)),
+            "entry_price": float(entry_price) if entry_price is not None and entry_price > 0 else None,
+            "skip_buy": True,
+        }
+        detail["stoploss_nofill_note"] = str(note or "")
+        self._enqueue_pending_topic(token_id)
 
     def _finalize_stoploss_full_clear(
         self,
@@ -3160,12 +3303,13 @@ class AutoRunManager:
         window_cd: float,
         circuit_loss: float,
     ) -> None:
-        tick = self._estimate_token_tick_size(token_id, None)
-        reentry_line = max(0.0, float(exec_price) - float(line_ticks) * float(tick))
-        zone_lower = max(0.0, float(exec_price) * (1.0 - zone_lower_pct))
-        if zone_lower > reentry_line:
-            zone_lower = reentry_line
-        probe_line = max(0.0, reentry_line * (1.0 - probe_break_pct))
+        reentry_line, zone_lower, probe_line = self._build_stoploss_reentry_band(
+            token_id=token_id,
+            exec_price=float(exec_price),
+            line_ticks=int(line_ticks),
+            zone_lower_pct=float(zone_lower_pct),
+            probe_break_pct=float(probe_break_pct),
+        )
         cycle_count = int(state.get("stoploss_cycle_count") or 0) + 1
         extra_wait = extra_reentry_cd if cycle_count >= 5 else 0.0
 
@@ -3387,6 +3531,23 @@ class AutoRunManager:
             state_name = str(state.get("state") or "NORMAL_MAKER")
             if state_name in {"STOPLOSS_CLEAR_PENDING_CONFIRM", "STOPLOSS_CLEAR_PENDING_ESCALATED"}:
                 continue
+            if state_name == "STOPLOSS_IOC_RETRY_PENDING":
+                next_retry_ts = float(state.get("nofill_next_retry_ts") or 0.0)
+                if now < next_retry_ts:
+                    continue
+                state["state"] = "NORMAL_MAKER"
+                state["market_status_last"] = "stoploss_ioc_retry_due"
+                state["last_error"] = ""
+                state_dirty = True
+                state_name = "NORMAL_MAKER"
+            if state_name == "STOPLOSS_IOC_RETRY_ESCALATED":
+                self._queue_stoploss_nofill_sell_only(
+                    token_id,
+                    position_size=pos_size,
+                    entry_price=_extract_position_avg_price(row),
+                    note=str(state.get("last_error") or "stoploss no-fill escalated"),
+                )
+                continue
 
             if self._stoploss_is_market_closed(token_id):
                 print(f"[STATE_SYNC] remove state token={token_id[:20]}... reason=market_closed_with_position")
@@ -3532,9 +3693,16 @@ class AutoRunManager:
                 print(f"[RISK_GUARD] token={token_id[:20]}... skip stoploss due to missing/stale executable bid")
                 state_dirty = True
                 continue
+            tick = max(1e-8, float(self._estimate_token_tick_size(token_id, row)))
             drawdown = (float(sellable_price) / float(avg_price)) - 1.0
             threshold = max(0.001, float(state.get("next_stoploss_threshold_pct") or self.config.stoploss_base_drawdown_pct))
-            if drawdown > -threshold:
+            threshold_ticks = self._stoploss_threshold_ticks(
+                anchor_price=float(avg_price),
+                threshold_pct=float(threshold),
+                tick=float(tick),
+            )
+            stoploss_trigger_price = max(0.0, float(avg_price) - float(threshold_ticks) * float(tick))
+            if float(sellable_price) > stoploss_trigger_price + 1e-12:
                 if int(state.get("stoploss_confirm_hits") or 0) != 0:
                     state["stoploss_confirm_hits"] = 0
                     state_dirty = True
@@ -3561,6 +3729,8 @@ class AutoRunManager:
                     "target_size": float(pos_size),
                     "confirm_hits": int(hits),
                     "threshold_pct": float(threshold),
+                    "threshold_ticks": int(threshold_ticks),
+                    "trigger_price": float(stoploss_trigger_price),
                 },
             )
             self._append_exit_token_record(
@@ -3574,6 +3744,8 @@ class AutoRunManager:
                     "target_size": float(pos_size),
                     "confirm_hits": hits,
                     "threshold_pct": threshold,
+                    "threshold_ticks": int(threshold_ticks),
+                    "trigger_price": float(stoploss_trigger_price),
                 },
                 refillable=False,
             )
@@ -3606,30 +3778,87 @@ class AutoRunManager:
                 continue
             if filled_size <= 0.0 and before_size > after_size:
                 filled_size = max(0.0, before_size - after_size)
+            fill_confirmed_postcheck = False
             if filled_size <= dust:
-                state["stoploss_confirm_hits"] = 0
-                state["last_error"] = f"stoploss clear no_fill remain={after_size:.4f}"
-                self._append_exit_token_record(
-                    token_id,
-                    "STOPLOSS_IOC_NO_FILL",
-                    exit_data={
-                        "source": "stoploss_v4",
-                        "before_size": before_size,
-                        "after_size": after_size,
-                        "filled_size": filled_size,
-                        "error": str(liq.get("error") or ""),
-                    },
-                    refillable=False,
+                confirmed_after, confirmed_filled, confirm_info = (
+                    self._confirm_stoploss_ioc_fill_via_data_api(
+                        token_id,
+                        before_size=before_size,
+                        observed_after_size=after_size,
+                    )
                 )
-                state_dirty = True
-                continue
+                if confirmed_filled > dust:
+                    after_size = confirmed_after
+                    filled_size = confirmed_filled
+                    fill_confirmed_postcheck = True
+                    print(
+                        f"[STOPLOSS][POSTCHECK] token={token_id[:20]}... "
+                        f"confirmed_fill={filled_size:.4f} after={after_size:.4f} info={confirm_info}"
+                    )
+                else:
+                    state["stoploss_confirm_hits"] = 0
+                    retry_limit = max(1, int(self.config.stoploss_clear_confirm_max_retries))
+                    retry_count = max(0, int(state.get("nofill_retry_count") or 0)) + 1
+                    state["nofill_retry_count"] = retry_count
+                    state["last_error"] = (
+                        f"stoploss IOC no_fill remain={after_size:.4f} "
+                        f"retry={retry_count}/{retry_limit}"
+                    )
+                    self._append_exit_token_record(
+                        token_id,
+                        "STOPLOSS_IOC_NO_FILL",
+                        exit_data={
+                            "source": "stoploss_v4",
+                            "before_size": before_size,
+                            "after_size": after_size,
+                            "filled_size": filled_size,
+                            "error": str(liq.get("error") or ""),
+                            "post_check": confirm_info,
+                            "retry_count": retry_count,
+                            "max_retries": retry_limit,
+                        },
+                        refillable=False,
+                    )
+                    if retry_count >= retry_limit:
+                        state["state"] = "STOPLOSS_IOC_RETRY_ESCALATED"
+                        state["nofill_next_retry_ts"] = 0.0
+                        state["market_status_last"] = "stoploss_ioc_retry_escalated"
+                        self._queue_stoploss_nofill_sell_only(
+                            token_id,
+                            position_size=before_size,
+                            entry_price=float(avg_price),
+                            note=state["last_error"],
+                        )
+                        self._append_exit_token_record(
+                            token_id,
+                            "STOPLOSS_IOC_NO_FILL_ESCALATED",
+                            exit_data={
+                                "source": "stoploss_v4",
+                                "remaining_size": after_size,
+                                "retry_count": retry_count,
+                                "max_retries": retry_limit,
+                                "action": "force_sell_only_on_startup",
+                            },
+                            refillable=False,
+                        )
+                    else:
+                        retry_delay_sec = max(60.0, float(self.config.stoploss_check_interval_sec))
+                        state["state"] = "STOPLOSS_IOC_RETRY_PENDING"
+                        state["nofill_next_retry_ts"] = float(now + retry_delay_sec)
+                        state["market_status_last"] = "stoploss_ioc_retry_pending"
+                    state_dirty = True
+                    continue
 
             exec_price = _coerce_float(liq.get("executed_avg_price"))
             if exec_price is None or exec_price <= 0:
                 exec_price = _coerce_float(liq.get("executed_price"))
             if exec_price is None or exec_price <= 0:
-                exec_price = max(0.0, float(sellable_price) * (1.0 - 0.003))
-                exec_source = "bid_buffer_fallback"
+                if fill_confirmed_postcheck:
+                    exec_price = max(0.0, float(sellable_price))
+                    exec_source = "postcheck_sellable_price"
+                else:
+                    exec_price = max(0.0, float(sellable_price) * (1.0 - 0.003))
+                    exec_source = "bid_buffer_fallback"
             else:
                 exec_source = str(liq.get("executed_price_source") or "response_fill")
             state["old_entry_price"] = float(avg_price)
@@ -3677,6 +3906,19 @@ class AutoRunManager:
             if self._rollover_stoploss_daily_fields(state, today):
                 state_dirty = True
             state_name = str(state.get("state") or "NORMAL_MAKER")
+            if state_name in {"STOPLOSS_IOC_RETRY_PENDING", "STOPLOSS_IOC_RETRY_ESCALATED"}:
+                self._append_exit_token_record(
+                    token_id,
+                    "STOPLOSS_IOC_NO_FILL_POSITION_GONE",
+                    exit_data={
+                        "state_name": state_name,
+                        "reason": "position_missing_after_nofill_state",
+                    },
+                    refillable=False,
+                )
+                self._remove_stoploss_reentry_state(token_id)
+                state_dirty = True
+                continue
             if state_name == "STOPLOSS_CLEAR_PENDING_CONFIRM":
                 exec_price = max(
                     0.0,
