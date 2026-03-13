@@ -906,6 +906,19 @@ def _should_offer_common_deadline_options(meta: Optional[Dict[str, Any]]) -> boo
     return not bool(meta.get("end_ts_precise"))
 
 
+def _deadline_allows_hard_countdown(
+    meta: Optional[Dict[str, Any]], manual_override_ts: Optional[float] = None
+) -> bool:
+    if manual_override_ts is not None:
+        return True
+    if not isinstance(meta, dict):
+        return False
+    end_ts = meta.get("end_ts")
+    if not isinstance(end_ts, (int, float)):
+        return False
+    return bool(meta.get("end_ts_precise"))
+
+
 def _common_deadline_override(
     base_date_utc: date, choice: Any, tz_hint: Optional[Any]
 ) -> Tuple[Optional[float], bool]:
@@ -1140,6 +1153,7 @@ def _market_meta_from_obj(m: dict, timezone_override: Optional[Any] = None) -> D
 
     end_keys = (
         "endDate",
+        "endDateIso",
         "endTime",
         "closeTime",
         "closeDate",
@@ -2401,16 +2415,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             market_meta.pop("resolved_ts", None)
             market_deadline_ts = None
 
+    deadline_allows_hard_countdown = _deadline_allows_hard_countdown(
+        market_meta, manual_deadline_override_ts
+    )
     if not manual_deadline_disabled and _should_offer_common_deadline_options(market_meta):
-        override_spec = {
-            "hour": 23,
-            "minute": 59,
-            "timezone": "America/New_York",
-            "fallback_offset": -240,
-        }
-        default_deadline_spec = dict(default_deadline_spec or {})
-        default_deadline_spec.update(override_spec)
-        _apply_default_deadline("自动获取的截止日期缺少具体时刻")
+        print(
+            "[WARN] 自动获取的截止日期缺少具体时刻；保留官方日期用于展示，"
+            "但不会将默认时间冒充为官方截止时间，也不会启用倒计时强动作。"
+        )
     if not manual_deadline_disabled and not market_deadline_ts:
         print("[WARN] 未能自动获取市场结束时间，将进入无截止日期模式继续运行。")
         manual_deadline_disabled = True
@@ -2820,7 +2832,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     countdown_timezone_hint = (
         countdown_cfg.get("timezone") if isinstance(countdown_cfg, dict) else None
     ) or tz_hint
-    if market_deadline_ts and isinstance(countdown_cfg, dict):
+    if market_deadline_ts and not deadline_allows_hard_countdown:
+        print("[WARN] 官方截止时间缺少精确时刻，已跳过 countdown/sell-only 强动作。")
+    if market_deadline_ts and isinstance(countdown_cfg, dict) and deadline_allows_hard_countdown:
         countdown_in: Optional[Any] = countdown_cfg.get("absolute_time") or countdown_cfg.get(
             "timestamp"
         )
@@ -5496,7 +5510,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         print("[INIT][TRACE] 6. 调用_activate_sell_only()...")
         _activate_sell_only("countdown window")
 
-    if market_deadline_ts:
+    if market_deadline_ts and deadline_allows_hard_countdown:
         print("[INIT][TRACE] 7. 启动countdown_monitor线程...")
         threading.Thread(target=_countdown_monitor, daemon=True).start()
 
