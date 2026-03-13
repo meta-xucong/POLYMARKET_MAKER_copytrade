@@ -1822,6 +1822,27 @@ def test_stoploss_full_clear_sets_reentry_window_state(tmp_path):
     assert abs(float(state.get("old_maker_profit_pct") or 0.0) - 0.023) < 1e-9
 
 
+def test_stoploss_threshold_ticks_expand_for_coarse_tokens(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    assert manager._stoploss_threshold_ticks(anchor_price=0.20, threshold_pct=0.05, tick=0.01) == 2
+    assert manager._stoploss_threshold_ticks(anchor_price=0.80, threshold_pct=0.05, tick=0.01) == 4
+
+
+def test_reentry_band_is_tick_aware_for_coarse_tokens(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    manager._ws_cache["t1"] = {"tick_size": 0.01}
+    line, zone_lower, probe = manager._build_stoploss_reentry_band(
+        token_id="t1",
+        exec_price=0.19,
+        line_ticks=2,
+        zone_lower_pct=0.02,
+        probe_break_pct=0.05,
+    )
+    assert 0.189998 <= line < 0.19
+    assert abs(zone_lower - 0.18) < 1e-9
+    assert abs(probe - 0.17) < 1e-9
+
+
 def test_reentry_requires_probe_then_rebound_zone(tmp_path):
     manager = _build_stoploss_manager(tmp_path)
     now = time.time()
@@ -2886,6 +2907,7 @@ def test_stoploss_records_started_and_no_fill_when_ioc_does_not_execute(tmp_path
     manager = _build_stoploss_manager(tmp_path, stoploss_overrides={"min_age_minutes": 0.0})
     now = time.time()
     manager.config.stoploss_confirm_rounds = 1
+    manager.config.stoploss_clear_confirm_max_retries = 3
     manager._ws_cache["t1"] = {"best_bid": 0.90, "updated_at": now}
     manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
         "t1",
@@ -2908,6 +2930,9 @@ def test_stoploss_records_started_and_no_fill_when_ioc_does_not_execute(tmp_path
             "error": "unit_test_no_fill",
         }
     )
+    manager._confirm_stoploss_ioc_fill_via_data_api = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: (10.0, 0.0, "unit_test_unconfirmed")
+    )
     old_fetch = autorun_mod._fetch_position_rows_from_data_api
     autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
         [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.90}],
@@ -2921,6 +2946,106 @@ def test_stoploss_records_started_and_no_fill_when_ioc_does_not_execute(tmp_path
     rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
     reasons = [row.get("exit_reason") for row in rows]
     assert reasons == ["STOPLOSS_IOC_STARTED", "STOPLOSS_IOC_NO_FILL"]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_IOC_RETRY_PENDING"
+    assert int(state["nofill_retry_count"]) == 1
+
+
+def test_stoploss_no_fill_escalates_to_sell_only_after_retry_limit(tmp_path):
+    manager = _build_stoploss_manager(tmp_path, stoploss_overrides={"min_age_minutes": 0.0})
+    now = time.time()
+    manager.config.stoploss_confirm_rounds = 1
+    manager.config.stoploss_clear_confirm_max_retries = 1
+    manager._ws_cache["t1"] = {"best_bid": 0.90, "updated_at": now}
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "NORMAL_MAKER",
+            "stoploss_cycle_count": 0,
+            "next_stoploss_threshold_pct": 0.05,
+            "source_detached": False,
+            "position_opened_ts": now - 600.0,
+        },
+    )
+    manager._total_liquidation.liquidate_single_token_taker = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: {
+            "ok": False,
+            "before_size": 10.0,
+            "after_size": 10.0,
+            "filled_size": 0.0,
+            "requested_size": kwargs.get("target_size", 10.0),
+            "reason": kwargs.get("reason"),
+            "error": "unit_test_nofill",
+        }
+    )
+    manager._confirm_stoploss_ioc_fill_via_data_api = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: (10.0, 0.0, "unit_test_unconfirmed")
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.90}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_IOC_RETRY_ESCALATED"
+    assert "t1" in manager.pending_topics
+    detail = manager.topic_details["t1"]
+    assert detail["force_sell_only_on_startup"] is True
+    assert detail["queue_role"] == "stoploss_nofill_sell_only"
+    rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
+    assert rows[-1]["exit_reason"] == "STOPLOSS_IOC_NO_FILL_ESCALATED"
+
+
+def test_stoploss_postcheck_converts_error_into_waiting_reentry_when_fill_confirmed(tmp_path):
+    manager = _build_stoploss_manager(tmp_path, stoploss_overrides={"min_age_minutes": 0.0})
+    now = time.time()
+    manager.config.stoploss_confirm_rounds = 1
+    manager._ws_cache["t1"] = {"best_bid": 0.90, "updated_at": now}
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "NORMAL_MAKER",
+            "stoploss_cycle_count": 0,
+            "next_stoploss_threshold_pct": 0.05,
+            "source_detached": False,
+            "position_opened_ts": now - 600.0,
+        },
+    )
+    manager._total_liquidation.liquidate_single_token_taker = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: {
+            "ok": False,
+            "before_size": 10.0,
+            "after_size": 10.0,
+            "filled_size": 0.0,
+            "requested_size": kwargs.get("target_size", 10.0),
+            "reason": kwargs.get("reason"),
+            "error": "unit_test_post_error",
+        }
+    )
+    manager._confirm_stoploss_ioc_fill_via_data_api = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: (0.0, 10.0, "unit_test_confirmed_via_data_api")
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.90}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+
+    rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
+    reasons = [row.get("exit_reason") for row in rows]
+    assert reasons == ["STOPLOSS_IOC_STARTED", "STOPLOSS_FULL_CLEAR"]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_EXITED_WAITING_WINDOW"
+    assert float(state["stop_exit_price"]) == 0.9
 
 
 def test_stoploss_journal_records_trigger_before_ioc(tmp_path):
