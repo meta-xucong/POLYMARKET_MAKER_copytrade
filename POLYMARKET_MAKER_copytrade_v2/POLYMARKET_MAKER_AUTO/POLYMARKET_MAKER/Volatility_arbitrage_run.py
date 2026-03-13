@@ -2942,8 +2942,35 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             pass
         return {}
 
+    def _invalidate_exit_signal_payload(source: str, invalidate_reason: str) -> None:
+        if not exit_signal_path:
+            return
+        try:
+            payload = _read_exit_signal_payload()
+            if not payload:
+                payload = {"token_id": str(token_id or "")}
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            payload["active"] = False
+            payload["status"] = "stale_ignored"
+            payload["consumed_at"] = now_iso
+            payload["consumed_by"] = str(source or "")
+            payload["invalidate_reason"] = str(invalidate_reason or "")
+            payload["updated_at"] = now_iso
+            with exit_signal_path.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def _exit_signal_payload_active(payload: Dict[str, Any]) -> bool:
         if not isinstance(payload, dict):
+            return False
+        payload_token_id = str(payload.get("token_id") or "").strip()
+        if not payload_token_id:
+            return False
+        if payload_token_id != str(token_id):
+            return False
+        exit_reason = _normalize_exit_cleanup_reason(payload.get("exit_reason"))
+        if not _ioc_exit_allowed(exit_reason):
             return False
         if not bool(payload.get("active", True)):
             return False
@@ -4282,7 +4309,27 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return None
 
     def _exit_signal_active() -> bool:
-        return _exit_signal_payload_active(_read_exit_signal_payload())
+        payload = _read_exit_signal_payload()
+        if _exit_signal_payload_active(payload):
+            return True
+        if isinstance(payload, dict) and payload:
+            status = str(payload.get("status") or "").strip().lower()
+            if status not in {"done", "canceled", "stale_ignored", "failed"}:
+                reason_code = _normalize_exit_cleanup_reason(payload.get("exit_reason"))
+                invalidate_reason = (
+                    "missing_exit_reason"
+                    if not reason_code
+                    else f"illegal_exit_reason:{reason_code}"
+                )
+                print(
+                    "[EXIT-SIGNAL][IGNORE] invalid payload ignored: "
+                    f"reason={invalidate_reason}"
+                )
+                _invalidate_exit_signal_payload(
+                    "child_exit_signal_validator",
+                    invalidate_reason,
+                )
+        return False
 
     def _clear_exit_signal_after_flat(source: str) -> None:
         if not exit_signal_path:
@@ -4328,6 +4375,24 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         except Exception:
             pass
 
+    def _append_stoploss_event_journal(event: str, payload: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            data_dir = Path(run_cfg.get("data_dir", "data"))
+            data_dir.mkdir(parents=True, exist_ok=True)
+            record = {
+                "ts": float(time.time()),
+                "token_id": str(token_id),
+                "event": str(event),
+                "stage": "child_force_exit",
+                "source": "maker_child",
+            }
+            if isinstance(payload, dict) and payload:
+                record["data"] = payload
+            with (data_dir / "stoploss_event_journal.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            print(f"[STOPLOSS][JOURNAL][WARN] child write failed: {exc}")
+
     def _force_exit(
         reason: str,
         *,
@@ -4342,6 +4407,19 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             return
         normalized_reason = _normalize_exit_cleanup_reason(reason_code or exit_cleanup_reason)
         normalized_source = str(reason_source or exit_cleanup_source or "").strip()
+        if normalized_reason == "STOPLOSS_REENTRY":
+            snap = latest.get(token_id) or {}
+            _append_stoploss_event_journal(
+                "STOPLOSS_CHILD_ACK",
+                {
+                    "requested_reason": normalized_reason,
+                    "requested_source": normalized_source,
+                    "trigger": reason,
+                    "position_size": float(position_size or 0.0),
+                    "best_bid": float(snap.get("best_bid") or 0.0),
+                    "best_ask": float(snap.get("best_ask") or 0.0),
+                },
+            )
         if not _ioc_exit_allowed(normalized_reason):
             print(
                 "[EXIT][BLOCK] force_exit IOC blocked by whitelist: "

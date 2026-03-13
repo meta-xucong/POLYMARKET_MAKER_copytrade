@@ -2187,6 +2187,33 @@ class AutoRunManager:
             )
         except (TypeError, ValueError):
             last_cycle_completed_ts = 0.0
+        local_cycle_status = str(raw.get("local_cycle_status") or "idle").strip().lower()
+        if local_cycle_status not in {
+            "idle",
+            "started_not_bought",
+            "position_resume",
+            "position_confirmed",
+            "sell_pending",
+            "cycle_closed",
+            "invalidated",
+        }:
+            local_cycle_status = "idle"
+        try:
+            local_cycle_started_ts = max(
+                0.0, float(raw.get("local_cycle_started_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            local_cycle_started_ts = 0.0
+        try:
+            local_cycle_invalidated_ts = max(
+                0.0, float(raw.get("local_cycle_invalidated_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            local_cycle_invalidated_ts = 0.0
+        local_cycle_invalidate_reason = str(
+            raw.get("local_cycle_invalidate_reason") or ""
+        ).strip()
+        local_cycle_started_mode = str(raw.get("local_cycle_started_mode") or "").strip().lower()
         stage = str(raw.get("stoploss_stage") or "none").strip().lower()
         if stage not in {"none", "first_cut_done", "fully_cleared"}:
             stage = "none"
@@ -2225,6 +2252,11 @@ class AutoRunManager:
             "cycle_round": cycle_round,
             "next_buy_allowed_ts": next_buy_allowed_ts,
             "last_cycle_completed_ts": last_cycle_completed_ts,
+            "local_cycle_status": local_cycle_status,
+            "local_cycle_started_ts": local_cycle_started_ts,
+            "local_cycle_invalidated_ts": local_cycle_invalidated_ts,
+            "local_cycle_invalidate_reason": local_cycle_invalidate_reason,
+            "local_cycle_started_mode": local_cycle_started_mode,
             "stoploss_stage": stage,
             "stoploss_first_cut_ts": stoploss_first_cut_ts,
             "stoploss_cooldown_until_ts": stoploss_cooldown_until_ts,
@@ -2498,6 +2530,36 @@ class AutoRunManager:
                     _atomic_json_write(path, payload)
                 except OSError:
                     continue
+
+    def _append_stoploss_event_journal(
+        self,
+        token_id: str,
+        event: str,
+        *,
+        stage: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        record = {
+            "ts": float(time.time()),
+            "token_id": str(token_id),
+            "event": str(event),
+            "stage": str(stage),
+            "source": "autorun_stoploss",
+        }
+        if isinstance(payload, dict) and payload:
+            record["data"] = payload
+        path = self.config.data_dir / "stoploss_event_journal.jsonl"
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        try:
+            with self._file_io_lock:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(line)
+        except OSError as exc:
+            print(
+                f"[STOPLOSS][JOURNAL][WARN] token={token_id[:20]}... "
+                f"event={event} write_failed={exc}"
+            )
 
     def _remove_stoploss_reentry_state(self, token_id: str) -> None:
         self._stoploss_reentry_states.pop(str(token_id), None)
@@ -2799,6 +2861,11 @@ class AutoRunManager:
             "cycle_round": next_round,
             "next_buy_allowed_ts": next_buy_allowed_ts,
             "last_cycle_completed_ts": now,
+            "local_cycle_status": "cycle_closed",
+            "local_cycle_started_ts": 0.0,
+            "local_cycle_invalidated_ts": 0.0,
+            "local_cycle_invalidate_reason": "",
+            "local_cycle_started_mode": "",
         }
         if next_drop is not None:
             record["next_drop_pct"] = next_drop
@@ -2877,6 +2944,100 @@ class AutoRunManager:
                     f"{old_resume_profit if old_resume_profit is not None else 'None'} -> {effective_profit:.6f}"
                 )
         return True
+
+    def _mark_token_cycle_local_start(self, token_id: str, *, mode: str) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode not in {
+            "started_not_bought",
+            "position_resume",
+            "position_confirmed",
+            "sell_pending",
+        }:
+            normalized_mode = "started_not_bought"
+        state = dict(self._token_cycle_states.get(token_id) or {})
+        state["local_cycle_status"] = normalized_mode
+        state["local_cycle_started_mode"] = normalized_mode
+        state["local_cycle_started_ts"] = float(time.time())
+        state["local_cycle_invalidated_ts"] = 0.0
+        state["local_cycle_invalidate_reason"] = ""
+        self._token_cycle_states[token_id] = self._normalize_cycle_state_record(state) or state
+        self._save_token_cycle_states()
+
+    def _mark_token_cycle_invalidated(
+        self,
+        token_id: str,
+        *,
+        reason: str,
+        source: str,
+    ) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        state = dict(self._token_cycle_states.get(token_id) or {})
+        state["local_cycle_status"] = "invalidated"
+        state["local_cycle_invalidated_ts"] = float(time.time())
+        state["local_cycle_invalidate_reason"] = str(reason or "").strip() or str(source or "").strip()
+        self._token_cycle_states[token_id] = self._normalize_cycle_state_record(state) or state
+        self._save_token_cycle_states()
+
+    def _token_cycle_allows_sell_signal(self, token_id: str) -> tuple[bool, str]:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return False, "missing_token_id"
+        state = self._token_cycle_states.get(token_id) or {}
+        status = str(state.get("local_cycle_status") or "idle").strip().lower()
+        if status in {"position_resume", "position_confirmed", "sell_pending"}:
+            return True, status
+        if status == "started_not_bought":
+            if self._has_account_position(token_id):
+                self._mark_token_cycle_local_start(token_id, mode="position_confirmed")
+                return True, "position_confirmed"
+            return False, status
+        return False, status or "idle"
+
+    def _evaluate_sell_signal_local_gate(
+        self,
+        token_id: str,
+        *,
+        signal_entry: Optional[Dict[str, Any]] = None,
+        allow_started_not_bought_cleanup: bool = False,
+    ) -> tuple[bool, str]:
+        allowed, reason = self._token_cycle_allows_sell_signal(token_id)
+        if not allowed and not (
+            allow_started_not_bought_cleanup and reason == "started_not_bought"
+        ):
+            return False, reason
+        state = self._token_cycle_states.get(str(token_id or "").strip()) or {}
+        local_cycle_started_ts = max(
+            0.0, float(_coerce_float(state.get("local_cycle_started_ts")) or 0.0)
+        )
+        signal_ts = self._coerce_sell_signal_ts(signal_entry or {})
+        if signal_ts is not None and local_cycle_started_ts > 0 and signal_ts + 1e-6 < local_cycle_started_ts:
+            return False, "stale_previous_cycle_signal"
+        return True, reason
+
+    def _ensure_local_cycle_for_managed_task(self, token_id: str, task: Optional[TopicTask]) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        state = self._token_cycle_states.get(token_id) or {}
+        status = str(state.get("local_cycle_status") or "").strip().lower()
+        if status and status not in {"idle", "invalidated", "cycle_closed"}:
+            return
+        if task is None and token_id not in self.pending_topics and token_id not in self.pending_burst_topics:
+            return
+        started_ts = float(task.start_time) if isinstance(task, TopicTask) else 0.0
+        state = dict(state)
+        state["local_cycle_status"] = "started_not_bought"
+        state["local_cycle_started_mode"] = "started_not_bought"
+        state["local_cycle_started_ts"] = max(started_ts, 0.0)
+        state["local_cycle_invalidated_ts"] = 0.0
+        state["local_cycle_invalidate_reason"] = ""
+        self._token_cycle_states[token_id] = self._normalize_cycle_state_record(state) or state
+        self._save_token_cycle_states()
 
     def _estimate_stoploss_sellable_price(
         self, token_id: str, position_row: Dict[str, Any]
@@ -3388,6 +3549,20 @@ class AutoRunManager:
                 break
             action_count += 1
 
+            self._append_stoploss_event_journal(
+                token_id,
+                "STOPLOSS_TRIGGERED",
+                stage="pre_ioc_liquidation",
+                payload={
+                    "reason": "STOPLOSS_REENTRY",
+                    "drawdown": float(drawdown),
+                    "avg_price": float(avg_price),
+                    "sellable_price": float(sellable_price),
+                    "target_size": float(pos_size),
+                    "confirm_hits": int(hits),
+                    "threshold_pct": float(threshold),
+                },
+            )
             self._append_exit_token_record(
                 token_id,
                 "STOPLOSS_IOC_STARTED",
@@ -7084,6 +7259,13 @@ class AutoRunManager:
         # 回填启动时保留计数，确保 PRICE_NONE_STREAK/NO_DATA_TIMEOUT 的重试限制生效。
         if not is_refill_start:
             self._refill_retry_counts.pop(topic_id, None)
+        cycle_mode = "started_not_bought"
+        resume_state = detail.get("resume_state")
+        if bool(config_data.get("exit_only")):
+            cycle_mode = "sell_pending"
+        elif isinstance(resume_state, dict) and resume_state.get("has_position"):
+            cycle_mode = "position_resume"
+        self._mark_token_cycle_local_start(topic_id, mode=cycle_mode)
         # 清理 topic_details 中的 resume_state（已被使用）
         if topic_id in self.topic_details:
             self.topic_details[topic_id].pop("resume_state", None)
@@ -7378,11 +7560,13 @@ class AutoRunManager:
                 to_queue_buy.add(token_id)
 
         for token_id in sorted(to_liquidate):
+            self._mark_token_cycle_local_start(token_id, mode="position_resume")
             self._trigger_sell_exit(
                 token_id,
                 None,
                 trigger_source="startup_reconcile_sell_signal",
                 trigger_reason="COPYTRADE_SELL",
+                signal_entry=sell_signals.get(token_id),
             )
 
         orphan_stats = self._schedule_startup_orphan_profit_sweep(
@@ -9225,6 +9409,7 @@ class AutoRunManager:
         path = self._exit_signal_path(token_id)
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         payload = {
+            "schema_version": 2,
             "token_id": token_id,
             "active": True,
             "status": "pending",
@@ -9255,6 +9440,9 @@ class AutoRunManager:
             return False
         token_id = str(payload.get("token_id") or "").strip()
         if not token_id:
+            return False
+        exit_reason = str(payload.get("exit_reason") or "").strip().upper()
+        if exit_reason not in ALLOWED_EXIT_SIGNAL_REASONS:
             return False
         if not bool(payload.get("active", True)):
             return False
@@ -9305,6 +9493,11 @@ class AutoRunManager:
             status="done",
             source=source,
             invalidate_reason="sell_signal_without_position",
+        )
+        self._mark_token_cycle_invalidated(
+            token_id,
+            reason="sell_signal_without_local_position",
+            source=source,
         )
         self._remove_token_from_copytrade_files(token_id)
         self._purge_token_runtime_state(token_id)
@@ -9380,8 +9573,28 @@ class AutoRunManager:
                 token_id = path.stem.replace("exit_signal_", "", 1)
             if not token_id:
                 continue
-            if isinstance(payload, dict) and not self._is_exit_signal_payload_active(payload):
-                continue
+            if isinstance(payload, dict):
+                active = self._is_exit_signal_payload_active(payload)
+                if not active:
+                    raw_reason = str(payload.get("exit_reason") or "").strip().upper()
+                    status = str(payload.get("status") or "").strip().lower()
+                    if status not in {"done", "canceled", "stale_ignored", "failed"}:
+                        invalidate_reason = (
+                            "missing_exit_reason"
+                            if not raw_reason
+                            else f"illegal_exit_reason:{raw_reason}"
+                        )
+                        self._mark_exit_signal_inactive(
+                            token_id,
+                            status="stale_ignored",
+                            source="reconcile_exit_signals",
+                            invalidate_reason=invalidate_reason,
+                        )
+                        print(
+                            f"[EXIT-SIGNAL][GC] token={token_id[:20]}... "
+                            f"reason={invalidate_reason}"
+                        )
+                    continue
 
             if token_id in self.pending_topics or token_id in self.pending_burst_topics:
                 self._remove_pending_topic(token_id)
@@ -9472,6 +9685,29 @@ class AutoRunManager:
                 self._completed_exit_cleanup_tokens.add(token_id)
                 self._handled_sell_signals.add(token_id)
                 continue
+            self._ensure_local_cycle_for_managed_task(token_id, task)
+            cycle_allowed, cycle_reason = self._evaluate_sell_signal_local_gate(
+                token_id,
+                signal_entry=sell_signals.get(token_id),
+                allow_started_not_bought_cleanup=bool(task or token_id in self.pending_topics),
+            )
+            if not cycle_allowed:
+                self._mark_token_cycle_invalidated(
+                    token_id,
+                    reason=f"sell_signal_without_active_local_cycle:{cycle_reason}",
+                    source="copytrade_sell_signal_incremental",
+                )
+                self._update_sell_signal_event(
+                    token_id,
+                    status="stale_ignored",
+                    note=f"local_cycle_gate:{cycle_reason}",
+                )
+                self._handled_sell_signals.add(token_id)
+                print(
+                    "[CYCLE_GATE][SELL][IGNORE] increment signal ignored: "
+                    f"token_id={token_id} cycle={cycle_reason}"
+                )
+                continue
 
             has_position, reason = self._has_position_for_sell_signal(
                 token_id,
@@ -9500,6 +9736,7 @@ class AutoRunManager:
                 task,
                 trigger_source="copytrade_sell_signal_incremental",
                 trigger_reason="COPYTRADE_SELL",
+                signal_entry=sell_signals.get(token_id),
             )
 
     def _run_full_sell_signal_recheck(self, sell_signals: Dict[str, Dict[str, Any]]) -> None:
@@ -9525,6 +9762,29 @@ class AutoRunManager:
             if task and not has_running_task and task.end_reason == "sell signal cleanup":
                 self._completed_exit_cleanup_tokens.add(token_id)
                 self._handled_sell_signals.add(token_id)
+                continue
+            self._ensure_local_cycle_for_managed_task(token_id, task)
+            cycle_allowed, cycle_reason = self._evaluate_sell_signal_local_gate(
+                token_id,
+                signal_entry=sell_signals.get(token_id),
+                allow_started_not_bought_cleanup=bool(task or token_id in self.pending_topics),
+            )
+            if not cycle_allowed:
+                self._mark_token_cycle_invalidated(
+                    token_id,
+                    reason=f"sell_signal_without_active_local_cycle:{cycle_reason}",
+                    source="copytrade_sell_signal_full_recheck",
+                )
+                self._update_sell_signal_event(
+                    token_id,
+                    status="stale_ignored",
+                    note=f"local_cycle_gate:{cycle_reason}",
+                )
+                self._handled_sell_signals.add(token_id)
+                print(
+                    "[CYCLE_GATE][SELL][IGNORE] full recheck signal ignored: "
+                    f"token_id={token_id} cycle={cycle_reason}"
+                )
                 continue
 
             has_position, reason = self._has_position_for_sell_signal(
@@ -9554,6 +9814,7 @@ class AutoRunManager:
                 task,
                 trigger_source="copytrade_sell_signal_full_recheck",
                 trigger_reason="COPYTRADE_SELL",
+                signal_entry=sell_signals.get(token_id),
             )
 
     def _trigger_sell_exit(
@@ -9563,6 +9824,7 @@ class AutoRunManager:
         *,
         trigger_source: str = "unspecified",
         trigger_reason: str = "UNSPECIFIED",
+        signal_entry: Optional[Dict[str, Any]] = None,
     ) -> bool:
         exit_reason = self._normalize_exit_reason(trigger_reason)
         if not self._is_ioc_exit_reason_allowed(exit_reason):
@@ -9572,6 +9834,22 @@ class AutoRunManager:
                 trigger_source=trigger_source,
                 task=task,
                 note="trigger requested exit-only cleanup but reason is not whitelisted",
+            )
+            return False
+        cycle_allowed, cycle_reason = self._evaluate_sell_signal_local_gate(
+            token_id,
+            signal_entry=signal_entry,
+        )
+        if not cycle_allowed:
+            self._mark_token_cycle_invalidated(
+                token_id,
+                reason=f"sell_signal_without_active_local_cycle:{cycle_reason}",
+                source=trigger_source,
+            )
+            self._update_sell_signal_event(
+                token_id,
+                status="stale_ignored",
+                note=f"local_cycle_gate:{cycle_reason}",
             )
             return False
         now = time.time()

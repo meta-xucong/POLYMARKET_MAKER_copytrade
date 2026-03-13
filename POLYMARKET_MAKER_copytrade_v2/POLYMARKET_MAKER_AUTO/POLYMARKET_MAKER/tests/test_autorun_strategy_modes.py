@@ -260,7 +260,22 @@ def test_sync_startup_sell_with_position_triggers_exit_cleanup_path(tmp_path):
 
     manager._sync_handled_topics_on_startup()
 
-    assert captured == [("t1", None, {"trigger_source": "startup_reconcile_sell_signal", "trigger_reason": "COPYTRADE_SELL"})]
+    assert captured == [
+        (
+            "t1",
+            None,
+            {
+                "trigger_source": "startup_reconcile_sell_signal",
+                "trigger_reason": "COPYTRADE_SELL",
+                "signal_entry": {
+                    "token_id": "t1",
+                    "introduced_by_buy": True,
+                    "status": "pending",
+                    "attempts": 0,
+                },
+            },
+        )
+    ]
 
 
 def test_startup_full_reconcile_preserves_active_buy_token_when_handled_missing(tmp_path):
@@ -1422,6 +1437,149 @@ def test_advance_cycle_state_updates_round_cooldown_and_drop(tmp_path):
     assert abs(float(state2.get("next_drop_pct")) - 0.054) < 1e-9
 
 
+def test_apply_sell_signals_ignores_signal_without_local_cycle(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+    sell_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "sell_tokens": [
+                    {
+                        "token_id": "t1",
+                        "introduced_by_buy": True,
+                        "active": True,
+                        "status": "pending",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "copytrade_sell_signals_path": str(sell_path),
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._sell_bootstrap_done = True
+    manager._token_cycle_states["t1"] = {
+        "cycle_round": 0,
+        "next_buy_allowed_ts": 0.0,
+        "local_cycle_status": "idle",
+    }
+    triggered: list[str] = []
+    manager._trigger_sell_exit = lambda token_id, task, trigger_source="unspecified", trigger_reason="UNSPECIFIED": triggered.append(token_id) or True  # type: ignore[assignment]
+
+    manager._apply_sell_signals(manager._load_copytrade_sell_signals())
+
+    payload = json.loads(sell_path.read_text(encoding="utf-8"))
+    row = payload["sell_tokens"][0]
+    assert triggered == []
+    assert row["status"] == "stale_ignored"
+    assert row["active"] is False
+    assert row["note"] == "local_cycle_gate:idle"
+    assert manager._token_cycle_states["t1"]["local_cycle_status"] == "invalidated"
+
+
+def test_token_cycle_resume_state_allows_sell_signal(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    manager._token_cycle_states["t1"] = {
+        "cycle_round": 1,
+        "next_buy_allowed_ts": 0.0,
+        "local_cycle_status": "position_resume",
+    }
+
+    allowed, reason = manager._token_cycle_allows_sell_signal("t1")
+
+    assert allowed is True
+    assert reason == "position_resume"
+
+
+def test_token_cycle_started_not_bought_blocks_sell_without_position(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    manager._token_cycle_states["t1"] = {
+        "cycle_round": 1,
+        "next_buy_allowed_ts": 0.0,
+        "local_cycle_status": "started_not_bought",
+    }
+    manager._has_account_position = lambda _token_id, force_refresh=False: False  # type: ignore[assignment]
+
+    allowed, reason = manager._token_cycle_allows_sell_signal("t1")
+
+    assert allowed is False
+    assert reason == "started_not_bought"
+
+
+def test_token_cycle_started_not_bought_promotes_when_position_exists(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    manager._token_cycle_states["t1"] = {
+        "cycle_round": 1,
+        "next_buy_allowed_ts": 0.0,
+        "local_cycle_status": "started_not_bought",
+    }
+    manager._has_account_position = lambda _token_id, force_refresh=False: True  # type: ignore[assignment]
+
+    allowed, reason = manager._token_cycle_allows_sell_signal("t1")
+
+    assert allowed is True
+    assert reason == "position_confirmed"
+    assert manager._token_cycle_states["t1"]["local_cycle_status"] == "position_confirmed"
+
+
+def test_sell_signal_older_than_local_cycle_is_ignored(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+    old_ts = time.time() - 120.0
+    sell_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "sell_tokens": [
+                    {
+                        "token_id": "t1",
+                        "introduced_by_buy": True,
+                        "active": True,
+                        "status": "pending",
+                        "signal_ts": old_ts,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "copytrade_sell_signals_path": str(sell_path),
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._sell_bootstrap_done = True
+    manager._token_cycle_states["t1"] = {
+        "cycle_round": 1,
+        "next_buy_allowed_ts": 0.0,
+        "local_cycle_status": "position_confirmed",
+        "local_cycle_started_ts": time.time(),
+    }
+    triggered: list[str] = []
+    manager._trigger_sell_exit = lambda token_id, task, trigger_source="unspecified", trigger_reason="UNSPECIFIED", signal_entry=None: triggered.append(token_id) or True  # type: ignore[assignment]
+
+    manager._apply_sell_signals(manager._load_copytrade_sell_signals())
+
+    payload = json.loads(sell_path.read_text(encoding="utf-8"))
+    row = payload["sell_tokens"][0]
+    assert triggered == []
+    assert row["status"] == "stale_ignored"
+    assert row["note"] == "local_cycle_gate:stale_previous_cycle_signal"
+
+
 def test_load_copytrade_tokens_skips_non_buy_introduced(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
@@ -2284,6 +2442,38 @@ def test_issue_exit_signal_rejects_illegal_reason_and_no_position(tmp_path):
     assert manager._exit_signal_path(token_id).exists() is False
 
 
+def test_exit_signal_requires_reason_to_be_active(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    token_id = "legacy_token"
+    signal_path = manager._exit_signal_path(token_id)
+    signal_path.parent.mkdir(parents=True, exist_ok=True)
+    signal_path.write_text(
+        json.dumps(
+            {
+                "token_id": token_id,
+                "active": True,
+                "status": "pending",
+                "trigger_path": "exit_signal",
+                "trigger_source": "legacy_writer",
+                "updated_at": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert manager._has_exit_signal_file(token_id) is False
+
+    manager._has_account_position = lambda _token_id, force_refresh=False: False  # type: ignore[assignment]
+    manager._reconcile_exit_signals()
+
+    payload = json.loads(signal_path.read_text(encoding="utf-8"))
+    assert payload["active"] is False
+    assert payload["status"] == "stale_ignored"
+    assert payload["invalidate_reason"] == "missing_exit_reason"
+    assert payload["consumed_by"] == "reconcile_exit_signals"
+
+
 def test_apply_sell_signals_archives_token_and_stops_buy_when_no_position(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
@@ -2731,6 +2921,52 @@ def test_stoploss_records_started_and_no_fill_when_ioc_does_not_execute(tmp_path
     rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
     reasons = [row.get("exit_reason") for row in rows]
     assert reasons == ["STOPLOSS_IOC_STARTED", "STOPLOSS_IOC_NO_FILL"]
+
+
+def test_stoploss_journal_records_trigger_before_ioc(tmp_path):
+    manager = _build_stoploss_manager(tmp_path, stoploss_overrides={"min_age_minutes": 0.0})
+    now = time.time()
+    manager.config.stoploss_confirm_rounds = 1
+    manager._ws_cache["t1"] = {"best_bid": 0.90, "updated_at": now}
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "NORMAL_MAKER",
+            "stoploss_cycle_count": 0,
+            "next_stoploss_threshold_pct": 0.05,
+            "source_detached": False,
+            "position_opened_ts": now - 600.0,
+        },
+    )
+    manager._total_liquidation.liquidate_single_token_taker = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: {
+            "ok": False,
+            "before_size": 10.0,
+            "after_size": 10.0,
+            "filled_size": 0.0,
+            "requested_size": kwargs.get("target_size", 10.0),
+            "reason": kwargs.get("reason"),
+            "error": "unit_test_no_fill",
+        }
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.90}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+
+    journal_path = manager.config.data_dir / "stoploss_event_journal.jsonl"
+    lines = journal_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["token_id"] == "t1"
+    assert payload["event"] == "STOPLOSS_TRIGGERED"
+    assert payload["stage"] == "pre_ioc_liquidation"
+    assert payload["data"]["reason"] == "STOPLOSS_REENTRY"
 
 
 def test_stoploss_min_age_gate_delays_execution_until_five_minutes(tmp_path):
