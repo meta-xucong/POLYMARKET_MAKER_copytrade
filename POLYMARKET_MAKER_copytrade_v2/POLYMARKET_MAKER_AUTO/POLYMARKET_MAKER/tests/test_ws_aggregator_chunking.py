@@ -1,5 +1,6 @@
 import sys
 import types
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,3 +52,22 @@ def test_flush_pending_subscriptions_sends_unsubscribe_in_chunks():
 
     unsubscribe_msgs = [msg for msg in ws.sent if '"operation": "unsubscribe"' in msg]
     assert len(unsubscribe_msgs) == 2
+
+
+def test_on_message_pong_refreshes_last_event_ts():
+    client = WSAggregatorClient()
+    client._last_event_ts = 0.0
+
+    before = time.monotonic()
+    client._on_message(_FakeWS(), "PONG")
+
+    assert client._last_event_ts >= before
+
+
+def test_on_message_ping_replies_with_pong():
+    client = WSAggregatorClient()
+    ws = _FakeWS()
+
+    client._on_message(ws, "PING")
+
+    assert ws.sent[-1] == "PONG"

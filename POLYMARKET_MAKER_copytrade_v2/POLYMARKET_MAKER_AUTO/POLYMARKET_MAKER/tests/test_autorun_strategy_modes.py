@@ -2741,15 +2741,42 @@ def test_source_detached_timeout_triggers_cleanup_above_value_threshold(tmp_path
         manager._run_stoploss_check(now)
     finally:
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
-    state = manager._stoploss_reentry_states["t1"]
-    assert state.get("market_status_last") == "source_detached_timeout_orphan_recorded"
-    assert bool(state.get("source_detached_cleanup_started", False)) is True
+    assert "t1" not in manager._stoploss_reentry_states
     orphan_path = manager.config.data_dir / "orphan_tokens.json"
     assert orphan_path.exists()
     rows = json.loads(orphan_path.read_text(encoding="utf-8"))
     assert isinstance(rows, list) and len(rows) >= 1
     latest = rows[-1]
     assert latest.get("token_id") == "t1"
+
+
+def test_mark_token_orphaned_clears_stoploss_owner_immediately(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_EXITED_WAITING_WINDOW",
+            "source_detached": True,
+            "source_detached_since_ts": now - 1800.0,
+        },
+    )
+
+    manager._mark_token_orphaned(
+        "t1",
+        reason="UNIT_TEST_ORPHAN",
+        trigger_source="unit_test",
+        position_snapshot={"size": 3.0, "snapshot_info": "ok"},
+    )
+
+    assert "t1" not in manager._stoploss_reentry_states
+    detail = manager.topic_details["t1"]
+    assert detail.get("orphaned") is True
+    orphan_path = manager.config.data_dir / "orphan_tokens.json"
+    rows = json.loads(orphan_path.read_text(encoding="utf-8"))
+    latest = rows[-1]
+    assert latest.get("token_id") == "t1"
+    assert latest.get("status") == "orphaned"
 
 
 def test_waiting_reentry_times_out_and_is_abandoned(tmp_path):

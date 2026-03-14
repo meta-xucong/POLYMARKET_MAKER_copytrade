@@ -82,8 +82,8 @@ class WSAggregatorClient:
         verbose: bool = False,
         label: str = "aggregator",
         flush_interval_sec: float = 0.5,
-        ping_interval_sec: float = 20.0,
-        ping_timeout_sec: float = 10.0,
+        ping_interval_sec: float = 10.0,
+        ping_timeout_sec: float = 5.0,
         enable_text_ping: bool = True,
         silence_timeout_sec: float = 1200.0,
         custom_feature_enabled: bool = True,
@@ -125,8 +125,8 @@ class WSAggregatorClient:
         self._ping_interval = max(1.0, float(ping_interval_sec))
         self._ping_timeout = max(1.0, float(ping_timeout_sec))
         self._enable_text_ping = bool(enable_text_ping)
-        # Polymarket docs require application-level PING every 10s for market/user channels.
-        self._text_ping_interval = min(10.0, max(1.0, self._ping_interval / 2.0))
+        # Polymarket market/user channels require application-level PING every 10 seconds.
+        self._text_ping_interval = 10.0
         self._custom_feature_enabled = bool(custom_feature_enabled)
         self._subscribe_chunk_size = max(1, int(subscribe_chunk_size))
         self._subscribe_chunk_interval_sec = max(0.0, float(subscribe_chunk_interval_sec))
@@ -300,8 +300,7 @@ class WSAggregatorClient:
             try:
                 self._ws.run_forever(
                     sslopt={"cert_reqs": ssl.CERT_REQUIRED},
-                    ping_interval=self._ping_interval,
-                    ping_timeout=self._ping_timeout,
+                    ping_interval=0,
                 )
             except Exception as exc:
                 if self._verbose:
@@ -385,7 +384,7 @@ class WSAggregatorClient:
         self._flush_thread = threading.Thread(target=flush_loop, daemon=True)
         self._flush_thread.start()
 
-        # 可选文本心跳（默认关闭）：避免与 websocket 底层 ping/pong 重复造成抖动
+        # Official Polymarket heartbeat: send text PING every 10 seconds.
         if self._enable_text_ping:
             def ping_loop():
                 while self._ws_connected and not self._stop_event.is_set():
@@ -501,7 +500,24 @@ class WSAggregatorClient:
 
     def _on_message(self, ws, message: str) -> None:
         """WS消息回调"""
-        # 忽略非JSON（如PONG）
+        if isinstance(message, str):
+            heartbeat = message.strip().upper()
+            if heartbeat == "PONG":
+                self._last_event_ts = time.monotonic()
+                if self._verbose:
+                    print(f"[{_now()}][WS][AGGREGATOR][PONG]")
+                return
+            if heartbeat == "PING":
+                self._last_event_ts = time.monotonic()
+                try:
+                    ws.send("PONG")
+                except Exception:
+                    pass
+                if self._verbose:
+                    print(f"[{_now()}][WS][AGGREGATOR][PING]")
+                return
+
+        # Ignore non-JSON payloads other than documented heartbeat frames.
         try:
             data = json.loads(message)
         except Exception:
@@ -591,8 +607,8 @@ def ws_watch_by_ids(
     on_state: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     verbose: bool = False,
     stop_event: Optional[threading.Event] = None,
-    ping_interval_sec: float = 20.0,
-    ping_timeout_sec: float = 10.0,
+    ping_interval_sec: float = 10.0,
+    ping_timeout_sec: float = 5.0,
     enable_text_ping: bool = True,
 ):
     """
@@ -620,7 +636,7 @@ def ws_watch_by_ids(
     silence_timeout = 600  # 秒，超过则主动重连以避免卡死
     ping_interval = max(1.0, float(ping_interval_sec))
     ping_timeout = max(1.0, float(ping_timeout_sec))
-    text_ping_interval = min(10.0, max(1.0, ping_interval / 2.0))
+    text_ping_interval = 10.0
 
     headers = [
         "Origin: https://polymarket.com",
@@ -652,7 +668,7 @@ def ws_watch_by_ids(
             last_event_ts = time.monotonic()
             _notify("open", {"label": label, "asset_ids": ids})
 
-            # 可选文本心跳（默认关闭）：避免与 websocket 底层 ping/pong 重复造成抖动
+            # Official Polymarket heartbeat: send text PING every 10 seconds.
             if enable_text_ping:
                 def _ping():
                     while not ping_stop["v"] and not stop_event.is_set():
@@ -700,7 +716,24 @@ def ws_watch_by_ids(
 
         def on_message(ws, message):
             nonlocal last_event_ts
-            # 忽略非 JSON 文本（如 PONG）
+            if isinstance(message, str):
+                heartbeat = message.strip().upper()
+                if heartbeat == "PONG":
+                    last_event_ts = time.monotonic()
+                    if verbose:
+                        print(f"[{_now()}][WS][PONG]")
+                    return
+                if heartbeat == "PING":
+                    last_event_ts = time.monotonic()
+                    try:
+                        ws.send("PONG")
+                    except Exception:
+                        pass
+                    if verbose:
+                        print(f"[{_now()}][WS][PING]")
+                    return
+
+            # 忽略非 JSON 文本（除官方 heartbeat 外）
             try:
                 data = json.loads(message)
             except Exception:
@@ -755,8 +788,7 @@ def ws_watch_by_ids(
         try:
             wsa.run_forever(
                 sslopt={"cert_reqs": ssl.CERT_REQUIRED},
-                ping_interval=ping_interval,
-                ping_timeout=ping_timeout,
+                ping_interval=0,
             )
         except Exception as exc:
             ping_stop["v"] = True

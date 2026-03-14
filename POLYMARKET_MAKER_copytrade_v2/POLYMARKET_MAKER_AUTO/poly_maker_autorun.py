@@ -3628,13 +3628,11 @@ class AutoRunManager:
                             "cur_price": _extract_position_current_price(row),
                         },
                     )
-                    state["source_detached_cleanup_started"] = True
-                    state["source_detached_cleanup_started_ts"] = float(now)
-                    state["market_status_last"] = "source_detached_timeout_orphan_recorded"
-                    state["last_error"] = ""
                     print(
                         f"[RISK_GUARD] token={token_id[:20]}... source_detached timeout -> moved to orphan"
                     )
+                    state_dirty = True
+                    continue
                 else:
                     started_ts = float(state.get("source_detached_cleanup_started_ts") or 0.0)
                     since_started = max(0.0, now - started_ts) if started_ts > 0 else 0.0
@@ -10356,6 +10354,10 @@ class AutoRunManager:
         if not token_id:
             return
         now = time.time()
+        had_stoploss_owner = str(token_id) in self._stoploss_reentry_states
+        if had_stoploss_owner:
+            self._remove_stoploss_reentry_state(token_id)
+            self._save_stoploss_reentry_states()
         detail = self.topic_details.setdefault(token_id, {})
         detail["orphaned"] = True
         detail["orphaned_at"] = float(now)
@@ -10401,7 +10403,7 @@ class AutoRunManager:
         self._append_orphan_token_record(record)
         print(
             f"[ORPHAN] token={token_id[:20]}... reason={reason} source={trigger_source} "
-            f"note={note or '-'}"
+            f"note={note or '-'} stoploss_owner_cleared={had_stoploss_owner}"
         )
 
     def _unified_position_cycle_interval_sec(self) -> float:
