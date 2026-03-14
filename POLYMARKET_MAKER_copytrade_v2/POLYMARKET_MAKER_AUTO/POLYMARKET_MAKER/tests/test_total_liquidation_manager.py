@@ -1108,8 +1108,12 @@ def _install_fake_clob_modules():
         IOC = "IOC"
         FOK = "FOK"
 
+    class _OpenOrderParams:
+        pass
+
     fake_clob_types.OrderArgs = _OrderArgs
     fake_clob_types.OrderType = _OrderType
+    fake_clob_types.OpenOrderParams = _OpenOrderParams
 
     fake_constants = types.ModuleType("py_clob_client.order_builder.constants")
     fake_constants.SELL = "SELL"
@@ -1467,3 +1471,77 @@ def test_single_token_ioc_liquidation_blocks_non_whitelist_reason_and_records_au
         exit_data = kwargs.get("exit_data") or {}
         assert exit_data.get("source") == "total_liquidation_single_token_taker"
         assert exit_data.get("requested_reason") == "SOURCE_DETACHED_TIMEOUT"
+
+
+def test_fetch_open_orders_falls_back_to_open_order_params():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        _install_fake_clob_modules()
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        class _Client:
+            def get_orders(self, params=None):
+                if params is None:
+                    raise TypeError("params required")
+                return [{"id": "o1", "asset_id": "t1", "side": "SELL"}]
+
+        rows = mgr._fetch_open_orders(_Client())
+        assert rows == [{"order_id": "o1", "token_id": "t1", "side": "SELL"}]
+
+
+def test_single_token_ioc_liquidation_blocks_when_open_orders_still_live():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        place_calls = []
+        mgr._cached_client = object()
+        mgr._fetch_single_position_size = lambda _token_id: 10.0
+        mgr._cancel_open_orders_for_token = lambda *_args, **_kwargs: 1
+        mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: False
+        mgr._place_sell_ioc = lambda *_args, **_kwargs: place_calls.append(True)
+
+        resp = mgr.liquidate_single_token_taker(
+            _Autorun(cfg, running_tasks=0),
+            "t1",
+            reason="STOPLOSS_REENTRY",
+            max_attempts=1,
+        )
+
+        assert resp.get("ok") is False
+        assert "open orders still live after cancel" in str(resp.get("error") or "")
+        assert place_calls == []
+
+
+def test_single_token_ioc_liquidation_treats_post_error_position_clear_as_success():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        size_reads = iter([10.0, 0.0, 0.0, 0.0])
+        mgr._cached_client = object()
+        mgr._fetch_single_position_size = lambda _token_id: next(size_reads)
+        mgr._cancel_open_orders_for_token = lambda *_args, **_kwargs: 0
+        mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: True
+        mgr._resolve_bid_ask = lambda _autorun, _token_id: (0.14, 0.15)
+        mgr._place_sell_ioc = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("not enough balance / allowance")
+        )
+
+        resp = mgr.liquidate_single_token_taker(
+            _Autorun(cfg, running_tasks=0),
+            "t1",
+            reason="STOPLOSS_REENTRY",
+            max_attempts=1,
+        )
+
+        assert resp.get("ok") is True
+        assert resp.get("filled_size") == 10.0
+        assert resp.get("after_size") == 0.0
+        assert resp.get("error") in (None, "")

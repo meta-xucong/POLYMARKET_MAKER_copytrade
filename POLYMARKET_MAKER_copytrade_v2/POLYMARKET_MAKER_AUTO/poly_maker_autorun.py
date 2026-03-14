@@ -117,9 +117,11 @@ DEFAULT_GLOBAL_CONFIG = {
         "next_stoploss_cooldown_minutes": 30.0,
         "reentry_extra_delay_after_5_cuts_hours": 24.0,
         "reentry_timeout_hours": 168.0,
+        "reference_tick_size": 0.01,
         "reentry_line_ticks": 2,
         "reentry_zone_lower_pct": 0.02,
-        "probe_break_pct": 0.05,
+        "probe_break_pct": 0.08,
+        "drawdown_step_per_cycle_ticks": 1,
         "clear_confirm_timeout_sec": 180.0,
         "clear_confirm_retry_interval_sec": 1800.0,
         "clear_confirm_max_retries": 3,
@@ -1018,6 +1020,9 @@ class GlobalConfig:
     stoploss_reentry_timeout_hours: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_timeout_hours", 168.0)
     )
+    stoploss_reference_tick_size: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reference_tick_size", 0.01)
+    )
     stoploss_reentry_line_ticks: int = int(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_line_ticks", 2)
     )
@@ -1025,7 +1030,7 @@ class GlobalConfig:
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_zone_lower_pct", 0.02)
     )
     stoploss_probe_break_pct: float = float(
-        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("probe_break_pct", 0.05)
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("probe_break_pct", 0.08)
     )
     stoploss_clear_confirm_timeout_sec: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("clear_confirm_timeout_sec", 180.0)
@@ -1041,6 +1046,9 @@ class GlobalConfig:
     )
     stoploss_drawdown_step_per_cycle_pct: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_step_per_cycle_pct", 0.01)
+    )
+    stoploss_drawdown_step_per_cycle_ticks: int = int(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_step_per_cycle_ticks", 1)
     )
     stoploss_min_age_minutes: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_age_minutes", 5.0)
@@ -1664,6 +1672,15 @@ class GlobalConfig:
                     )
                 ),
             ),
+            stoploss_reference_tick_size=max(
+                1e-8,
+                float(
+                    stoploss_cfg.get(
+                        "reference_tick_size",
+                        merged.get("stoploss_reference_tick_size", cls.stoploss_reference_tick_size),
+                    )
+                ),
+            ),
             stoploss_reentry_line_ticks=max(
                 1,
                 int(
@@ -1750,6 +1767,18 @@ class GlobalConfig:
                         merged.get(
                             "stoploss_drawdown_step_per_cycle_pct",
                             cls.stoploss_drawdown_step_per_cycle_pct,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_drawdown_step_per_cycle_ticks=max(
+                0,
+                int(
+                    stoploss_cfg.get(
+                        "drawdown_step_per_cycle_ticks",
+                        merged.get(
+                            "stoploss_drawdown_step_per_cycle_ticks",
+                            cls.stoploss_drawdown_step_per_cycle_ticks,
                         ),
                     )
                 ),
@@ -2344,6 +2373,7 @@ class AutoRunManager:
             "state": "NORMAL_MAKER",
             "stoploss_cycle_count": 0,
             "next_stoploss_threshold_pct": base_threshold,
+            "next_stoploss_trigger_ticks": 0,
             "stoploss_confirm_hits": 0,
             "stop_exit_price": None,
             "stop_exit_price_source": "",
@@ -2424,6 +2454,7 @@ class AutoRunManager:
         )
         for key in (
             "next_stoploss_threshold_pct",
+            "next_stoploss_trigger_ticks",
             "stop_exit_price",
             "stop_exit_ts",
             "last_stoploss_size",
@@ -2465,6 +2496,9 @@ class AutoRunManager:
         merged["next_stoploss_threshold_pct"] = max(
             0.001,
             float(merged.get("next_stoploss_threshold_pct") or self.config.stoploss_base_drawdown_pct),
+        )
+        merged["next_stoploss_trigger_ticks"] = max(
+            0, int(_coerce_float(merged.get("next_stoploss_trigger_ticks")) or 0)
         )
         merged["today_realized_loss_pct"] = max(0.0, float(merged.get("today_realized_loss_pct") or 0.0))
         merged["source_detached_since_ts"] = max(0.0, float(merged.get("source_detached_since_ts") or 0.0))
@@ -2622,11 +2656,71 @@ class AutoRunManager:
         self, token_id: str, position_row: Optional[Dict[str, Any]] = None
     ) -> float:
         cache = self._ws_cache.get(token_id) or {}
-        for key in ("tick_size", "min_tick_size", "tickSize"):
+        for key in ("tick_size", "min_tick_size", "tickSize", "minimum_tick_size", "minimumTickSize"):
             val = _coerce_float(cache.get(key))
             if val is not None and val > 0:
                 return float(val)
+        client_tick = self._fetch_tick_size_from_official_client(token_id)
+        if client_tick is not None and client_tick > 0:
+            self._cache_token_tick_size(token_id, client_tick)
+            return float(client_tick)
+        quote = self._fetch_clob_top_of_book(token_id)
+        quote_tick = _coerce_float((quote or {}).get("tick_size"))
+        if quote_tick is not None and quote_tick > 0:
+            self._cache_token_tick_size(token_id, quote_tick)
+            return float(quote_tick)
         return 0.0001
+
+    def _cache_token_tick_size(self, token_id: str, tick_size: Any) -> None:
+        tick = _coerce_float(tick_size)
+        if not token_id or tick is None or tick <= 0:
+            return
+        with self._ws_cache_lock:
+            cache = self._ws_cache.get(token_id) or {}
+            cache["tick_size"] = float(tick)
+            cache["updated_at"] = float(time.time())
+            self._ws_cache[token_id] = cache
+            self._ws_cache_dirty = True
+
+    @staticmethod
+    def _extract_tick_size_value(payload: Any) -> Optional[float]:
+        if not isinstance(payload, dict):
+            return None
+        for key in (
+            "new_tick_size",
+            "newTickSize",
+            "tick_size",
+            "min_tick_size",
+            "tickSize",
+            "minimum_tick_size",
+            "minimumTickSize",
+        ):
+            val = _coerce_float(payload.get(key))
+            if val is not None and 0 < val < 1:
+                return float(val)
+        return None
+
+    def _fetch_tick_size_from_official_client(self, token_id: str) -> Optional[float]:
+        if not token_id:
+            return None
+        try:
+            from Volatility_arbitrage_main_rest import get_client
+
+            client = get_client()
+        except Exception:
+            return None
+        getter = getattr(client, "get_tick_size", None)
+        if not callable(getter):
+            getter = getattr(client, "getTickSize", None)
+        if not callable(getter):
+            return None
+        try:
+            tick = _coerce_float(getter(token_id))
+        except Exception:
+            return None
+        if tick is None or tick <= 0:
+            return None
+        return float(tick)
 
     def _stoploss_threshold_ticks(
         self,
@@ -2634,14 +2728,21 @@ class AutoRunManager:
         anchor_price: float,
         threshold_pct: float,
         tick: float,
+        cycle_count: int = 0,
     ) -> int:
-        return _ticks_for_price_move(
+        reference_tick = max(1e-8, float(self.config.stoploss_reference_tick_size))
+        reference_ticks = _ticks_for_price_move(
             anchor_price,
             threshold_pct,
-            tick,
-            min_ticks=1,
+            reference_tick,
+            min_ticks=2,
             coarse_min_ticks=2,
         )
+        reference_ticks += max(0, int(self.config.stoploss_drawdown_step_per_cycle_ticks)) * max(
+            0, int(cycle_count)
+        )
+        move = float(reference_ticks) * reference_tick
+        return max(1, int(math.ceil(move / max(float(tick), 1e-8) - 1e-12)))
 
     def _build_stoploss_reentry_band(
         self,
@@ -2653,26 +2754,45 @@ class AutoRunManager:
         probe_break_pct: float,
     ) -> Tuple[float, float, float]:
         tick = max(1e-8, float(self._estimate_token_tick_size(token_id, None)))
-        reentry_line_epsilon = min(float(tick) * 0.1, 1e-6)
-        reentry_line = max(0.0, float(exec_price) - reentry_line_epsilon)
-        zone_lower_ticks = _ticks_for_price_move(
-            exec_price,
-            zone_lower_pct,
-            tick,
-            min_ticks=1,
-            coarse_min_ticks=1,
+        reference_tick = max(1e-8, float(self.config.stoploss_reference_tick_size))
+        reference_line_ticks = max(1, int(line_ticks))
+        reference_lower_ticks = max(
+            reference_line_ticks * 2,
+            _ticks_for_price_move(
+                exec_price,
+                zone_lower_pct,
+                reference_tick,
+                min_ticks=1,
+                coarse_min_ticks=1,
+            ),
         )
-        zone_lower = max(0.0, float(exec_price) - float(zone_lower_ticks) * tick)
+        reference_probe_ticks = max(
+            reference_lower_ticks + 2,
+            _ticks_for_price_move(
+                exec_price,
+                probe_break_pct,
+                reference_tick,
+                min_ticks=1,
+                coarse_min_ticks=1,
+            ),
+        )
+        actual_line_ticks = max(
+            1, int(math.ceil((float(reference_line_ticks) * reference_tick) / tick - 1e-12))
+        )
+        actual_lower_ticks = max(
+            actual_line_ticks + 1,
+            int(math.ceil((float(reference_lower_ticks) * reference_tick) / tick - 1e-12)),
+        )
+        actual_probe_ticks = max(
+            actual_lower_ticks + 1,
+            int(math.ceil((float(reference_probe_ticks) * reference_tick) / tick - 1e-12)),
+        )
+        reentry_line_epsilon = min(float(tick) * 0.1, 1e-6)
+        reentry_line = max(0.0, float(exec_price) - float(actual_line_ticks) * tick - reentry_line_epsilon)
+        zone_lower = max(0.0, float(exec_price) - float(actual_lower_ticks) * tick)
         if zone_lower >= reentry_line:
             zone_lower = max(0.0, reentry_line - float(tick))
-        probe_ticks = _ticks_for_price_move(
-            exec_price,
-            probe_break_pct,
-            tick,
-            min_ticks=1,
-            coarse_min_ticks=2,
-        )
-        probe_line = max(0.0, float(exec_price) - float(probe_ticks) * tick)
+        probe_line = max(0.0, float(exec_price) - float(actual_probe_ticks) * tick)
         if probe_line >= zone_lower:
             probe_line = max(0.0, zone_lower - float(tick))
         return (reentry_line, zone_lower, probe_line)
@@ -2728,8 +2848,12 @@ class AutoRunManager:
                     best = float(px)
         return best
 
+    @staticmethod
+    def _extract_book_tick_size(payload: Any) -> Optional[float]:
+        return AutoRunManager._extract_tick_size_value(payload)
+
     def _fetch_clob_top_of_book(self, token_id: str) -> Dict[str, Any]:
-        out: Dict[str, Any] = {"bid": None, "ask": None, "source": "clob_book", "ok": False}
+        out: Dict[str, Any] = {"bid": None, "ask": None, "tick_size": None, "source": "clob_book", "ok": False}
         if not token_id:
             out["error"] = "empty_token"
             return out
@@ -2747,6 +2871,9 @@ class AutoRunManager:
             if not isinstance(payload, dict):
                 out["error"] = "book_payload_invalid"
                 return out
+            tick_size = self._extract_book_tick_size(payload)
+            if tick_size is not None and tick_size > 0:
+                out["tick_size"] = float(tick_size)
             bid = self._extract_book_side_best_price(
                 payload.get("bids") if payload.get("bids") is not None else payload.get("buys"),
                 is_bid=True,
@@ -3315,9 +3442,12 @@ class AutoRunManager:
 
         state["state"] = "STOPLOSS_EXITED_WAITING_WINDOW"
         state["stoploss_cycle_count"] = cycle_count
-        state["next_stoploss_threshold_pct"] = max(
-            0.001,
-            float(self.config.stoploss_base_drawdown_pct) + float(drawdown_step) * float(cycle_count),
+        state["next_stoploss_threshold_pct"] = max(0.001, float(self.config.stoploss_base_drawdown_pct))
+        state["next_stoploss_trigger_ticks"] = self._stoploss_threshold_ticks(
+            anchor_price=float(exec_price),
+            threshold_pct=float(self.config.stoploss_base_drawdown_pct),
+            tick=float(self._estimate_token_tick_size(token_id, None)),
+            cycle_count=cycle_count,
         )
         state["stoploss_confirm_hits"] = 0
         state["stop_exit_price"] = float(exec_price)
@@ -3558,7 +3688,6 @@ class AutoRunManager:
             if bool(state.get("source_detached", False)):
                 detached_since = float(state.get("source_detached_since_ts") or now)
                 detached_age = max(0.0, now - detached_since)
-                cleanup_started = bool(state.get("source_detached_cleanup_started", False))
                 state["pending_cleanup_since_ts"] = 0.0
                 state["stoploss_confirm_hits"] = 0
                 if detached_age < SOURCE_DETACHED_HOLD_SEC:
@@ -3572,7 +3701,7 @@ class AutoRunManager:
                             f"detached_for={detached_age:.0f}s grace={SOURCE_DETACHED_HOLD_SEC:.0f}s"
                         ),
                     )
-                elif not cleanup_started:
+                else:
                     # Detached one-time cleanup honors global liquidation value threshold:
                     # skip cleanup for tiny positions below configured minimum notional value.
                     threshold = max(
@@ -3613,7 +3742,6 @@ class AutoRunManager:
                                     "est_value": float(est_value),
                                 },
                             )
-                            self._remove_stoploss_reentry_state(token_id)
                             state_dirty = True
                             continue
                     self._mark_token_orphaned(
@@ -3633,19 +3761,6 @@ class AutoRunManager:
                     )
                     state_dirty = True
                     continue
-                else:
-                    started_ts = float(state.get("source_detached_cleanup_started_ts") or 0.0)
-                    since_started = max(0.0, now - started_ts) if started_ts > 0 else 0.0
-                    state["market_status_last"] = "source_detached_cleanup_started_waiting"
-                    state["last_error"] = "source_detached cleanup already started"
-                    self._log_throttled(
-                        f"stoploss_source_detached_cleanup_wait_{token_id}",
-                        180.0,
-                        (
-                            f"[RISK_GUARD] token={token_id[:20]}... source_detached cleanup already started "
-                            f"wait={since_started:.0f}s"
-                        ),
-                    )
                 state_dirty = True
                 continue
 
@@ -3698,7 +3813,9 @@ class AutoRunManager:
                 anchor_price=float(avg_price),
                 threshold_pct=float(threshold),
                 tick=float(tick),
+                cycle_count=int(state.get("stoploss_cycle_count") or 0),
             )
+            state["next_stoploss_trigger_ticks"] = int(threshold_ticks)
             stoploss_trigger_price = max(0.0, float(avg_price) - float(threshold_ticks) * float(tick))
             if float(sellable_price) > stoploss_trigger_price + 1e-12:
                 if int(state.get("stoploss_confirm_hits") or 0) != 0:
@@ -5390,18 +5507,22 @@ class AutoRunManager:
         # tick_size_change 不一定携带盘口，尽量用已有字段刷新时间戳与状态
         elif event_type == "tick_size_change":
             asset_id = ev.get("asset_id") or ev.get("token_id")
+            tick_size = self._extract_tick_size_value(ev)
+            if asset_id and tick_size is not None and tick_size > 0:
+                self._cache_token_tick_size(str(asset_id), tick_size)
             bid = _coerce_float(ev.get("best_bid") or ev.get("bid"))
             ask = _coerce_float(ev.get("best_ask") or ev.get("ask"))
-            if asset_id:
+            if asset_id and (bid is not None or ask is not None):
                 mid = (bid + ask) / 2.0 if bid and ask else (bid or ask)
                 pcs = [{
                     "asset_id": asset_id,
                     "best_bid": bid,
                     "best_ask": ask,
                     "last_trade_price": _coerce_float(ev.get("last_trade_price")) or mid,
+                    "tick_size": tick_size,
                 }]
             else:
-                pcs = []
+                return
         # 处理 last_trade_price 事件（仅更新时间戳，避免假僵尸）
         elif event_type == "last_trade_price":
             self._update_token_timestamp_from_trade(ev)
@@ -5567,6 +5688,9 @@ class AutoRunManager:
                     val = event_status.get(key)
                 if val is not None:
                     payload[key] = val
+            tick_size = self._extract_tick_size_value(pc)
+            if tick_size is not None and tick_size > 0:
+                payload["tick_size"] = float(tick_size)
             with self._ws_cache_lock:
                 self._ws_cache[token_id] = payload
                 self._ws_cache_dirty = True

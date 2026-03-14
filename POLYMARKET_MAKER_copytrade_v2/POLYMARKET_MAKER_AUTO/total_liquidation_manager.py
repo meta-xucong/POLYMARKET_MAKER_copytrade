@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -1133,6 +1134,84 @@ class TotalLiquidationManager:
         except Exception:
             pass
 
+    def _fetch_open_orders(self, client: Any) -> List[Dict[str, Any]]:
+        """Fetch normalized open orders for the current client."""
+        try:
+            get_orders = getattr(client, "get_orders", None)
+            if not callable(get_orders):
+                return []
+            try:
+                payload = get_orders()
+            except TypeError:
+                try:
+                    module = importlib.import_module("py_clob_client.clob_types")
+                except Exception:
+                    return []
+                open_order_params = getattr(module, "OpenOrderParams", None)
+                if open_order_params is None:
+                    return []
+                payload = get_orders(open_order_params())
+            orders = payload if isinstance(payload, list) else []
+            normalized: List[Dict[str, Any]] = []
+            for order in orders:
+                if not isinstance(order, dict):
+                    continue
+                order_id = order.get("id") or order.get("orderID") or order.get("order_id")
+                order_token_id = order.get("asset_id") or order.get("tokenId") or order.get("token_id")
+                if order_id is None or order_token_id is None:
+                    continue
+                normalized.append(
+                    {
+                        "order_id": str(order_id),
+                        "token_id": str(order_token_id),
+                        "side": str(order.get("side") or ""),
+                    }
+                )
+            return normalized
+        except Exception:
+            return []
+
+    def _token_has_open_orders(self, client: Any, token_id: str) -> bool:
+        try:
+            open_orders = self._fetch_open_orders(client)
+        except Exception:
+            return False
+        token_id_str = str(token_id)
+        return any(str(order.get("token_id")) == token_id_str for order in open_orders)
+
+    def _wait_for_open_orders_clear(
+        self,
+        client: Any,
+        token_id: str,
+        *,
+        attempts: int = 6,
+        sleep_sec: float = 0.25,
+    ) -> bool:
+        total_attempts = max(1, int(attempts))
+        for idx in range(total_attempts):
+            if not self._token_has_open_orders(client, token_id):
+                return True
+            if idx + 1 < total_attempts:
+                time.sleep(max(0.0, float(sleep_sec)))
+        return False
+
+    def _probe_position_size_after_error(
+        self,
+        token_id: str,
+        *,
+        attempts: int = 3,
+        sleep_sec: float = 0.5,
+    ) -> float:
+        total_attempts = max(1, int(attempts))
+        latest_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+        for idx in range(total_attempts):
+            latest_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+            if latest_size <= 1e-6:
+                return 0.0
+            if idx + 1 < total_attempts:
+                time.sleep(max(0.0, float(sleep_sec)))
+        return latest_size
+
     def liquidate_single_token_taker(
         self,
         autorun: Any,
@@ -1215,6 +1294,21 @@ class TotalLiquidationManager:
             self._cancel_open_orders_for_token(client, token_id)
         except Exception:
             pass
+        if not self._wait_for_open_orders_clear(client, token_id):
+            return {
+                "ok": False,
+                "token_id": token_id,
+                "requested_size": requested_size,
+                "filled_size": 0.0,
+                "before_size": before_size,
+                "after_size": before_size,
+                "remaining_target": requested_size,
+                "attempts": 0,
+                "reason": normalized_reason,
+                "error": f"open orders still live after cancel for token={token_id}",
+                "executed_avg_price": None,
+                "executed_price_source": "unknown",
+            }
 
         attempts = 0
         sold_total = 0.0
@@ -1241,6 +1335,11 @@ class TotalLiquidationManager:
                     break
             except Exception as exc:
                 last_error = str(exc)
+                after_error_size = self._probe_position_size_after_error(token_id)
+                sold_total = max(0.0, before_size - after_error_size)
+                remain_to_sell = max(0.0, requested_size - sold_total)
+                if remain_to_sell <= 1e-6:
+                    last_error = None
                 break
 
         after_size = max(0.0, float(self._fetch_single_position_size(token_id)))

@@ -1698,7 +1698,7 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
                     "reentry_extra_delay_after_5_cuts_hours": 24,
                     "reentry_line_ticks": 2,
                     "reentry_zone_lower_pct": 0.02,
-                    "probe_break_pct": 0.05,
+                    "probe_break_pct": 0.08,
                     "daily_reentry_loss_circuit_breaker_pct": 0.10,
                     "drawdown_step_per_cycle_pct": 0.01,
                     "max_tokens_per_cycle": 2,
@@ -1715,7 +1715,7 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
     assert cfg.stoploss_reentry_extra_delay_after_5_cuts_hours == 24
     assert cfg.stoploss_reentry_line_ticks == 2
     assert cfg.stoploss_reentry_zone_lower_pct == 0.02
-    assert cfg.stoploss_probe_break_pct == 0.05
+    assert cfg.stoploss_probe_break_pct == 0.08
     assert cfg.stoploss_daily_reentry_loss_circuit_breaker_pct == 0.10
     assert cfg.stoploss_drawdown_step_per_cycle_pct == 0.01
     assert cfg.stoploss_max_tokens_per_cycle == 2
@@ -1749,7 +1749,7 @@ def _build_stoploss_manager(tmp_path, *, mode="classic", stoploss_overrides=None
         "reentry_timeout_hours": 168.0,
         "reentry_line_ticks": 2,
         "reentry_zone_lower_pct": 0.02,
-        "probe_break_pct": 0.05,
+        "probe_break_pct": 0.08,
         "clear_confirm_timeout_sec": 180.0,
         "clear_confirm_retry_interval_sec": 1800.0,
         "clear_confirm_max_retries": 3,
@@ -1826,6 +1826,8 @@ def test_stoploss_threshold_ticks_expand_for_coarse_tokens(tmp_path):
     manager = _build_stoploss_manager(tmp_path)
     assert manager._stoploss_threshold_ticks(anchor_price=0.20, threshold_pct=0.05, tick=0.01) == 2
     assert manager._stoploss_threshold_ticks(anchor_price=0.80, threshold_pct=0.05, tick=0.01) == 4
+    assert manager._stoploss_threshold_ticks(anchor_price=0.20, threshold_pct=0.05, tick=0.001) == 20
+    assert manager._stoploss_threshold_ticks(anchor_price=0.80, threshold_pct=0.05, tick=0.001) == 40
 
 
 def test_reentry_band_is_tick_aware_for_coarse_tokens(tmp_path):
@@ -1836,11 +1838,85 @@ def test_reentry_band_is_tick_aware_for_coarse_tokens(tmp_path):
         exec_price=0.19,
         line_ticks=2,
         zone_lower_pct=0.02,
-        probe_break_pct=0.05,
+        probe_break_pct=0.08,
     )
-    assert 0.189998 <= line < 0.19
-    assert abs(zone_lower - 0.18) < 1e-9
-    assert abs(probe - 0.17) < 1e-9
+    assert 0.169998 <= line < 0.17
+    assert abs(zone_lower - 0.15) < 1e-9
+    assert abs(probe - 0.13) < 1e-9
+
+
+def test_reentry_band_scales_same_effective_thresholds_for_fine_ticks(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    manager._ws_cache["t1"] = {"tick_size": 0.001}
+    line, zone_lower, probe = manager._build_stoploss_reentry_band(
+        token_id="t1",
+        exec_price=0.19,
+        line_ticks=2,
+        zone_lower_pct=0.02,
+        probe_break_pct=0.08,
+    )
+    assert 0.169999 <= line < 0.17
+    assert abs(zone_lower - 0.15) < 1e-9
+    assert abs(probe - 0.13) < 1e-9
+
+
+def test_estimate_token_tick_size_falls_back_to_clob_book_tick_size(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    manager._ws_cache["t1"] = {}
+    manager._fetch_tick_size_from_official_client = lambda token_id: None  # type: ignore[assignment]
+    manager._fetch_clob_top_of_book = lambda token_id: {  # type: ignore[assignment]
+        "ok": True,
+        "bid": 0.18,
+        "ask": 0.19,
+        "tick_size": 0.001,
+        "source": "clob_book",
+    }
+    tick = manager._estimate_token_tick_size("t1")
+    assert abs(tick - 0.001) < 1e-12
+    assert abs(float(manager._ws_cache["t1"]["tick_size"]) - 0.001) < 1e-12
+
+
+def test_estimate_token_tick_size_prefers_official_client_before_clob_book(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    manager._ws_cache["t1"] = {}
+    manager._fetch_tick_size_from_official_client = lambda token_id: 0.01  # type: ignore[assignment]
+    manager._fetch_clob_top_of_book = lambda token_id: {  # type: ignore[assignment]
+        "ok": True,
+        "bid": 0.18,
+        "ask": 0.19,
+        "tick_size": 0.001,
+        "source": "clob_book",
+    }
+    tick = manager._estimate_token_tick_size("t1")
+    assert abs(tick - 0.01) < 1e-12
+    assert abs(float(manager._ws_cache["t1"]["tick_size"]) - 0.01) < 1e-12
+
+
+def test_tick_size_change_event_updates_cache_without_wiping_quotes(tmp_path):
+    manager = _build_manager(GlobalConfig.from_dict({}))
+    manager._ws_token_ids = ["t1"]
+    with manager._ws_cache_lock:
+        manager._ws_cache["t1"] = {
+            "price": 0.52,
+            "best_bid": 0.51,
+            "best_ask": 0.53,
+            "tick_size": 0.01,
+            "updated_at": time.time(),
+            "seq": 3,
+        }
+
+    manager._on_ws_event(
+        {
+            "event_type": "tick_size_change",
+            "asset_id": "t1",
+            "new_tick_size": "0.001",
+        }
+    )
+
+    with manager._ws_cache_lock:
+        assert abs(float(manager._ws_cache["t1"]["tick_size"]) - 0.001) < 1e-12
+        assert abs(float(manager._ws_cache["t1"]["best_bid"]) - 0.51) < 1e-12
+        assert abs(float(manager._ws_cache["t1"]["best_ask"]) - 0.53) < 1e-12
 
 
 def test_reentry_requires_probe_then_rebound_zone(tmp_path):
@@ -2748,6 +2824,40 @@ def test_source_detached_timeout_triggers_cleanup_above_value_threshold(tmp_path
     assert isinstance(rows, list) and len(rows) >= 1
     latest = rows[-1]
     assert latest.get("token_id") == "t1"
+
+
+def test_source_detached_cleanup_started_still_moves_directly_to_orphan(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._load_copytrade_tokens = lambda: []  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._ws_cache["t1"] = {"best_bid": 0.8, "updated_at": now}
+    manager._total_liquidation.cfg.position_value_threshold = 3.0  # type: ignore[attr-defined]
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "NORMAL_MAKER",
+            "source_detached": True,
+            "source_detached_since_ts": now - 1800.0,
+            "source_detached_cleanup_started": True,
+            "source_detached_cleanup_started_ts": now - 900.0,
+        },
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 5.0, "avgPrice": 1.0, "curPrice": 0.8}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    assert "t1" not in manager._stoploss_reentry_states
+    orphan_path = manager.config.data_dir / "orphan_tokens.json"
+    rows = json.loads(orphan_path.read_text(encoding="utf-8"))
+    latest = rows[-1]
+    assert latest.get("token_id") == "t1"
+    assert latest.get("reason") == "SOURCE_DETACHED_TIMEOUT"
 
 
 def test_mark_token_orphaned_clears_stoploss_owner_immediately(tmp_path):
