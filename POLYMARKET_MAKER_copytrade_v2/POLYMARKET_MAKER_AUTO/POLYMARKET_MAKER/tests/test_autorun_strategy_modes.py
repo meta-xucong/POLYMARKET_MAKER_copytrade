@@ -827,6 +827,106 @@ def test_restore_runtime_status_sets_restored_role_for_task_snapshot(tmp_path):
     assert detail.get("queue_role") == "restored_token"
 
 
+def test_restore_runtime_status_skips_stoploss_owned_task_snapshot(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    status_path = data_dir / "autorun_status.json"
+    token_id = "stoploss_token"
+    status_path.write_text(
+        json.dumps(
+            {
+                "pending_topics": [],
+                "pending_exit_topics": [],
+                "tasks": {
+                    token_id: {
+                        "config_path": "",
+                        "log_path": "",
+                    }
+                },
+                "topic_details": {
+                    token_id: {
+                        "queue_role": "restored_token",
+                        "schedule_lane": "base",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "runtime_status_path": str(status_path),
+            "handled_topics_path": str(data_dir / "handled_topics.json"),
+            "copytrade_tokens_path": str(data_dir / "tokens_from_copytrade.json"),
+            "copytrade_sell_signals_path": str(data_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(data_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (None, "stub")  # type: ignore[assignment]
+    manager._stoploss_reentry_states[token_id] = {
+        "state": "STOPLOSS_EXITED_WAITING_WINDOW"
+    }
+
+    manager._restore_runtime_status()
+
+    assert token_id not in manager.tasks
+    assert token_id not in manager.pending_topics
+    detail = manager.topic_details.get(token_id) or {}
+    assert detail.get("queue_role") == "restored_token"
+
+
+def test_restore_runtime_status_skips_pending_exit_owned_task_snapshot(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    status_path = data_dir / "autorun_status.json"
+    token_id = "exit_token"
+    status_path.write_text(
+        json.dumps(
+            {
+                "pending_topics": [],
+                "pending_exit_topics": [token_id],
+                "tasks": {
+                    token_id: {
+                        "config_path": "",
+                        "log_path": "",
+                    }
+                },
+                "topic_details": {
+                    token_id: {
+                        "queue_role": "title_blacklist_sell_only",
+                        "schedule_lane": "base",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "runtime_status_path": str(status_path),
+            "handled_topics_path": str(data_dir / "handled_topics.json"),
+            "copytrade_tokens_path": str(data_dir / "tokens_from_copytrade.json"),
+            "copytrade_sell_signals_path": str(data_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(data_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (None, "stub")  # type: ignore[assignment]
+
+    manager._restore_runtime_status()
+
+    assert token_id not in manager.tasks
+    assert token_id not in manager.pending_topics
+    assert token_id in manager.pending_exit_topics
+    detail = manager.topic_details.get(token_id) or {}
+    assert detail.get("queue_role") == "title_blacklist_sell_only"
+
+
 def test_start_process_blocks_when_metadata_unverified_without_position():
     cfg = GlobalConfig.from_dict(
         {

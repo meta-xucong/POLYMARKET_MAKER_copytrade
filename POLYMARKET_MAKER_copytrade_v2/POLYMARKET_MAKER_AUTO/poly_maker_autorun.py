@@ -9548,6 +9548,35 @@ class AutoRunManager:
             orphan_states,
         )
 
+    def _has_runtime_owner_blocking_plain_restore(
+        self,
+        token_id: str,
+        *,
+        orphan_states: Optional[Dict[str, Dict[str, Any]]] = None,
+        pending_exit_topics: Optional[set[str]] = None,
+    ) -> bool:
+        if self._has_runtime_owner_blocking_startup_reconcile(
+            token_id,
+            orphan_states=orphan_states,
+        ):
+            return True
+        pending_exit_scope = (
+            pending_exit_topics if pending_exit_topics is not None else set(self.pending_exit_topics)
+        )
+        if token_id in pending_exit_scope:
+            return True
+        detail = self.topic_details.get(token_id) or {}
+        queue_role = str(detail.get("queue_role") or "").strip().lower()
+        if bool(detail.get("startup_orphan_profit_sweep")):
+            return True
+        return queue_role in {
+            "startup_orphan_profit_sweep",
+            "orphan_recovery",
+            "stoploss_nofill_sell_only",
+            "title_blacklist_sell_only",
+            "reentry_token",
+        }
+
     def _rearm_active_unmanaged_topics(
         self,
         *,
@@ -11176,6 +11205,8 @@ class AutoRunManager:
             payload = _load_json_file(self.status_path)
             pending_topics = payload.get("pending_topics") or []
             tasks_snapshot = payload.get("tasks") or {}
+            topic_details_snapshot = payload.get("topic_details") or {}
+            pending_exit_topics = payload.get("pending_exit_topics") or []
         except Exception as exc:  # pragma: no cover - 容错
             print(f"[WARN] 无法读取运行状态文件，已忽略: {exc}")
             return
@@ -11198,12 +11229,38 @@ class AutoRunManager:
 
         restored_topics: List[str] = []
         skipped_dead: List[str] = []
+        skipped_owner: List[str] = []
+        orphan_states = self._load_latest_orphan_states()
+        pending_exit_snapshot = {
+            str(topic_id) for topic_id in pending_exit_topics if str(topic_id).strip()
+        }
+
+        if isinstance(topic_details_snapshot, dict):
+            with self._topic_details_lock:
+                for topic_id, saved in topic_details_snapshot.items():
+                    tid = str(topic_id).strip()
+                    if not tid or not isinstance(saved, dict):
+                        continue
+                    detail = self.topic_details.setdefault(tid, {})
+                    if saved.get("schedule_lane"):
+                        detail["schedule_lane"] = saved.get("schedule_lane")
+                    if saved.get("queue_role"):
+                        detail["queue_role"] = saved.get("queue_role")
+                    if saved.get("startup_orphan_profit_sweep"):
+                        detail["startup_orphan_profit_sweep"] = True
 
         for topic_id in pending_topics:
             topic_id = str(topic_id)
             # 跳过确定已死亡的 token（市场已关闭）
             if topic_id in dead_tokens:
                 skipped_dead.append(topic_id)
+                continue
+            if self._has_runtime_owner_blocking_plain_restore(
+                topic_id,
+                orphan_states=orphan_states,
+                pending_exit_topics=pending_exit_snapshot,
+            ):
+                skipped_owner.append(topic_id)
                 continue
             # 只检查是否已在 pending 队列中，不检查 handled_topics
             # 因为保存的 pending_topics 代表"还未完成的任务"，即使在 handled 中也应恢复
@@ -11227,6 +11284,14 @@ class AutoRunManager:
             if topic_id in dead_tokens:
                 if topic_id not in skipped_dead:
                     skipped_dead.append(topic_id)
+                continue
+            if self._has_runtime_owner_blocking_plain_restore(
+                topic_id,
+                orphan_states=orphan_states,
+                pending_exit_topics=pending_exit_snapshot,
+            ):
+                if topic_id not in skipped_owner:
+                    skipped_owner.append(topic_id)
                 continue
             # 不检查 handled_topics，因为保存的 tasks 代表"上次运行中的任务"
             # 即使在 handled 中也应恢复，以确保任务不丢失
@@ -11264,8 +11329,6 @@ class AutoRunManager:
         if restored_topics:
             preview = ", ".join(restored_topics[:5])
             print(f"[RESTORE] 已从运行状态恢复 {len(restored_topics)} 个话题：{preview}")
-
-        pending_exit_topics = payload.get("pending_exit_topics") or []
         for topic_id in pending_exit_topics:
             topic_id = str(topic_id)
             if topic_id in self.pending_exit_topics:
@@ -11279,6 +11342,14 @@ class AutoRunManager:
             if not topic_id:
                 continue
             if topic_id in dead_tokens:
+                continue
+            if self._has_runtime_owner_blocking_plain_restore(
+                topic_id,
+                orphan_states=orphan_states,
+                pending_exit_topics=pending_exit_snapshot,
+            ):
+                if topic_id not in skipped_owner:
+                    skipped_owner.append(topic_id)
                 continue
             self._hydrate_topic_metadata_for_blacklist(topic_id)
             title_policy = self._enforce_title_blacklist_policy(
@@ -11300,6 +11371,9 @@ class AutoRunManager:
             print(
                 f"[RESTORE] 已将 {restored_burst_to_base} 个历史 burst token 降级为普通 pending"
             )
+        if skipped_owner:
+            preview = ", ".join(t[:8] + "..." for t in skipped_owner[:5])
+            print(f"[RESTORE] 跳过 {len(skipped_owner)} 个已有专属 owner 的 token: {preview}")
 
         handled_sell_signals = payload.get("handled_sell_signals") or []
         self._handled_sell_signals = {
