@@ -3096,6 +3096,9 @@ class AutoRunManager:
             return
         now = time.time()
         current = self._token_cycle_states.get(token_id) or {}
+        current_status = str(current.get("local_cycle_status") or "").strip().lower()
+        if current_status == "cycle_closed":
+            return
         current_round = max(0, int(current.get("cycle_round", 0) or 0))
         next_round = current_round + 1
         cooldown_minutes = float(2 ** max(next_round - 1, 0))

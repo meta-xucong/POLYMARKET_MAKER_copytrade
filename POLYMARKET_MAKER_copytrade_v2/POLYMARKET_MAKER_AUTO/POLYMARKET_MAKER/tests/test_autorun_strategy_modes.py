@@ -24,6 +24,7 @@ if "requests" not in sys.modules:
 
 import poly_maker_autorun as autorun_mod
 from poly_maker_autorun import AutoRunManager, GlobalConfig, TopicTask, compute_new_topics
+from Volatility_arbitrage_run import _advance_shared_cycle_state_after_sell
 
 
 def _build_manager(cfg: GlobalConfig) -> AutoRunManager:
@@ -1814,8 +1815,52 @@ def test_advance_cycle_state_updates_round_cooldown_and_drop(tmp_path):
     manager._advance_token_cycle_state_on_cleanup("t1", run_cfg)
     state2 = manager._token_cycle_states["t1"]
 
-    assert state2["cycle_round"] == 2
-    assert abs(float(state2.get("next_drop_pct")) - 0.054) < 1e-9
+    assert state2["cycle_round"] == 1
+    assert abs(float(state2.get("next_drop_pct")) - 0.052) < 1e-9
+
+
+def test_advance_shared_cycle_state_after_sell_updates_round_cooldown_and_thresholds(tmp_path):
+    state_path = tmp_path / "token_cycle_gate.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "token_states": {
+                    "t1": {
+                        "cycle_round": 1,
+                        "next_buy_allowed_ts": 0.0,
+                        "next_drop_pct": 0.052,
+                        "next_profit_pct": 0.011,
+                        "local_cycle_status": "started_not_bought",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = _advance_shared_cycle_state_after_sell(
+        "t1",
+        state_path,
+        current_drop_pct=0.052,
+        current_profit_pct=0.011,
+        enable_incremental_drop_pct=True,
+        incremental_drop_pct_step=0.002,
+        incremental_drop_pct_cap=0.20,
+        enable_incremental_profit_pct=True,
+        incremental_profit_pct_step=0.001,
+        incremental_profit_pct_cap=0.05,
+        now_ts=100.0,
+    )
+
+    assert record["cycle_round"] == 2
+    assert abs(float(record["next_buy_allowed_ts"]) - 220.0) < 1e-9
+    assert abs(float(record["next_drop_pct"]) - 0.054) < 1e-9
+    assert abs(float(record["next_profit_pct"]) - 0.012) < 1e-9
+    assert record["local_cycle_status"] == "cycle_closed"
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["token_states"]["t1"]["cycle_round"] == 2
 
 
 def test_apply_sell_signals_ignores_signal_without_local_cycle(tmp_path):

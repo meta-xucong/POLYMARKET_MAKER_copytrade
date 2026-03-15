@@ -176,6 +176,107 @@ def _record_exit_token(token_id: str, exit_reason: str, exit_data: Optional[Dict
 def _normalize_exit_cleanup_reason(value: Any) -> str:
     return str(value or "").strip().upper()
 
+
+def _normalize_cycle_gate_ratio(value: Any) -> Optional[float]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric > 1:
+        numeric = numeric / 100.0
+    if numeric < 0:
+        return None
+    return numeric
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(path)
+
+
+def _advance_shared_cycle_state_after_sell(
+    token_id: str,
+    state_path: Path,
+    *,
+    current_drop_pct: Optional[float],
+    current_profit_pct: Optional[float],
+    enable_incremental_drop_pct: bool,
+    incremental_drop_pct_step: float,
+    incremental_drop_pct_cap: Optional[float],
+    enable_incremental_profit_pct: bool,
+    incremental_profit_pct_step: float,
+    incremental_profit_pct_cap: Optional[float],
+    now_ts: Optional[float] = None,
+) -> Dict[str, Any]:
+    now = float(now_ts if now_ts is not None else time.time())
+    payload: Dict[str, Any] = {}
+    token_states: Dict[str, Any] = {}
+    if state_path.exists():
+        try:
+            loaded = json.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+                raw_states = loaded.get("token_states")
+                if isinstance(raw_states, dict):
+                    token_states = dict(raw_states)
+        except Exception:
+            payload = {}
+            token_states = {}
+
+    current = token_states.get(token_id)
+    if not isinstance(current, dict):
+        current = {}
+
+    current_round = max(0, int(current.get("cycle_round", 0) or 0))
+    next_round = current_round + 1
+    cooldown_minutes = float(2 ** max(next_round - 1, 0))
+    next_buy_allowed_ts = now + cooldown_minutes * 60.0
+
+    next_drop_pct = _normalize_cycle_gate_ratio(current_drop_pct)
+    if enable_incremental_drop_pct and next_drop_pct is not None and incremental_drop_pct_step > 0:
+        next_drop_pct = next_drop_pct + max(0.0, float(incremental_drop_pct_step))
+        cap = _normalize_cycle_gate_ratio(incremental_drop_pct_cap)
+        if cap is not None:
+            next_drop_pct = min(next_drop_pct, max(cap, _normalize_cycle_gate_ratio(current_drop_pct) or 0.0))
+
+    next_profit_pct = _normalize_cycle_gate_ratio(current_profit_pct)
+    if (
+        enable_incremental_profit_pct
+        and next_profit_pct is not None
+        and incremental_profit_pct_step > 0
+    ):
+        next_profit_pct = next_profit_pct + max(0.0, float(incremental_profit_pct_step))
+        cap = _normalize_cycle_gate_ratio(incremental_profit_pct_cap)
+        if cap is not None:
+            next_profit_pct = min(
+                next_profit_pct,
+                max(cap, _normalize_cycle_gate_ratio(current_profit_pct) or 0.0),
+            )
+
+    record: Dict[str, Any] = {
+        "cycle_round": next_round,
+        "next_buy_allowed_ts": next_buy_allowed_ts,
+        "last_cycle_completed_ts": now,
+        "local_cycle_status": "cycle_closed",
+        "local_cycle_started_ts": 0.0,
+        "local_cycle_invalidated_ts": 0.0,
+        "local_cycle_invalidate_reason": "",
+        "local_cycle_started_mode": "",
+    }
+    if next_drop_pct is not None:
+        record["next_drop_pct"] = next_drop_pct
+    if next_profit_pct is not None:
+        record["next_profit_pct"] = next_profit_pct
+
+    token_states[str(token_id)] = record
+    payload["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    payload["token_states"] = token_states
+    _atomic_write_json(state_path, payload)
+    return record
+
 # ========== 1) Client：优先 ws 版，回退 rest 版 ==========
 def _get_client():
     try:
@@ -2729,6 +2830,14 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     else:
         print("[INIT] 未启用递增盈利阈值，保持固定阈值运行。")
 
+    token_cycle_state_path = Path(
+        str(
+            run_cfg.get("token_cycle_state_path")
+            or (Path(__file__).parent.parent / "data" / "token_cycle_gate.json")
+        )
+    )
+    last_runtime_cycle_gate_log_ts = 0.0
+
     resume_drop_pct_raw = _coerce_float(run_cfg.get("resume_drop_pct"))
     if resume_drop_pct_raw is not None:
         if resume_drop_pct_raw > 1:
@@ -2906,6 +3015,17 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         except Exception:
             return None
 
+    def _load_runtime_cycle_state() -> Dict[str, Any]:
+        try:
+            payload = json.loads(token_cycle_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        token_states = payload.get("token_states") if isinstance(payload, dict) else {}
+        if not isinstance(token_states, dict):
+            return {}
+        state = token_states.get(token_id)
+        return dict(state) if isinstance(state, dict) else {}
+
     latest: Dict[str, Dict[str, Any]] = {}
     action_queue: Queue[Action] = Queue()
     stop_event = threading.Event()
@@ -2936,6 +3056,48 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         30.0,
     )
     awaiting_sell_since: Optional[float] = None
+    buy_cooldown_until = 0.0
+
+    def _apply_runtime_cycle_state(*, log_source: str) -> Dict[str, Any]:
+        nonlocal drop_pct, profit_pct, buy_cooldown_until, last_runtime_cycle_gate_log_ts
+        state = _load_runtime_cycle_state()
+        if not state:
+            return {}
+        next_drop_pct = _normalize_cycle_gate_ratio(state.get("next_drop_pct"))
+        next_profit_pct = _normalize_cycle_gate_ratio(state.get("next_profit_pct"))
+        changed = False
+        if next_drop_pct is not None and abs(next_drop_pct - drop_pct) > 1e-12:
+            drop_pct = next_drop_pct
+            changed = True
+        if next_profit_pct is not None:
+            adjusted_profit = _enforce_profit_floor(next_profit_pct, prefix=f"[{log_source}]")
+            if abs(adjusted_profit - profit_pct) > 1e-12:
+                profit_pct = adjusted_profit
+                changed = True
+        if changed:
+            strategy.update_params(drop_pct=drop_pct, profit_pct=profit_pct)
+            print(
+                f"[CYCLE_GATE][{log_source}] apply runtime thresholds: "
+                f"drop_pct={drop_pct:.6f} profit_pct={profit_pct:.6f}"
+            )
+        next_buy_allowed_ts = max(
+            0.0, float(state.get("next_buy_allowed_ts", 0.0) or 0.0)
+        )
+        if next_buy_allowed_ts > buy_cooldown_until:
+            buy_cooldown_until = next_buy_allowed_ts
+        now_ts = time.time()
+        if next_buy_allowed_ts > now_ts and now_ts - last_runtime_cycle_gate_log_ts >= 20.0:
+            remaining = int(max(0.0, next_buy_allowed_ts - now_ts))
+            target_text = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(next_buy_allowed_ts)
+            )
+            print(
+                f"[CYCLE_GATE][{log_source}] buy gate active, remaining={remaining}s until {target_text}"
+            )
+            last_runtime_cycle_gate_log_ts = now_ts
+        return state
+
+    _apply_runtime_cycle_state(log_source="INIT")
 
     def _ioc_exit_allowed(reason_code: str) -> bool:
         normalized = _normalize_exit_cleanup_reason(reason_code)
@@ -5337,6 +5499,29 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         )
         sold_out = remaining_for_strategy is None or sell_remaining <= eps
         if sold_out:
+            try:
+                cycle_record = _advance_shared_cycle_state_after_sell(
+                    token_id,
+                    token_cycle_state_path,
+                    current_drop_pct=drop_pct,
+                    current_profit_pct=profit_pct,
+                    enable_incremental_drop_pct=enable_incremental_drop_pct,
+                    incremental_drop_pct_step=incremental_drop_pct_step,
+                    incremental_drop_pct_cap=run_cfg.get("incremental_drop_pct_cap"),
+                    enable_incremental_profit_pct=enable_incremental_profit_pct,
+                    incremental_profit_pct_step=incremental_profit_pct_step,
+                    incremental_profit_pct_cap=run_cfg.get("incremental_profit_pct_cap"),
+                )
+                next_buy_ts = float(cycle_record.get("next_buy_allowed_ts", 0.0) or 0.0)
+                if next_buy_ts > buy_cooldown_until:
+                    buy_cooldown_until = next_buy_ts
+                print(
+                    f"[CYCLE_GATE][SELL] round={int(cycle_record.get('cycle_round', 0) or 0)} "
+                    f"next_buy_allowed_ts={next_buy_ts:.3f}"
+                )
+                _apply_runtime_cycle_state(log_source="POST_SELL")
+            except Exception as cycle_exc:
+                print(f"[CYCLE_GATE][WARN] sell fill advance failed: {cycle_exc}")
             block_until = time.time() + 180.0
             position_sync_block_until = max(position_sync_block_until, block_until)
             next_position_sync_ts = max(next_position_sync, position_sync_block_until)
@@ -6204,6 +6389,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         )
                         strategy.on_reject("state not flat or position exists")
                         continue
+                _apply_runtime_cycle_state(log_source="PRE_BUY")
                 now_for_buy = time.time()
                 if now_for_buy < buy_cooldown_until:
                     remaining = buy_cooldown_until - now_for_buy
