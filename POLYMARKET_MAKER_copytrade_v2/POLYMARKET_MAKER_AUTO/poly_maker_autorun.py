@@ -3393,6 +3393,7 @@ class AutoRunManager:
             return
         detail = self.topic_details.setdefault(token_id, {})
         detail["force_sell_only_on_startup"] = True
+        detail["force_sell_only_reason"] = "stoploss_nofill_escalated"
         detail["queue_role"] = "stoploss_nofill_sell_only"
         detail["schedule_lane"] = "base"
         detail["resume_state"] = {
@@ -7297,6 +7298,8 @@ class AutoRunManager:
             merged["refill_retry_count"] = refill_retry_count
         if topic_info.get("force_sell_only_on_startup"):
             merged["force_sell_only_on_startup"] = True
+        if topic_info.get("force_sell_only_reason"):
+            merged["force_sell_only_reason"] = str(topic_info.get("force_sell_only_reason"))
         if topic_info.get("startup_skip_if_open_sell"):
             merged["startup_skip_if_open_sell"] = True
         if topic_info.get("sell_exit_reason"):
@@ -7634,6 +7637,7 @@ class AutoRunManager:
             )
             return "blocked_no_position"
         detail["force_sell_only_on_startup"] = True
+        detail["force_sell_only_reason"] = "metadata unverified"
         detail["queue_role"] = "title_blacklist_sell_only"
         detail["schedule_lane"] = "base"
         print(
@@ -8307,6 +8311,7 @@ class AutoRunManager:
             detail["queue_role"] = "startup_orphan_profit_sweep"
             detail["schedule_lane"] = "base"
             detail["force_sell_only_on_startup"] = True
+            detail["force_sell_only_reason"] = "startup orphan profit sweep"
             detail["startup_skip_if_open_sell"] = bool(
                 self.config.startup_orphan_profit_sweep_skip_if_open_sell
             )
@@ -10079,6 +10084,7 @@ class AutoRunManager:
         # 默认：sell_only_maker。若当前是普通 maker，先重启为仅卖出。
         self._remove_pending_exit_topic(token_id)
         detail["force_sell_only_on_startup"] = True
+        detail["force_sell_only_reason"] = "title blacklist policy"
         detail["queue_role"] = "title_blacklist_sell_only"
         detail["schedule_lane"] = "base"
         if task and task.is_running() and source != "before_start":

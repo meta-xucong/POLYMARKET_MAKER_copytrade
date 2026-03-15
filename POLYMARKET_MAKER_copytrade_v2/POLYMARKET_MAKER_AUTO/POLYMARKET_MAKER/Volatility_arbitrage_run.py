@@ -3041,6 +3041,9 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     }
     exit_only = bool(run_cfg.get("exit_only", False))
     force_sell_only_on_startup = bool(run_cfg.get("force_sell_only_on_startup", False))
+    force_sell_only_reason = str(
+        run_cfg.get("force_sell_only_reason") or "startup sell-only"
+    ).strip()
     exit_cleanup_reason = _normalize_exit_cleanup_reason(run_cfg.get("exit_cleanup_reason"))
     exit_cleanup_source = str(run_cfg.get("exit_cleanup_source") or "").strip()
     allowed_ioc_exit_reasons = set(DEFAULT_ALLOWED_IOC_EXIT_REASONS)
@@ -3162,7 +3165,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     if keep_sell_orders_on_timeout:
         print("[INIT] 已启用激进模式：时间阈值退出时保留卖单")
     if force_sell_only_on_startup:
-        print("[INIT] 已启用黑名单仅卖出模式：启动后直接进入 SELL-ONLY")
+        print(
+            "[INIT] 已启用启动仅卖出模式："
+            f"reason={force_sell_only_reason}，启动后直接进入 SELL-ONLY"
+        )
 
     def _exit_cleanup_only(reason: str) -> None:
         """
@@ -4823,7 +4829,6 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         except (TypeError, ValueError):
             pass
     last_log: Optional[float] = None
-    buy_cooldown_until: float = 0.0
     pending_buy: Optional[Action] = None
     pending_buy_ts: Optional[float] = None
     shock_reject_since_ts: Optional[float] = None
@@ -5689,7 +5694,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     print(f"[INIT][TRACE] 5. 检查sell_only和countdown (sell_only_start_ts={sell_only_start_ts}, market_deadline_ts={market_deadline_ts})")
 
     if force_sell_only_on_startup:
-        _activate_sell_only("title blacklist policy")
+        _activate_sell_only(force_sell_only_reason)
 
     if sell_only_start_ts and time.time() >= sell_only_start_ts:
         print("[INIT][TRACE] 6. 调用_activate_sell_only()...")

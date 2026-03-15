@@ -1108,7 +1108,7 @@ class TotalLiquidationManager:
                 if not order_id:
                     continue
                 try:
-                    self._cancel_order(client, str(order_id))
+                    self._cancel_order_compat(client, str(order_id))
                     canceled += 1
                 except Exception:
                     pass
@@ -1171,6 +1171,80 @@ class TotalLiquidationManager:
         except Exception:
             return []
 
+    @staticmethod
+    def _extract_canceled_order_ids(payload: Any) -> Tuple[List[str], List[str]]:
+        canceled_ids: List[str] = []
+        not_canceled: List[str] = []
+        if isinstance(payload, dict):
+            canceled_payload = payload.get("canceled")
+            not_canceled_payload = payload.get("not_canceled")
+        else:
+            canceled_payload = None
+            not_canceled_payload = None
+
+        def _collect(items: Any, target: List[str]) -> None:
+            if not isinstance(items, list):
+                return
+            for item in items:
+                if isinstance(item, dict):
+                    value = (
+                        item.get("orderID")
+                        or item.get("order_id")
+                        or item.get("id")
+                        or item.get("reason")
+                        or item.get("error")
+                    )
+                    if value is not None:
+                        target.append(str(value))
+                elif item is not None:
+                    target.append(str(item))
+
+        _collect(canceled_payload, canceled_ids)
+        _collect(not_canceled_payload, not_canceled)
+        return canceled_ids, not_canceled
+
+    def _cancel_orders_batch(self, client: Any, order_ids: List[str]) -> Dict[str, Any]:
+        ids = [str(order_id).strip() for order_id in order_ids if str(order_id).strip()]
+        if not ids:
+            return {"used_batch": False, "canceled_ids": [], "not_canceled": []}
+        for method_name in ("cancel_orders", "cancelOrders"):
+            method = getattr(client, method_name, None)
+            if not callable(method):
+                continue
+            payload = method(ids)
+            canceled_ids, not_canceled = self._extract_canceled_order_ids(payload)
+            if not canceled_ids and not not_canceled:
+                canceled_ids = list(ids)
+            return {
+                "used_batch": True,
+                "canceled_ids": canceled_ids,
+                "not_canceled": not_canceled,
+                "raw": payload,
+            }
+        return {"used_batch": False, "canceled_ids": [], "not_canceled": []}
+
+    def _cancel_order_compat(self, client: Any, order_id: str) -> None:
+        last_exc: Optional[Exception] = None
+        for method_name in ("cancel", "cancel_order"):
+            method = getattr(client, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                method(order_id)
+                return
+            except Exception as exc:
+                last_exc = exc
+        cancel_orders = getattr(client, "cancel_orders", None)
+        if callable(cancel_orders):
+            try:
+                cancel_orders([order_id])
+                return
+            except Exception as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise last_exc
+        raise AttributeError("client has no supported cancel method")
+
     def _token_has_open_orders(self, client: Any, token_id: str) -> bool:
         try:
             open_orders = self._fetch_open_orders(client)
@@ -1216,6 +1290,7 @@ class TotalLiquidationManager:
         total_rounds = max(1, int(cancel_rounds))
         canceled_ids: List[str] = []
         cancel_errors: List[str] = []
+        not_canceled: List[str] = []
         remaining_orders: List[Dict[str, Any]] = []
 
         for round_idx in range(total_rounds):
@@ -1226,17 +1301,25 @@ class TotalLiquidationManager:
                     "rounds": round_idx + 1,
                     "canceled_ids": canceled_ids,
                     "cancel_errors": cancel_errors,
+                    "not_canceled": not_canceled,
                     "remaining_orders": [],
                 }
-            for order in remaining_orders:
-                order_id = str(order.get("order_id") or "").strip()
-                if not order_id:
-                    continue
-                try:
-                    self._cancel_order(client, order_id)
-                    canceled_ids.append(order_id)
-                except Exception as exc:
-                    cancel_errors.append(f"{order_id}:{exc}")
+            order_ids = [
+                str(order.get("order_id") or "").strip()
+                for order in remaining_orders
+                if str(order.get("order_id") or "").strip()
+            ]
+            batch_result = self._cancel_orders_batch(client, order_ids)
+            if batch_result.get("used_batch"):
+                canceled_ids.extend(list(batch_result.get("canceled_ids") or []))
+                not_canceled.extend(list(batch_result.get("not_canceled") or []))
+            else:
+                for order_id in order_ids:
+                    try:
+                        self._cancel_order_compat(client, order_id)
+                        canceled_ids.append(order_id)
+                    except Exception as exc:
+                        cancel_errors.append(f"{order_id}:{exc}")
             if self._wait_for_open_orders_clear(
                 client,
                 token_id_str,
@@ -1248,6 +1331,7 @@ class TotalLiquidationManager:
                     "rounds": round_idx + 1,
                     "canceled_ids": canceled_ids,
                     "cancel_errors": cancel_errors,
+                    "not_canceled": not_canceled,
                     "remaining_orders": [],
                 }
         remaining_orders = self._get_token_open_orders(client, token_id_str)
@@ -1256,6 +1340,7 @@ class TotalLiquidationManager:
             "rounds": total_rounds,
             "canceled_ids": canceled_ids,
             "cancel_errors": cancel_errors,
+            "not_canceled": not_canceled,
             "remaining_orders": remaining_orders,
         }
 
@@ -1380,6 +1465,9 @@ class TotalLiquidationManager:
             cancel_errors = list(clear_info.get("cancel_errors") or [])
             if cancel_errors:
                 error_parts.append(f"cancel_errors={'; '.join(cancel_errors[:3])}")
+            not_canceled = list(clear_info.get("not_canceled") or [])
+            if not_canceled:
+                error_parts.append(f"not_canceled={'; '.join(not_canceled[:3])}")
             return {
                 "ok": False,
                 "token_id": token_id,

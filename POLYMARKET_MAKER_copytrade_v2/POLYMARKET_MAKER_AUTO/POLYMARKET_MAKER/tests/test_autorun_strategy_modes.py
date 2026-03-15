@@ -3146,6 +3146,21 @@ def test_build_run_config_includes_total_liquidation_reason(tmp_path):
     assert "TOTAL_LIQUIDATION" in set(run_cfg.get("allow_ioc_exit_reasons") or [])
 
 
+def test_build_run_config_includes_force_sell_only_reason(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    manager.topic_details["t1"] = {
+        "token_id": "t1",
+        "force_sell_only_on_startup": True,
+        "force_sell_only_reason": "stoploss_nofill_escalated",
+    }
+
+    run_cfg = manager._build_run_config("t1")
+
+    assert run_cfg["force_sell_only_on_startup"] is True
+    assert run_cfg["force_sell_only_reason"] == "stoploss_nofill_escalated"
+
+
 def test_remove_exit_token_records_keeps_full_history(tmp_path):
     cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
     manager = _build_manager(cfg)
@@ -3587,6 +3602,7 @@ def test_stoploss_no_fill_escalates_to_sell_only_after_retry_limit(tmp_path):
     assert "t1" in manager.pending_topics
     detail = manager.topic_details["t1"]
     assert detail["force_sell_only_on_startup"] is True
+    assert detail["force_sell_only_reason"] == "stoploss_nofill_escalated"
     assert detail["queue_role"] == "stoploss_nofill_sell_only"
     rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
     assert rows[-1]["exit_reason"] == "STOPLOSS_IOC_NO_FILL_ESCALATED"

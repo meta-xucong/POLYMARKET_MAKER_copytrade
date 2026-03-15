@@ -1570,8 +1570,25 @@ def test_clear_open_orders_for_token_retries_and_clears_on_second_round():
         )
         canceled = []
         mgr._fetch_open_orders = lambda _client: next(fetch_responses)
-        mgr._cancel_order = lambda _client, order_id: canceled.append(order_id)
+        mgr._cancel_orders_batch = lambda _client, order_ids: {
+            "used_batch": True,
+            "canceled_ids": list(order_ids),
+            "not_canceled": [],
+        }
         mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: len(canceled) >= 2
+
+        def _wait(*_args, **_kwargs):
+            return len(canceled) >= 2
+
+        mgr._wait_for_open_orders_clear = _wait
+
+        original_batch = mgr._cancel_orders_batch
+
+        def _record_batch(_client, order_ids):
+            canceled.extend(order_ids)
+            return original_batch(_client, order_ids)
+
+        mgr._cancel_orders_batch = _record_batch
 
         info = mgr._clear_open_orders_for_token(object(), "t1", cancel_rounds=3)
 
@@ -1595,7 +1612,8 @@ def test_clear_open_orders_for_token_reports_cancel_errors():
         def _raise_cancel(_client, _order_id):
             raise RuntimeError("cancel failed")
 
-        mgr._cancel_order = _raise_cancel
+        mgr._cancel_orders_batch = lambda *_args, **_kwargs: {"used_batch": False, "canceled_ids": [], "not_canceled": []}
+        mgr._cancel_order_compat = _raise_cancel
         mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: False
 
         info = mgr._clear_open_orders_for_token(object(), "t1", cancel_rounds=1)
@@ -1604,3 +1622,26 @@ def test_clear_open_orders_for_token_reports_cancel_errors():
         assert info["rounds"] == 1
         assert info["cancel_errors"] == ["o1:cancel failed"]
         assert info["remaining_orders"] == [{"order_id": "o1", "token_id": "t1", "side": "SELL"}]
+
+
+def test_clear_open_orders_for_token_records_not_canceled_from_batch_response():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        mgr._fetch_open_orders = lambda _client: [
+            {"order_id": "o1", "token_id": "t1", "side": "SELL"}
+        ]
+        mgr._cancel_orders_batch = lambda *_args, **_kwargs: {
+            "used_batch": True,
+            "canceled_ids": [],
+            "not_canceled": ["o1:not owned"],
+        }
+        mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: False
+
+        info = mgr._clear_open_orders_for_token(object(), "t1", cancel_rounds=1)
+
+        assert info["cleared"] is False
+        assert info["not_canceled"] == ["o1:not owned"]
