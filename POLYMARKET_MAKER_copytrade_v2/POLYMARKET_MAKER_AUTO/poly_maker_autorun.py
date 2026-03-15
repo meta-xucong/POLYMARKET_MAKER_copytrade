@@ -8093,8 +8093,16 @@ class AutoRunManager:
         to_reactivate: set[str] = set()
         to_queue_buy: set[str] = set()
         to_cleanup: set[str] = set()
+        owner_retained: set[str] = set()
+        orphan_states = self._load_latest_orphan_states()
 
         for token_id in sorted(to_reconcile):
+            if self._has_runtime_owner_blocking_startup_reconcile(
+                token_id,
+                orphan_states=orphan_states,
+            ):
+                owner_retained.add(token_id)
+                continue
             pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
             has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
             has_sell_signal = token_id in tokens_with_sell_signal
@@ -8119,7 +8127,7 @@ class AutoRunManager:
 
         orphan_stats = self._schedule_startup_orphan_profit_sweep(
             copytrade_topics=copytrade_topics,
-            active_tasks=active_tasks | to_reactivate | to_liquidate,
+            active_tasks=active_tasks | to_reactivate | to_liquidate | owner_retained,
         )
 
         for token_id in sorted(to_reactivate):
@@ -8179,7 +8187,7 @@ class AutoRunManager:
             self._purge_token_runtime_state(token_id)
             self._remove_from_handled_topics(token_id)
 
-        keep_handled = to_reactivate | to_liquidate | to_queue_buy
+        keep_handled = to_reactivate | to_liquidate | to_queue_buy | owner_retained
         stale_topics = self.handled_topics - copytrade_topics - active_tasks
         changed = False
         if keep_handled:
@@ -8201,6 +8209,7 @@ class AutoRunManager:
             f"reactivated={len(to_reactivate)} "
             f"queued_buy={len(to_queue_buy)} "
             f"liquidating={len(to_liquidate)} "
+            f"owner_retained={len(owner_retained)} "
             f"cleaned={len(to_cleanup)} "
             f"stale_removed={len(stale_topics)} "
             f"orphan_candidates={orphan_stats.get('candidates', 0)} "
@@ -9512,7 +9521,7 @@ class AutoRunManager:
             "STOPLOSS_EXITED_WAITING_REBOUND",
             "REENTRY_HOLD",
             "STOPLOSS_IOC_RETRY_PENDING",
-            "STOPLOSS_IOC_ESCALATED",
+            "STOPLOSS_IOC_RETRY_ESCALATED",
             "STOPLOSS_CLEAR_PENDING_CONFIRM",
         }
 
@@ -9527,6 +9536,17 @@ class AutoRunManager:
             return False
         status = str(state.get("status") or "orphaned").strip().lower()
         return status not in {"recovered", "manual_only"}
+
+    def _has_runtime_owner_blocking_startup_reconcile(
+        self,
+        token_id: str,
+        *,
+        orphan_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> bool:
+        return self._has_stoploss_runtime_owner(token_id) or self._has_orphan_runtime_owner(
+            token_id,
+            orphan_states,
+        )
 
     def _rearm_active_unmanaged_topics(
         self,

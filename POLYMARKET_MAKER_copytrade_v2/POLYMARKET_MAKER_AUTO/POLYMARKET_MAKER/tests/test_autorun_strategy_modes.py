@@ -379,6 +379,155 @@ def test_startup_full_reconcile_moves_position_token_to_base_pending(tmp_path):
     assert manager._startup_sync_retry_needed is False
 
 
+def test_startup_sync_preserves_stoploss_waiting_owner_without_requeue(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": ["t1"]}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "t1", "introduced_by_buy": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps({"updated_at": "", "sell_tokens": []}),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({}, "ok")  # type: ignore[assignment]
+    manager._stoploss_reentry_states["t1"] = {
+        "state": "STOPLOSS_EXITED_WAITING_WINDOW",
+        "source_detached": False,
+    }
+
+    manager._sync_handled_topics_on_startup()
+
+    assert manager.pending_topics == []
+    assert manager.handled_topics == {"t1"}
+    assert (manager.topic_details.get("t1") or {}).get("queue_role") is None
+
+
+def test_startup_sync_preserves_orphan_owner_without_requeue(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": ["t1"]}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "t1", "introduced_by_buy": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps({"updated_at": "", "sell_tokens": []}),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({}, "ok")  # type: ignore[assignment]
+    manager._load_latest_orphan_states = lambda: {"t1": {"status": "orphaned"}}  # type: ignore[assignment]
+
+    manager._sync_handled_topics_on_startup()
+
+    assert manager.pending_topics == []
+    assert manager.handled_topics == {"t1"}
+
+
+def test_startup_sync_does_not_override_stoploss_escalated_owner_with_sell_signal(tmp_path):
+    copytrade_dir = tmp_path / "copytrade"
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    handled_path = copytrade_dir / "handled_topics.json"
+    tokens_path = copytrade_dir / "tokens_from_copytrade.json"
+    sell_path = copytrade_dir / "copytrade_sell_signals.json"
+
+    handled_path.write_text(
+        json.dumps({"updated_at": "", "topics": ["t1"]}),
+        encoding="utf-8",
+    )
+    tokens_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "tokens": [{"token_id": "t1", "introduced_by_buy": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sell_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "sell_tokens": [
+                    {"token_id": "t1", "introduced_by_buy": True, "status": "pending"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig.from_dict(
+        {
+            "handled_topics_path": str(handled_path),
+            "copytrade_tokens_path": str(tokens_path),
+            "copytrade_sell_signals_path": str(sell_path),
+            "copytrade_blacklist_path": str(copytrade_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_handled_topics()
+    manager._refresh_sell_position_snapshot = lambda: ({"t1": 1.0}, "ok")  # type: ignore[assignment]
+    manager._stoploss_reentry_states["t1"] = {
+        "state": "STOPLOSS_IOC_RETRY_ESCALATED",
+        "source_detached": False,
+    }
+    captured = []
+    manager._trigger_sell_exit = lambda token_id, task=None, **kwargs: captured.append((token_id, kwargs))  # type: ignore[assignment]
+
+    manager._sync_handled_topics_on_startup()
+
+    assert captured == []
+    assert manager.pending_topics == []
+    assert manager.handled_topics == {"t1"}
+
+
 def test_startup_reconcile_applies_title_blacklist_with_position(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
