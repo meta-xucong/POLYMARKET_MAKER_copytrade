@@ -1195,6 +1195,70 @@ class TotalLiquidationManager:
                 time.sleep(max(0.0, float(sleep_sec)))
         return False
 
+    def _get_token_open_orders(self, client: Any, token_id: str) -> List[Dict[str, Any]]:
+        token_id_str = str(token_id or "").strip()
+        return [
+            dict(order)
+            for order in self._fetch_open_orders(client)
+            if str(order.get("token_id")) == token_id_str
+        ]
+
+    def _clear_open_orders_for_token(
+        self,
+        client: Any,
+        token_id: str,
+        *,
+        cancel_rounds: int = 3,
+        clear_attempts_per_round: int = 8,
+        sleep_sec: float = 0.35,
+    ) -> Dict[str, Any]:
+        token_id_str = str(token_id or "").strip()
+        total_rounds = max(1, int(cancel_rounds))
+        canceled_ids: List[str] = []
+        cancel_errors: List[str] = []
+        remaining_orders: List[Dict[str, Any]] = []
+
+        for round_idx in range(total_rounds):
+            remaining_orders = self._get_token_open_orders(client, token_id_str)
+            if not remaining_orders:
+                return {
+                    "cleared": True,
+                    "rounds": round_idx + 1,
+                    "canceled_ids": canceled_ids,
+                    "cancel_errors": cancel_errors,
+                    "remaining_orders": [],
+                }
+            for order in remaining_orders:
+                order_id = str(order.get("order_id") or "").strip()
+                if not order_id:
+                    continue
+                try:
+                    self._cancel_order(client, order_id)
+                    canceled_ids.append(order_id)
+                except Exception as exc:
+                    cancel_errors.append(f"{order_id}:{exc}")
+            if self._wait_for_open_orders_clear(
+                client,
+                token_id_str,
+                attempts=clear_attempts_per_round,
+                sleep_sec=sleep_sec,
+            ):
+                return {
+                    "cleared": True,
+                    "rounds": round_idx + 1,
+                    "canceled_ids": canceled_ids,
+                    "cancel_errors": cancel_errors,
+                    "remaining_orders": [],
+                }
+        remaining_orders = self._get_token_open_orders(client, token_id_str)
+        return {
+            "cleared": len(remaining_orders) == 0,
+            "rounds": total_rounds,
+            "canceled_ids": canceled_ids,
+            "cancel_errors": cancel_errors,
+            "remaining_orders": remaining_orders,
+        }
+
     def _probe_position_size_after_error(
         self,
         token_id: str,
@@ -1291,10 +1355,31 @@ class TotalLiquidationManager:
 
         # 先撤单，避免 maker/遗留订单和 taker 冲突。
         try:
-            self._cancel_open_orders_for_token(client, token_id)
-        except Exception:
-            pass
-        if not self._wait_for_open_orders_clear(client, token_id):
+            clear_info = self._clear_open_orders_for_token(client, token_id)
+        except Exception as exc:
+            clear_info = {
+                "cleared": False,
+                "rounds": 0,
+                "canceled_ids": [],
+                "cancel_errors": [f"clear_open_orders:{exc}"],
+                "remaining_orders": self._get_token_open_orders(client, token_id),
+            }
+        if not bool(clear_info.get("cleared")):
+            remaining_orders = list(clear_info.get("remaining_orders") or [])
+            remaining_ids = [
+                str(order.get("order_id") or "").strip()
+                for order in remaining_orders
+                if str(order.get("order_id") or "").strip()
+            ]
+            error_parts = [
+                f"open orders still live after cancel for token={token_id}",
+                f"rounds={int(clear_info.get('rounds') or 0)}",
+            ]
+            if remaining_ids:
+                error_parts.append(f"remaining_order_ids={','.join(remaining_ids[:5])}")
+            cancel_errors = list(clear_info.get("cancel_errors") or [])
+            if cancel_errors:
+                error_parts.append(f"cancel_errors={'; '.join(cancel_errors[:3])}")
             return {
                 "ok": False,
                 "token_id": token_id,
@@ -1305,9 +1390,10 @@ class TotalLiquidationManager:
                 "remaining_target": requested_size,
                 "attempts": 0,
                 "reason": normalized_reason,
-                "error": f"open orders still live after cancel for token={token_id}",
+                "error": " | ".join(error_parts),
                 "executed_avg_price": None,
                 "executed_price_source": "unknown",
+                "cancel_debug": clear_info,
             }
 
         attempts = 0

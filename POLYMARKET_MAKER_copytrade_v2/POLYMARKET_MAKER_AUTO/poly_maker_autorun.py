@@ -95,6 +95,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "process_stagger_max_sec": 3.0,
     "topic_start_cooldown_sec": 5.0,
     "active_unmanaged_rearm_cooldown_sec": 900.0,
+    "active_unmanaged_rearm_budget_window_sec": 3600.0,
+    "active_unmanaged_rearm_budget_max_attempts": 3,
+    "active_unmanaged_rearm_budget_suppress_sec": 7200.0,
     "log_excerpt_interval_sec": 15.0,
     "runtime_status_path": str(PROJECT_ROOT / "data" / "autorun_status.json"),
     "token_cycle_state_path": str(PROJECT_ROOT / "data" / "token_cycle_gate.json"),
@@ -896,6 +899,15 @@ class GlobalConfig:
     active_unmanaged_rearm_cooldown_sec: float = DEFAULT_GLOBAL_CONFIG[
         "active_unmanaged_rearm_cooldown_sec"
     ]
+    active_unmanaged_rearm_budget_window_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "active_unmanaged_rearm_budget_window_sec"
+    ]
+    active_unmanaged_rearm_budget_max_attempts: int = DEFAULT_GLOBAL_CONFIG[
+        "active_unmanaged_rearm_budget_max_attempts"
+    ]
+    active_unmanaged_rearm_budget_suppress_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "active_unmanaged_rearm_budget_suppress_sec"
+    ]
     log_excerpt_interval_sec: float = DEFAULT_GLOBAL_CONFIG["log_excerpt_interval_sec"]
     runtime_status_path: Path = field(
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["runtime_status_path"])
@@ -1293,6 +1305,33 @@ class GlobalConfig:
                     merged.get(
                         "active_unmanaged_rearm_cooldown_sec",
                         cls.active_unmanaged_rearm_cooldown_sec,
+                    )
+                ),
+            ),
+            active_unmanaged_rearm_budget_window_sec=max(
+                300.0,
+                float(
+                    merged.get(
+                        "active_unmanaged_rearm_budget_window_sec",
+                        cls.active_unmanaged_rearm_budget_window_sec,
+                    )
+                ),
+            ),
+            active_unmanaged_rearm_budget_max_attempts=max(
+                1,
+                int(
+                    merged.get(
+                        "active_unmanaged_rearm_budget_max_attempts",
+                        cls.active_unmanaged_rearm_budget_max_attempts,
+                    )
+                ),
+            ),
+            active_unmanaged_rearm_budget_suppress_sec=max(
+                300.0,
+                float(
+                    merged.get(
+                        "active_unmanaged_rearm_budget_suppress_sec",
+                        cls.active_unmanaged_rearm_budget_suppress_sec,
                     )
                 ),
             ),
@@ -2127,6 +2166,8 @@ class AutoRunManager:
         self._ws_starting_topics: set[str] = set()  # 启动窗口内保留订阅，避免刚订阅即取消
         self._pending_first_seen: Dict[str, float] = {}
         self._active_unmanaged_rearm_last_ts: Dict[str, float] = {}
+        self._active_unmanaged_rearm_recent_ts: Dict[str, List[float]] = {}
+        self._active_unmanaged_rearm_suppressed_until: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._clob_book_probe_cache: Dict[str, Dict[str, Any]] = {}
         self._gamma_market_probe_cache: Dict[str, Dict[str, Any]] = {}
@@ -3514,6 +3555,116 @@ class AutoRunManager:
             f"state=STOPLOSS_EXITED_WAITING_WINDOW"
         )
 
+    def _finalize_stoploss_position_gone_late(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        now: float,
+        note: str,
+    ) -> bool:
+        exec_price = max(
+            0.0,
+            float(
+                state.get("pending_stoploss_exit_price")
+                or state.get("pending_confirm_exec_price")
+                or state.get("stop_exit_price")
+                or 0.0
+            ),
+        )
+        if exec_price <= 0.0:
+            return False
+        before_size = max(
+            0.0,
+            float(
+                state.get("pending_stoploss_before_size")
+                or state.get("pending_confirm_before_size")
+                or state.get("last_stoploss_size")
+                or 0.0
+            ),
+        )
+        drawdown = float(
+            state.get("pending_stoploss_drawdown")
+            or state.get("pending_confirm_drawdown")
+            or 0.0
+        )
+        self._append_exit_token_record(
+            token_id,
+            "STOPLOSS_FULL_CLEAR_LATE",
+            exit_data={
+                "source": "stoploss_v4",
+                "note": str(note or ""),
+                "before_size": before_size,
+                "after_size": 0.0,
+                "executed_avg_price": exec_price,
+                "lifecycle_terminal": False,
+            },
+            refillable=False,
+        )
+        self._finalize_stoploss_waiting_reentry(
+            token_id,
+            state,
+            now=now,
+            before_size=before_size,
+            after_size=0.0,
+            exec_price=exec_price,
+            exec_source=str(state.get("pending_stoploss_exec_source") or "late_position_gone"),
+            drawdown=drawdown,
+            line_ticks=max(1, int(self.config.stoploss_reentry_line_ticks)),
+            zone_lower_pct=max(0.0, float(self.config.stoploss_reentry_zone_lower_pct)),
+            probe_break_pct=max(0.0, float(self.config.stoploss_probe_break_pct)),
+            drawdown_step=max(0.0, float(self.config.stoploss_drawdown_step_per_cycle_pct)),
+            extra_reentry_cd=max(
+                0.0,
+                float(self.config.stoploss_reentry_extra_delay_after_5_cuts_hours),
+            )
+            * 3600.0,
+            window_cd=max(0.0, float(self.config.stoploss_reentry_window_cooldown_minutes))
+            * 60.0,
+            circuit_loss=max(
+                0.0,
+                float(self.config.stoploss_daily_reentry_loss_circuit_breaker_pct),
+            ),
+        )
+        return True
+
+    def _finalize_position_reconcile_exit_if_flat(
+        self,
+        task: TopicTask,
+        *,
+        rc: int,
+    ) -> bool:
+        detail = self.topic_details.get(task.topic_id) or {}
+        queue_role = str(detail.get("queue_role") or "").strip()
+        if queue_role != "startup_reconcile_position":
+            return False
+        if self._has_account_position(task.topic_id, force_refresh=True):
+            return False
+        self._append_exit_token_record(
+            task.topic_id,
+            "POSITION_RECONCILE_LATE_CLEANUP_SUCCESS",
+            exit_data={
+                "source": "startup_reconcile_position",
+                "rc": rc,
+                "note": "process exited nonzero after position already cleared",
+            },
+            refillable=False,
+        )
+        task_run_cfg = self._get_task_run_config(task)
+        self._advance_token_cycle_state_on_cleanup(task.topic_id, task_run_cfg)
+        self._remove_from_handled_topics(task.topic_id)
+        detail.pop("resume_state", None)
+        detail.pop("refill_exit_reason", None)
+        detail["queue_role"] = "cycle_closed"
+        task.status = "exited"
+        task.no_restart = True
+        task.end_reason = "position reconcile cleanup success"
+        print(
+            "[AUTO][LATE_SUCCESS] 历史仓位接管路径卖出后已无持仓，按成功收口: "
+            f"token={task.topic_id} rc={rc}"
+        )
+        return True
+
     def _enter_stoploss_clear_pending_confirm(
         self,
         token_id: str,
@@ -3929,6 +4080,16 @@ class AutoRunManager:
                     retry_limit = max(1, int(self.config.stoploss_clear_confirm_max_retries))
                     retry_count = max(0, int(state.get("nofill_retry_count") or 0)) + 1
                     state["nofill_retry_count"] = retry_count
+                    state["pending_stoploss_before_size"] = float(before_size)
+                    state["pending_stoploss_after_size"] = float(after_size)
+                    state["pending_stoploss_exit_price"] = float(
+                        min(
+                            sellable_price if sellable_price > 0 else stoploss_trigger_price,
+                            stoploss_trigger_price if stoploss_trigger_price > 0 else sellable_price,
+                        )
+                    )
+                    state["pending_stoploss_exec_source"] = "stoploss_trigger_price"
+                    state["pending_stoploss_drawdown"] = float(drawdown)
                     state["last_error"] = (
                         f"stoploss IOC no_fill remain={after_size:.4f} "
                         f"retry={retry_count}/{retry_limit}"
@@ -4045,7 +4206,13 @@ class AutoRunManager:
                     },
                     refillable=False,
                 )
-                self._remove_stoploss_reentry_state(token_id)
+                if not self._finalize_stoploss_position_gone_late(
+                    token_id,
+                    state,
+                    now=now,
+                    note="position_missing_after_nofill_state",
+                ):
+                    self._remove_stoploss_reentry_state(token_id)
                 state_dirty = True
                 continue
             if state_name == "STOPLOSS_CLEAR_PENDING_CONFIRM":
@@ -6246,6 +6413,9 @@ class AutoRunManager:
                 self._remove_token_from_copytrade_files(task.topic_id)
                 self._remove_exit_token_records(task.topic_id)
 
+        if rc != 0 and self._finalize_position_reconcile_exit_if_flat(task, rc=rc):
+            return
+
         if task.no_restart:
             return
 
@@ -8237,6 +8407,8 @@ class AutoRunManager:
             write_handled_topics(self.config.handled_topics_path, self.handled_topics)
             print(f"[HANDLED] 已从 handled_topics 移除 token={token_id[:16]}...（允许后续重新交易）")
         self._active_unmanaged_rearm_last_ts.pop(token_id, None)
+        self._active_unmanaged_rearm_recent_ts.pop(token_id, None)
+        self._active_unmanaged_rearm_suppressed_until.pop(token_id, None)
 
     def _purge_token_runtime_state(self, token_id: str) -> None:
         if not token_id:
@@ -8250,6 +8422,8 @@ class AutoRunManager:
         self._clob_book_probe_cache.pop(token_id, None)
         self._position_snapshot_cache.pop(token_id, None)
         self._active_unmanaged_rearm_last_ts.pop(token_id, None)
+        self._active_unmanaged_rearm_recent_ts.pop(token_id, None)
+        self._active_unmanaged_rearm_suppressed_until.pop(token_id, None)
         self._refilled_tokens.discard(token_id)
         self._refill_retry_counts.pop(token_id, None)
         self._completed_exit_cleanup_tokens.discard(token_id)
@@ -9376,6 +9550,15 @@ class AutoRunManager:
         orphan_states = self._load_latest_orphan_states()
         now = time.time()
         cooldown_sec = max(60.0, float(self.config.active_unmanaged_rearm_cooldown_sec))
+        budget_window_sec = max(
+            300.0, float(self.config.active_unmanaged_rearm_budget_window_sec)
+        )
+        budget_max_attempts = max(
+            1, int(self.config.active_unmanaged_rearm_budget_max_attempts)
+        )
+        suppress_sec = max(
+            300.0, float(self.config.active_unmanaged_rearm_budget_suppress_sec)
+        )
         candidates: List[str] = []
         for token_id in sorted(active_copytrade_topics):
             if token_id in blocked_tokens or token_id in sell_signals:
@@ -9385,6 +9568,11 @@ class AutoRunManager:
             if self._has_stoploss_runtime_owner(token_id):
                 continue
             if self._has_orphan_runtime_owner(token_id, orphan_states):
+                continue
+            suppressed_until = float(
+                self._active_unmanaged_rearm_suppressed_until.get(token_id) or 0.0
+            )
+            if suppressed_until > now:
                 continue
             last_rearm_ts = float(self._active_unmanaged_rearm_last_ts.get(token_id) or 0.0)
             if last_rearm_ts > 0 and (now - last_rearm_ts) < cooldown_sec:
@@ -9409,6 +9597,30 @@ class AutoRunManager:
         rearmed_buy = 0
         for token_id in candidates:
             if token_id in self.pending_topics or token_id in self.pending_burst_topics:
+                continue
+            recent_attempts = [
+                float(ts)
+                for ts in (self._active_unmanaged_rearm_recent_ts.get(token_id) or [])
+                if (now - float(ts)) <= budget_window_sec
+            ]
+            self._active_unmanaged_rearm_recent_ts[token_id] = recent_attempts
+            if len(recent_attempts) >= budget_max_attempts:
+                suppress_until = now + suppress_sec
+                self._active_unmanaged_rearm_suppressed_until[token_id] = suppress_until
+                self._append_exit_token_record(
+                    token_id,
+                    "ACTIVE_UNMANAGED_REARM_SUPPRESSED",
+                    exit_data={
+                        "copytrade_active": True,
+                        "handled_topic": token_id in self.handled_topics,
+                        "recent_attempts": len(recent_attempts),
+                        "budget_window_sec": budget_window_sec,
+                        "budget_max_attempts": budget_max_attempts,
+                        "suppress_sec": suppress_sec,
+                        "suppressed_until_ts": suppress_until,
+                    },
+                    refillable=False,
+                )
                 continue
             detail = self.topic_details.setdefault(token_id, {})
             # 运行时失管重接管时，明确回到单一路径，避免沿用旧的 refill/orphan/resume 语义。
@@ -9441,6 +9653,8 @@ class AutoRunManager:
             detail["queue_role"] = rearm_path
             if self._enqueue_pending_topic(token_id):
                 self._active_unmanaged_rearm_last_ts[token_id] = now
+                recent_attempts.append(now)
+                self._active_unmanaged_rearm_recent_ts[token_id] = recent_attempts
                 self._append_exit_token_record(
                     token_id,
                     "ACTIVE_UNMANAGED_REARM",
@@ -10915,6 +11129,8 @@ class AutoRunManager:
         self._task_run_config_cache.clear()
         self._seen_self_sell_trade_keys.clear()
         self._seen_self_sell_tokens.clear()
+        self._active_unmanaged_rearm_recent_ts.clear()
+        self._active_unmanaged_rearm_suppressed_until.clear()
         self._process_started_at = time.time()
         self._last_self_sell_trade_ts = int(self._process_started_at)
         self._reentry_eligible_tokens.clear()

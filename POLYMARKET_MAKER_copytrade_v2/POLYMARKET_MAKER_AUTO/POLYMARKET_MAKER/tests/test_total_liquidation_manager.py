@@ -1501,8 +1501,13 @@ def test_single_token_ioc_liquidation_blocks_when_open_orders_still_live():
         place_calls = []
         mgr._cached_client = object()
         mgr._fetch_single_position_size = lambda _token_id: 10.0
-        mgr._cancel_open_orders_for_token = lambda *_args, **_kwargs: 1
-        mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: False
+        mgr._clear_open_orders_for_token = lambda *_args, **_kwargs: {
+            "cleared": False,
+            "rounds": 3,
+            "canceled_ids": ["o1", "o2"],
+            "cancel_errors": [],
+            "remaining_orders": [{"order_id": "o3", "token_id": "t1", "side": "SELL"}],
+        }
         mgr._place_sell_ioc = lambda *_args, **_kwargs: place_calls.append(True)
 
         resp = mgr.liquidate_single_token_taker(
@@ -1514,6 +1519,8 @@ def test_single_token_ioc_liquidation_blocks_when_open_orders_still_live():
 
         assert resp.get("ok") is False
         assert "open orders still live after cancel" in str(resp.get("error") or "")
+        assert "remaining_order_ids=o3" in str(resp.get("error") or "")
+        assert (resp.get("cancel_debug") or {}).get("rounds") == 3
         assert place_calls == []
 
 
@@ -1545,3 +1552,55 @@ def test_single_token_ioc_liquidation_treats_post_error_position_clear_as_succes
         assert resp.get("filled_size") == 10.0
         assert resp.get("after_size") == 0.0
         assert resp.get("error") in (None, "")
+
+
+def test_clear_open_orders_for_token_retries_and_clears_on_second_round():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        fetch_responses = iter(
+            [
+                [{"order_id": "o1", "token_id": "t1", "side": "SELL"}],
+                [{"order_id": "o1", "token_id": "t1", "side": "SELL"}],
+                [],
+            ]
+        )
+        canceled = []
+        mgr._fetch_open_orders = lambda _client: next(fetch_responses)
+        mgr._cancel_order = lambda _client, order_id: canceled.append(order_id)
+        mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: len(canceled) >= 2
+
+        info = mgr._clear_open_orders_for_token(object(), "t1", cancel_rounds=3)
+
+        assert info["cleared"] is True
+        assert info["rounds"] == 2
+        assert canceled == ["o1", "o1"]
+        assert info["remaining_orders"] == []
+
+
+def test_clear_open_orders_for_token_reports_cancel_errors():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+
+        mgr._fetch_open_orders = lambda _client: [
+            {"order_id": "o1", "token_id": "t1", "side": "SELL"}
+        ]
+
+        def _raise_cancel(_client, _order_id):
+            raise RuntimeError("cancel failed")
+
+        mgr._cancel_order = _raise_cancel
+        mgr._wait_for_open_orders_clear = lambda *_args, **_kwargs: False
+
+        info = mgr._clear_open_orders_for_token(object(), "t1", cancel_rounds=1)
+
+        assert info["cleared"] is False
+        assert info["rounds"] == 1
+        assert info["cancel_errors"] == ["o1:cancel failed"]
+        assert info["remaining_orders"] == [{"order_id": "o1", "token_id": "t1", "side": "SELL"}]
