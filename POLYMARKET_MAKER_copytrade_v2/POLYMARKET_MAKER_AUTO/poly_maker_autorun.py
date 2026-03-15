@@ -94,6 +94,7 @@ DEFAULT_GLOBAL_CONFIG = {
     "process_graceful_timeout_sec": 5.0,
     "process_stagger_max_sec": 3.0,
     "topic_start_cooldown_sec": 5.0,
+    "active_unmanaged_rearm_cooldown_sec": 900.0,
     "log_excerpt_interval_sec": 15.0,
     "runtime_status_path": str(PROJECT_ROOT / "data" / "autorun_status.json"),
     "token_cycle_state_path": str(PROJECT_ROOT / "data" / "token_cycle_gate.json"),
@@ -892,6 +893,9 @@ class GlobalConfig:
     ]
     process_stagger_max_sec: float = DEFAULT_GLOBAL_CONFIG["process_stagger_max_sec"]
     topic_start_cooldown_sec: float = DEFAULT_GLOBAL_CONFIG["topic_start_cooldown_sec"]
+    active_unmanaged_rearm_cooldown_sec: float = DEFAULT_GLOBAL_CONFIG[
+        "active_unmanaged_rearm_cooldown_sec"
+    ]
     log_excerpt_interval_sec: float = DEFAULT_GLOBAL_CONFIG["log_excerpt_interval_sec"]
     runtime_status_path: Path = field(
         default_factory=lambda: Path(DEFAULT_GLOBAL_CONFIG["runtime_status_path"])
@@ -1282,6 +1286,15 @@ class GlobalConfig:
             ),
             topic_start_cooldown_sec=float(
                 merged.get("topic_start_cooldown_sec", cls.topic_start_cooldown_sec)
+            ),
+            active_unmanaged_rearm_cooldown_sec=max(
+                60.0,
+                float(
+                    merged.get(
+                        "active_unmanaged_rearm_cooldown_sec",
+                        cls.active_unmanaged_rearm_cooldown_sec,
+                    )
+                ),
             ),
             log_excerpt_interval_sec=float(
                 merged.get("log_excerpt_interval_sec", cls.log_excerpt_interval_sec)
@@ -2113,6 +2126,7 @@ class AutoRunManager:
         self._shared_ws_wait_timeout_events: Dict[str, List[float]] = {}
         self._ws_starting_topics: set[str] = set()  # 启动窗口内保留订阅，避免刚订阅即取消
         self._pending_first_seen: Dict[str, float] = {}
+        self._active_unmanaged_rearm_last_ts: Dict[str, float] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._clob_book_probe_cache: Dict[str, Dict[str, Any]] = {}
         self._gamma_market_probe_cache: Dict[str, Dict[str, Any]] = {}
@@ -8222,6 +8236,7 @@ class AutoRunManager:
             self.handled_topics.discard(token_id)
             write_handled_topics(self.config.handled_topics_path, self.handled_topics)
             print(f"[HANDLED] 已从 handled_topics 移除 token={token_id[:16]}...（允许后续重新交易）")
+        self._active_unmanaged_rearm_last_ts.pop(token_id, None)
 
     def _purge_token_runtime_state(self, token_id: str) -> None:
         if not token_id:
@@ -8234,6 +8249,7 @@ class AutoRunManager:
         self._shared_ws_pending_since.pop(token_id, None)
         self._clob_book_probe_cache.pop(token_id, None)
         self._position_snapshot_cache.pop(token_id, None)
+        self._active_unmanaged_rearm_last_ts.pop(token_id, None)
         self._refilled_tokens.discard(token_id)
         self._refill_retry_counts.pop(token_id, None)
         self._completed_exit_cleanup_tokens.discard(token_id)
@@ -9235,6 +9251,10 @@ class AutoRunManager:
             sell_signal_events = self._load_copytrade_sell_signals()
             blacklist_tokens = self._load_copytrade_blacklist()
             self._apply_sell_signals(sell_signal_events)
+            self._rearm_active_unmanaged_topics(
+                sell_signals=sell_signal_events,
+                blocked_tokens=blacklist_tokens,
+            )
             blocked_tokens = blacklist_tokens
             new_topics = [
                 topic_id
@@ -9305,6 +9325,144 @@ class AutoRunManager:
         except Exception as exc:  # pragma: no cover - 网络/外部依赖
             print(f"[ERROR] 读取 copytrade token 失败：{exc}")
             self.latest_topics = []
+
+    def _has_stoploss_runtime_owner(self, token_id: str) -> bool:
+        state = self._stoploss_reentry_states.get(token_id) or {}
+        if not isinstance(state, dict) or not state:
+            return False
+        if bool(state.get("source_detached", False)):
+            return True
+        state_name = str(state.get("state") or "").strip().upper()
+        return state_name in {
+            "STOPLOSS_EXITED_WAITING_WINDOW",
+            "STOPLOSS_EXITED_WAITING_REBOUND",
+            "REENTRY_HOLD",
+            "STOPLOSS_IOC_RETRY_PENDING",
+            "STOPLOSS_IOC_ESCALATED",
+            "STOPLOSS_CLEAR_PENDING_CONFIRM",
+        }
+
+    def _has_orphan_runtime_owner(
+        self,
+        token_id: str,
+        orphan_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> bool:
+        latest = orphan_states if orphan_states is not None else self._load_latest_orphan_states()
+        state = latest.get(token_id) or {}
+        if not isinstance(state, dict) or not state:
+            return False
+        status = str(state.get("status") or "orphaned").strip().lower()
+        return status not in {"recovered", "manual_only"}
+
+    def _rearm_active_unmanaged_topics(
+        self,
+        *,
+        sell_signals: Dict[str, Dict[str, Any]],
+        blocked_tokens: set[str],
+    ) -> None:
+        active_copytrade_topics = {
+            topic_id
+            for topic_id in (_topic_id_from_entry(item) for item in self.latest_topics)
+            if topic_id
+        }
+        if not active_copytrade_topics:
+            return
+        managed_scope = (
+            set(self.tasks.keys())
+            | set(self.pending_topics)
+            | set(self.pending_burst_topics)
+            | set(self.pending_exit_topics)
+        )
+        orphan_states = self._load_latest_orphan_states()
+        now = time.time()
+        cooldown_sec = max(60.0, float(self.config.active_unmanaged_rearm_cooldown_sec))
+        candidates: List[str] = []
+        for token_id in sorted(active_copytrade_topics):
+            if token_id in blocked_tokens or token_id in sell_signals:
+                continue
+            if token_id in managed_scope:
+                continue
+            if self._has_stoploss_runtime_owner(token_id):
+                continue
+            if self._has_orphan_runtime_owner(token_id, orphan_states):
+                continue
+            last_rearm_ts = float(self._active_unmanaged_rearm_last_ts.get(token_id) or 0.0)
+            if last_rearm_ts > 0 and (now - last_rearm_ts) < cooldown_sec:
+                continue
+            candidates.append(token_id)
+        if not candidates:
+            return
+
+        pos_snapshot, pos_info = self._refresh_sell_position_snapshot()
+        if pos_info != "ok":
+            self._log_throttled(
+                "active_unmanaged_rearm_pos_unavailable",
+                120.0,
+                (
+                    "[HANDLED][RUNTIME_REARM][WARN] position snapshot unavailable, "
+                    f"skip candidates={len(candidates)} info={pos_info}"
+                ),
+            )
+            return
+
+        rearmed_position = 0
+        rearmed_buy = 0
+        for token_id in candidates:
+            if token_id in self.pending_topics or token_id in self.pending_burst_topics:
+                continue
+            detail = self.topic_details.setdefault(token_id, {})
+            # 运行时失管重接管时，明确回到单一路径，避免沿用旧的 refill/orphan/resume 语义。
+            stale_keys_cleared: List[str] = []
+            for stale_key in (
+                "resume_state",
+                "refill_retry_count",
+                "refill_exit_reason",
+                "resume_drop_pct",
+                "resume_profit_pct",
+                "startup_orphan_profit_sweep",
+                "startup_skip_if_open_sell",
+                "stoploss_reentry_resume",
+                "orphaned",
+                "orphaned_at",
+                "sell_trigger_source",
+                "sell_exit_reason",
+                "sell_trigger_ts",
+                "sell_exit_requested_at",
+                "sell_exit_deadline_at",
+                "sell_exit_phase",
+                "sell_exit_source",
+            ):
+                if stale_key in detail:
+                    stale_keys_cleared.append(stale_key)
+                    detail.pop(stale_key, None)
+            has_position = float(pos_snapshot.get(token_id, 0.0) or 0.0) > POSITION_CLEANUP_DUST_THRESHOLD
+            detail["schedule_lane"] = "base"
+            rearm_path = "startup_reconcile_position" if has_position else "startup_reconcile_buy"
+            detail["queue_role"] = rearm_path
+            if self._enqueue_pending_topic(token_id):
+                self._active_unmanaged_rearm_last_ts[token_id] = now
+                self._append_exit_token_record(
+                    token_id,
+                    "ACTIVE_UNMANAGED_REARM",
+                    exit_data={
+                        "rearm_path": rearm_path,
+                        "has_position": has_position,
+                        "copytrade_active": True,
+                        "handled_topic": token_id in self.handled_topics,
+                        "stale_keys_cleared": stale_keys_cleared,
+                    },
+                    refillable=False,
+                )
+                if has_position:
+                    rearmed_position += 1
+                else:
+                    rearmed_buy += 1
+        total = rearmed_position + rearmed_buy
+        if total > 0:
+            print(
+                "[HANDLED][RUNTIME_REARM] "
+                f"rearmed={total} position={rearmed_position} buy={rearmed_buy}"
+            )
 
     def _load_copytrade_tokens(self) -> List[Dict[str, Any]]:
         path = self.config.copytrade_tokens_path
@@ -10747,6 +10905,7 @@ class AutoRunManager:
         self._shared_ws_wait_failures.clear()
         self._shared_ws_paused_until.clear()
         self._shared_ws_wait_timeout_events.clear()
+        self._active_unmanaged_rearm_last_ts.clear()
         self._clob_book_probe_cache.clear()
         self._gamma_market_probe_cache.clear()
         self._shared_ws_pending_since.clear()

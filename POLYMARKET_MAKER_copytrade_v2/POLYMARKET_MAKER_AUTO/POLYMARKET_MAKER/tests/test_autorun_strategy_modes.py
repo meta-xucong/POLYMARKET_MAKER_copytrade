@@ -917,6 +917,106 @@ def test_refresh_topics_routes_new_tokens_to_burst_in_classic_and_aggressive_mod
     assert manager.topic_details["b"]["queue_role"] == "new_token"
 
 
+def test_refresh_topics_rearms_active_unmanaged_handled_token():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager.topic_details["t1"] = {
+        "resume_state": {"has_position": True},
+        "refill_exit_reason": "SELL_ABANDONED",
+        "startup_orphan_profit_sweep": True,
+        "stoploss_reentry_resume": {"old_entry_price": 0.2},
+        "orphaned": True,
+    }
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+    manager._refresh_sell_position_snapshot = lambda: ({}, "ok")  # type: ignore[assignment]
+    captured = []
+    manager._append_exit_token_record = lambda token_id, reason, **kwargs: captured.append((token_id, reason, kwargs))  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "t1" in manager.pending_topics
+    detail = manager.topic_details.get("t1") or {}
+    assert detail.get("queue_role") == "startup_reconcile_buy"
+    assert "resume_state" not in detail
+    assert "refill_exit_reason" not in detail
+    assert "startup_orphan_profit_sweep" not in detail
+    assert "stoploss_reentry_resume" not in detail
+    assert "orphaned" not in detail
+    assert captured and captured[-1][0] == "t1"
+    assert captured[-1][1] == "ACTIVE_UNMANAGED_REARM"
+    assert captured[-1][2]["exit_data"]["rearm_path"] == "startup_reconcile_buy"
+    assert "resume_state" in captured[-1][2]["exit_data"]["stale_keys_cleared"]
+
+
+def test_refresh_topics_rearm_uses_position_path_when_position_exists():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+    manager._refresh_sell_position_snapshot = lambda: ({"t1": 5.0}, "ok")  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "t1" in manager.pending_topics
+    assert (manager.topic_details.get("t1") or {}).get("queue_role") == "startup_reconcile_position"
+
+
+def test_refresh_topics_does_not_rearm_stoploss_owned_token():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager._stoploss_reentry_states["t1"] = {
+        "state": "STOPLOSS_EXITED_WAITING_WINDOW",
+        "source_detached": False,
+    }
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "t1" not in manager.pending_topics
+
+
+def test_refresh_topics_does_not_rearm_orphan_owned_token():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+    manager._load_latest_orphan_states = lambda: {"t1": {"status": "orphaned"}}  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "t1" not in manager.pending_topics
+
+
 def test_rebalance_moves_new_token_from_burst_to_base_but_keeps_reentry_in_burst():
     cfg = GlobalConfig.from_dict({"scheduler": {"strategy_mode": "classic", "max_concurrent_tasks": 2}})
     manager = _build_manager(cfg)
