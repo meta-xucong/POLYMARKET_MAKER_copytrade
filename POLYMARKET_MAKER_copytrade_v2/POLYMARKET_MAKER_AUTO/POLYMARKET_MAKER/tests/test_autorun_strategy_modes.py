@@ -928,6 +928,54 @@ def test_restore_runtime_status_skips_pending_exit_owned_task_snapshot(tmp_path)
     assert detail.get("queue_role") == "title_blacklist_sell_only"
 
 
+def test_restore_runtime_status_skips_manual_intervention_owned_task_snapshot(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    status_path = data_dir / "autorun_status.json"
+    token_id = "manual_token"
+    status_path.write_text(
+        json.dumps(
+            {
+                "pending_topics": [],
+                "pending_exit_topics": [],
+                "tasks": {
+                    token_id: {
+                        "config_path": "",
+                        "log_path": "",
+                    }
+                },
+                "topic_details": {
+                    token_id: {
+                        "queue_role": "manual_intervention",
+                        "schedule_lane": "base",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "runtime_status_path": str(status_path),
+            "handled_topics_path": str(data_dir / "handled_topics.json"),
+            "copytrade_tokens_path": str(data_dir / "tokens_from_copytrade.json"),
+            "copytrade_sell_signals_path": str(data_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(data_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (None, "stub")  # type: ignore[assignment]
+
+    manager._restore_runtime_status()
+
+    assert token_id not in manager.tasks
+    assert token_id not in manager.pending_topics
+    detail = manager.topic_details.get(token_id) or {}
+    assert detail.get("queue_role") == "manual_intervention"
+
+
 def test_start_process_blocks_when_metadata_unverified_without_position():
     cfg = GlobalConfig.from_dict(
         {
@@ -977,6 +1025,90 @@ def test_ensure_resume_state_from_live_position_sets_skip_buy():
     assert float(resume.get("position_size") or 0.0) == 4.0
     assert float(resume.get("entry_price") or 0.0) == 0.63
     assert resume.get("skip_buy") is True
+
+
+def test_reconcile_position_restore_before_start_downgrades_startup_reconcile_without_position():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "startup_reconcile_no_pos"
+    manager.topic_details[token_id] = {
+        "queue_role": "startup_reconcile_position",
+        "resume_state": {"has_position": True, "position_size": 5.0, "entry_price": 0.61},
+    }
+    manager._refresh_unified_position_snapshot = lambda force_refresh=False: ([], {}, "ok", "live")  # type: ignore[assignment]
+
+    result = manager._reconcile_position_restore_before_start(token_id)
+
+    assert result == "downgraded_to_buy"
+    detail = manager.topic_details[token_id]
+    assert detail["queue_role"] == "startup_reconcile_buy"
+    assert "resume_state" not in detail
+
+
+def test_reconcile_position_restore_before_start_drops_restored_token_without_position():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "restored_no_pos"
+    manager.pending_topics.append(token_id)
+    manager.handled_topics.add(token_id)
+    manager.topic_details[token_id] = {
+        "queue_role": "restored_token",
+        "resume_state": {"has_position": True, "position_size": 5.0, "entry_price": 0.61},
+    }
+    manager.tasks[token_id] = TopicTask(topic_id=token_id, status="pending")
+    manager._refresh_unified_position_snapshot = lambda force_refresh=False: ([], {}, "ok", "live")  # type: ignore[assignment]
+    captured = []
+    manager._append_exit_token_record = lambda token, reason, **kwargs: captured.append((token, reason, kwargs))  # type: ignore[assignment]
+
+    result = manager._reconcile_position_restore_before_start(token_id)
+
+    assert result == "dropped_restored_token"
+    assert token_id not in manager.pending_topics
+    assert token_id not in manager.tasks
+    assert token_id not in manager.handled_topics
+    assert token_id not in manager.topic_details
+    assert captured and captured[0][1] == "RESTORE_RUNTIME_NO_POSITION"
+
+
+def test_reconcile_position_restore_before_start_keeps_restored_token_when_snapshot_unavailable():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "restored_snapshot_unavailable"
+    manager.pending_topics.append(token_id)
+    manager.handled_topics.add(token_id)
+    manager.topic_details[token_id] = {
+        "queue_role": "restored_token",
+        "resume_state": {"has_position": True, "position_size": 5.0, "entry_price": 0.61},
+    }
+    manager._refresh_unified_position_snapshot = lambda force_refresh=False: ([], {}, "request_error", "data_api")  # type: ignore[assignment]
+    captured = []
+    manager._append_exit_token_record = lambda token, reason, **kwargs: captured.append((token, reason, kwargs))  # type: ignore[assignment]
+
+    result = manager._reconcile_position_restore_before_start(token_id)
+
+    assert result == "position_snapshot_unavailable"
+    assert token_id in manager.pending_topics
+    assert token_id in manager.handled_topics
+    assert manager.topic_details[token_id]["queue_role"] == "restored_token"
+    assert "resume_state" in manager.topic_details[token_id]
+    assert not captured
+
+
+def test_reconcile_position_restore_before_start_keeps_startup_reconcile_when_snapshot_unavailable():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "startup_snapshot_unavailable"
+    manager.topic_details[token_id] = {
+        "queue_role": "startup_reconcile_position",
+        "resume_state": {"has_position": True, "position_size": 5.0, "entry_price": 0.61},
+    }
+    manager._refresh_unified_position_snapshot = lambda force_refresh=False: ([], {}, "request_error", "data_api")  # type: ignore[assignment]
+
+    result = manager._reconcile_position_restore_before_start(token_id)
+
+    assert result == "position_snapshot_unavailable"
+    assert manager.topic_details[token_id]["queue_role"] == "startup_reconcile_position"
+    assert "resume_state" in manager.topic_details[token_id]
 
 
 def test_start_process_blocked_when_sell_cleanup_in_flight():
@@ -1233,6 +1365,71 @@ def test_refresh_topics_does_not_rearm_stoploss_owned_token():
     manager.handled_topics.add("t1")
     manager._stoploss_reentry_states["t1"] = {
         "state": "STOPLOSS_EXITED_WAITING_WINDOW",
+        "source_detached": False,
+    }
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "t1" not in manager.pending_topics
+
+
+def test_refresh_topics_does_not_rearm_manual_intervention_token():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager.topic_details["t1"] = {
+        "queue_role": "manual_intervention",
+    }
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "t1" not in manager.pending_topics
+
+
+def test_refresh_topics_does_not_rearm_stoploss_waiting_probe_token():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager._stoploss_reentry_states["t1"] = {
+        "state": "STOPLOSS_EXITED_WAITING_PROBE",
+        "source_detached": False,
+    }
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+
+    manager._refresh_topics()
+
+    assert "t1" not in manager.pending_topics
+
+
+def test_refresh_topics_does_not_rearm_stoploss_clear_pending_escalated_token():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager._stoploss_reentry_states["t1"] = {
+        "state": "STOPLOSS_CLEAR_PENDING_ESCALATED",
         "source_detached": False,
     }
     manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
@@ -2787,7 +2984,7 @@ def test_process_exit_startup_reconcile_position_late_cleanup_success_when_flat(
     manager._advance_token_cycle_state_on_cleanup = (  # type: ignore[method-assign]
         lambda token_id, run_cfg: cycle_calls.append((token_id, dict(run_cfg or {})))
     )
-    manager._has_account_position = lambda token_id, force_refresh=False: False  # type: ignore[method-assign]
+    manager._refresh_unified_position_snapshot = lambda force_refresh=True: ([], {"t1": 0.0}, "ok", "live")  # type: ignore[assignment]
 
     task = TopicTask(topic_id="t1")
     manager._handle_process_exit(task, 1)
@@ -2800,6 +2997,66 @@ def test_process_exit_startup_reconcile_position_late_cleanup_success_when_flat(
     assert cycle_calls and cycle_calls[0][0] == "t1"
     rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
     assert rows[-1]["exit_reason"] == "POSITION_RECONCILE_LATE_CLEANUP_SUCCESS"
+
+
+def test_process_exit_startup_reconcile_position_cleanup_success_on_rc_zero(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.topic_details["t1"] = {
+        "queue_role": "startup_reconcile_position",
+        "resume_state": {"has_position": True},
+    }
+    manager.handled_topics.add("t1")
+    cycle_calls = []
+    manager._advance_token_cycle_state_on_cleanup = (  # type: ignore[method-assign]
+        lambda token_id, run_cfg: cycle_calls.append((token_id, dict(run_cfg or {})))
+    )
+    manager._refresh_unified_position_snapshot = lambda force_refresh=True: ([], {"t1": 0.0}, "ok", "live")  # type: ignore[assignment]
+
+    task = TopicTask(topic_id="t1")
+    manager._handle_process_exit(task, 0)
+
+    assert task.status == "exited"
+    assert task.no_restart is True
+    assert task.end_reason == "position reconcile cleanup success"
+    assert "t1" not in manager.handled_topics
+    assert manager.topic_details["t1"]["queue_role"] == "cycle_closed"
+    assert "resume_state" not in manager.topic_details["t1"]
+    assert cycle_calls and cycle_calls[0][0] == "t1"
+
+
+def test_process_exit_startup_reconcile_position_cleanup_success_when_only_dust_remains(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.topic_details["t1"] = {"queue_role": "startup_reconcile_position"}
+    manager.handled_topics.add("t1")
+    cycle_calls = []
+    manager._advance_token_cycle_state_on_cleanup = (  # type: ignore[method-assign]
+        lambda token_id, run_cfg: cycle_calls.append((token_id, dict(run_cfg or {})))
+    )
+    manager._refresh_unified_position_snapshot = lambda force_refresh=True: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 0.2, "avgPrice": 0.63}],
+        {"t1": 0.2},
+        "ok",
+        "live",
+    )
+
+    task = TopicTask(topic_id="t1")
+    manager._handle_process_exit(task, 1)
+
+    assert task.status == "exited"
+    assert task.no_restart is True
+    assert task.end_reason == "position reconcile cleanup success"
+    assert manager.topic_details["t1"]["queue_role"] == "cycle_closed"
+    assert cycle_calls and cycle_calls[0][0] == "t1"
 
 
 def test_remove_token_from_copytrade_files_soft_invalidates_records(tmp_path):
@@ -3599,6 +3856,7 @@ def test_stoploss_no_fill_escalates_to_sell_only_after_retry_limit(tmp_path):
 
     state = manager._stoploss_reentry_states["t1"]
     assert state["state"] == "STOPLOSS_IOC_RETRY_ESCALATED"
+    assert int(state["stoploss_nofill_sell_only_requeues"]) == 1
     assert "t1" in manager.pending_topics
     detail = manager.topic_details["t1"]
     assert detail["force_sell_only_on_startup"] is True
@@ -3640,6 +3898,42 @@ def test_stoploss_escalated_position_gone_finalizes_waiting_reentry(tmp_path):
     assert "STOPLOSS_IOC_NO_FILL_POSITION_GONE" in reasons
     assert "STOPLOSS_FULL_CLEAR_LATE" in reasons
     assert reasons[-1] == "STOPLOSS_FULL_CLEAR"
+
+
+def test_stoploss_escalated_sell_only_requeues_eventually_require_manual_intervention(tmp_path):
+    manager = _build_stoploss_manager(tmp_path, stoploss_overrides={"min_age_minutes": 0.0})
+    now = time.time()
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_IOC_RETRY_ESCALATED",
+            "stoploss_cycle_count": 0,
+            "source_detached": False,
+        },
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.90}],
+        "ok",
+    )
+    try:
+        for idx in range(autorun_mod.STOPLOSS_NOFILL_SELL_ONLY_MAX_REQUEUES):
+            manager.pending_topics.clear()
+            manager._run_stoploss_check(now + idx)
+        manager.pending_topics.clear()
+        manager._run_stoploss_check(now + 999.0)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_MANUAL_INTERVENTION_REQUIRED"
+    assert manager.topic_details["t1"]["queue_role"] == "manual_intervention"
+    manual_payload = json.loads(
+        (manager.config.copytrade_sell_signals_path.parent / "manual_intervention_tokens.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manual_payload["tokens"][0]["reason"] == "STOPLOSS_NOFILL_SELL_ONLY_MAX_REQUEUES"
 
 
 def test_stoploss_postcheck_converts_error_into_waiting_reentry_when_fill_confirmed(tmp_path):

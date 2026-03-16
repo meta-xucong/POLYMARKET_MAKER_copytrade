@@ -259,6 +259,7 @@ SOURCE_DETACHED_HOLD_SEC = 20 * 60.0
 EXIT_ORDERBOOK_MISSING_BACKOFF_SCHEDULE_SEC = (5 * 60.0, 15 * 60.0, 30 * 60.0)
 POSITION_CLEANUP_DUST_THRESHOLD = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
+STOPLOSS_NOFILL_SELL_ONLY_MAX_REQUEUES = 3
 SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC = 45.0
 ALLOWED_IOC_EXIT_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY"}
 ALLOWED_EXIT_SIGNAL_REASONS = ALLOWED_IOC_EXIT_REASONS | {"TOTAL_LIQUIDATION"}
@@ -3148,6 +3149,41 @@ class AutoRunManager:
                 f"next_buy_after={next_text}"
             )
 
+    def _mark_token_cycle_closed_runtime(
+        self,
+        token_id: str,
+        *,
+        task: Optional[TopicTask] = None,
+    ) -> None:
+        if not token_id:
+            return
+        detail = self.topic_details.setdefault(token_id, {})
+        for stale_key in (
+            "resume_state",
+            "refill_exit_reason",
+            "force_sell_only_on_startup",
+            "force_sell_only_reason",
+            "stoploss_nofill_note",
+            "stoploss_reentry_resume",
+        ):
+            detail.pop(stale_key, None)
+        detail["queue_role"] = "cycle_closed"
+        self._remove_pending_topic(token_id)
+        task_ref = task or self.tasks.get(token_id)
+        if task_ref is not None:
+            task_ref.status = "exited"
+            task_ref.no_restart = True
+            if not task_ref.end_reason:
+                task_ref.end_reason = "cycle closed"
+
+    @staticmethod
+    def _is_position_dust(size: Any) -> bool:
+        try:
+            normalized = float(size or 0.0)
+        except (TypeError, ValueError):
+            normalized = 0.0
+        return normalized <= POSITION_CLEANUP_DUST_THRESHOLD
+
     def _apply_token_cycle_buy_gate_and_drop_override(
         self, token_id: str, run_cfg: Dict[str, Any]
     ) -> bool:
@@ -3384,13 +3420,14 @@ class AutoRunManager:
         position_size: float,
         entry_price: Optional[float],
         note: str,
-    ) -> None:
+    ) -> bool:
         token_id = str(token_id or "").strip()
         if not token_id:
-            return
+            return False
         task = self.tasks.get(token_id)
         if task and task.is_running():
-            return
+            return False
+        already_pending = token_id in self.pending_topics or token_id in self.pending_burst_topics
         detail = self.topic_details.setdefault(token_id, {})
         detail["force_sell_only_on_startup"] = True
         detail["force_sell_only_reason"] = "stoploss_nofill_escalated"
@@ -3404,6 +3441,49 @@ class AutoRunManager:
         }
         detail["stoploss_nofill_note"] = str(note or "")
         self._enqueue_pending_topic(token_id)
+        return not already_pending
+
+    def _mark_stoploss_nofill_manual_intervention(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        retry_count: int,
+    ) -> None:
+        if not token_id:
+            return
+        detail = self.topic_details.setdefault(token_id, {})
+        detail.pop("force_sell_only_on_startup", None)
+        detail.pop("resume_state", None)
+        detail["queue_role"] = "manual_intervention"
+        detail["schedule_lane"] = "base"
+        self._remove_pending_topic(token_id)
+        task = self.tasks.get(token_id)
+        if task is not None and not task.is_running():
+            task.status = "error"
+            task.no_restart = True
+            task.end_reason = "manual intervention required"
+        state["state"] = "STOPLOSS_MANUAL_INTERVENTION_REQUIRED"
+        state["market_status_last"] = "manual_intervention_required"
+        state["last_error"] = (
+            f"stoploss no-fill sell-only exhausted after {int(retry_count)} requeues"
+        )
+        self._record_manual_intervention_token(
+            token_id,
+            retry_count=int(retry_count),
+            rc=0,
+            reason="STOPLOSS_NOFILL_SELL_ONLY_MAX_REQUEUES",
+        )
+        self._append_exit_token_record(
+            token_id,
+            "STOPLOSS_NOFILL_MANUAL_INTERVENTION_REQUIRED",
+            exit_data={
+                "source": "stoploss_v4",
+                "retry_count": int(retry_count),
+                "action": "manual_intervention",
+            },
+            refillable=False,
+        )
 
     def _finalize_stoploss_full_clear(
         self,
@@ -3642,7 +3722,10 @@ class AutoRunManager:
         queue_role = str(detail.get("queue_role") or "").strip()
         if queue_role != "startup_reconcile_position":
             return False
-        if self._has_account_position(task.topic_id, force_refresh=True):
+        rows, snapshot, info, _source = self._refresh_unified_position_snapshot(force_refresh=True)
+        if info != "ok":
+            return False
+        if not self._is_position_dust(snapshot.get(task.topic_id, 0.0)):
             return False
         self._append_exit_token_record(
             task.topic_id,
@@ -3650,18 +3733,18 @@ class AutoRunManager:
             exit_data={
                 "source": "startup_reconcile_position",
                 "rc": rc,
-                "note": "process exited nonzero after position already cleared",
+                "note": (
+                    "process exited after position already cleared"
+                    if rc == 0
+                    else "process exited nonzero after position already cleared"
+                ),
             },
             refillable=False,
         )
         task_run_cfg = self._get_task_run_config(task)
         self._advance_token_cycle_state_on_cleanup(task.topic_id, task_run_cfg)
         self._remove_from_handled_topics(task.topic_id)
-        detail.pop("resume_state", None)
-        detail.pop("refill_exit_reason", None)
-        detail["queue_role"] = "cycle_closed"
-        task.status = "exited"
-        task.no_restart = True
+        self._mark_token_cycle_closed_runtime(task.topic_id, task=task)
         task.end_reason = "position reconcile cleanup success"
         print(
             "[AUTO][LATE_SUCCESS] 历史仓位接管路径卖出后已无持仓，按成功收口: "
@@ -3840,12 +3923,30 @@ class AutoRunManager:
                 state_dirty = True
                 state_name = "NORMAL_MAKER"
             if state_name == "STOPLOSS_IOC_RETRY_ESCALATED":
-                self._queue_stoploss_nofill_sell_only(
+                requeue_count = int(state.get("stoploss_nofill_sell_only_requeues") or 0)
+                task = self.tasks.get(token_id)
+                if (
+                    requeue_count >= STOPLOSS_NOFILL_SELL_ONLY_MAX_REQUEUES
+                    and token_id not in self.pending_topics
+                    and token_id not in self.pending_burst_topics
+                    and not (task and task.is_running())
+                ):
+                    self._mark_stoploss_nofill_manual_intervention(
+                        token_id,
+                        state,
+                        retry_count=requeue_count,
+                    )
+                    state_dirty = True
+                    continue
+                queued_new = self._queue_stoploss_nofill_sell_only(
                     token_id,
                     position_size=pos_size,
                     entry_price=_extract_position_avg_price(row),
                     note=str(state.get("last_error") or "stoploss no-fill escalated"),
                 )
+                if queued_new:
+                    state["stoploss_nofill_sell_only_requeues"] = requeue_count + 1
+                    state_dirty = True
                 continue
 
             if self._stoploss_is_market_closed(token_id):
@@ -4117,12 +4218,16 @@ class AutoRunManager:
                         state["state"] = "STOPLOSS_IOC_RETRY_ESCALATED"
                         state["nofill_next_retry_ts"] = 0.0
                         state["market_status_last"] = "stoploss_ioc_retry_escalated"
-                        self._queue_stoploss_nofill_sell_only(
+                        queued_new = self._queue_stoploss_nofill_sell_only(
                             token_id,
                             position_size=before_size,
                             entry_price=float(avg_price),
                             note=state["last_error"],
                         )
+                        if queued_new:
+                            state["stoploss_nofill_sell_only_requeues"] = (
+                                int(state.get("stoploss_nofill_sell_only_requeues") or 0) + 1
+                            )
                         self._append_exit_token_record(
                             token_id,
                             "STOPLOSS_IOC_NO_FILL_ESCALATED",
@@ -4637,7 +4742,14 @@ class AutoRunManager:
     def _manual_intervention_path(self) -> Path:
         return self.config.copytrade_sell_signals_path.parent / "manual_intervention_tokens.json"
 
-    def _record_manual_intervention_token(self, token_id: str, *, retry_count: int, rc: int) -> None:
+    def _record_manual_intervention_token(
+        self,
+        token_id: str,
+        *,
+        retry_count: int,
+        rc: int,
+        reason: str = "EXIT_CLEANUP_MAX_RETRIES",
+    ) -> None:
         if not token_id:
             return
         path = self._manual_intervention_path()
@@ -4660,7 +4772,7 @@ class AutoRunManager:
                         "retry_count": int(retry_count),
                         "last_rc": int(rc),
                         "updated_at": now_iso,
-                        "reason": "EXIT_CLEANUP_MAX_RETRIES",
+                        "reason": str(reason or "EXIT_CLEANUP_MAX_RETRIES"),
                     }
                 )
                 matched = True
@@ -4672,7 +4784,7 @@ class AutoRunManager:
                     "retry_count": int(retry_count),
                     "last_rc": int(rc),
                     "updated_at": now_iso,
-                    "reason": "EXIT_CLEANUP_MAX_RETRIES",
+                    "reason": str(reason or "EXIT_CLEANUP_MAX_RETRIES"),
                 }
             )
         _atomic_json_write(path, {"updated_at": now_iso, "tokens": out})
@@ -6416,8 +6528,9 @@ class AutoRunManager:
                 self._remove_from_handled_topics(task.topic_id)
                 self._remove_token_from_copytrade_files(task.topic_id)
                 self._remove_exit_token_records(task.topic_id)
+                self._mark_token_cycle_closed_runtime(task.topic_id, task=task)
 
-        if rc != 0 and self._finalize_position_reconcile_exit_if_flat(task, rc=rc):
+        if self._finalize_position_reconcile_exit_if_flat(task, rc=rc):
             return
 
         if task.no_restart:
@@ -7676,7 +7789,9 @@ class AutoRunManager:
         if self._block_topic_start_for_active_sell(topic_id, source="before_start"):
             return False
 
-        self._ensure_resume_state_from_live_position(topic_id)
+        restore_state = self._reconcile_position_restore_before_start(topic_id)
+        if restore_state == "dropped_restored_token":
+            return False
 
         config_data = self._build_run_config(topic_id)
         if not self._apply_token_cycle_buy_gate_and_drop_override(topic_id, config_data):
@@ -7900,6 +8015,80 @@ class AutoRunManager:
             f"token={token_id[:16]}... size={size:.4f}"
         )
 
+    def _reconcile_position_restore_before_start(self, token_id: str) -> str:
+        if not token_id:
+            return "unchanged"
+        detail = self.topic_details.setdefault(token_id, {})
+        queue_role = str(detail.get("queue_role") or "").strip().lower()
+        resume_state = detail.get("resume_state") if isinstance(detail.get("resume_state"), dict) else {}
+        expects_position = queue_role in {
+            "restored_token",
+            "startup_reconcile_position",
+            "refill_with_position",
+        } or bool(resume_state.get("has_position"))
+        if not expects_position:
+            return "unchanged"
+
+        _rows, snapshot, info, source = self._refresh_unified_position_snapshot(force_refresh=True)
+        if info != "ok":
+            print(
+                "[RESUME][SKIP] 启动前持仓快照不可用，保持原恢复配置: "
+                f"token={token_id[:16]}... info={info} source={source}"
+            )
+            return "position_snapshot_unavailable"
+
+        has_live_position = not self._is_position_dust(snapshot.get(token_id, 0.0))
+        if has_live_position:
+            self._ensure_resume_state_from_live_position(token_id)
+            return "position_confirmed"
+
+        stale_resume = isinstance(resume_state, dict) and bool(resume_state.get("has_position"))
+        if stale_resume:
+            detail.pop("resume_state", None)
+        for stale_key in ("entry_price", "last_buy_price", "floor_price", "sell_trigger_price"):
+            detail.pop(stale_key, None)
+
+        if queue_role == "startup_reconcile_position":
+            detail["queue_role"] = "startup_reconcile_buy"
+            print(
+                "[RESUME][DOWNGRADE] 启动前未检测到真实持仓，降级为 startup_reconcile_buy: "
+                f"token={token_id[:16]}..."
+            )
+            return "downgraded_to_buy"
+
+        if queue_role == "refill_with_position":
+            detail["queue_role"] = "refill_buy"
+            print(
+                "[RESUME][DOWNGRADE] 启动前未检测到真实持仓，降级为 refill_buy: "
+                f"token={token_id[:16]}..."
+            )
+            return "downgraded_to_refill_buy"
+
+        if queue_role == "restored_token":
+            self._append_exit_token_record(
+                token_id,
+                "RESTORE_RUNTIME_NO_POSITION",
+                exit_data={
+                    "source": "restore_runtime",
+                    "queue_role": queue_role,
+                    "stale_resume_state": stale_resume,
+                },
+                refillable=False,
+            )
+            self._remove_pending_topic(token_id)
+            task = self.tasks.get(token_id)
+            if task is not None and not task.is_running():
+                self.tasks.pop(token_id, None)
+            self._purge_token_runtime_state(token_id)
+            self._remove_from_handled_topics(token_id)
+            print(
+                "[RESUME][DROP] 启动前未检测到真实持仓，丢弃历史恢复 token: "
+                f"token={token_id[:16]}..."
+            )
+            return "dropped_restored_token"
+
+        return "cleared_stale_resume"
+
     def _start_exit_cleanup(self, token_id: str) -> None:
         task = self.tasks.get(token_id)
         if task and task.is_running():
@@ -8111,7 +8300,7 @@ class AutoRunManager:
                 owner_retained.add(token_id)
                 continue
             pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
-            has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+            has_position = not self._is_position_dust(pos_size)
             has_sell_signal = token_id in tokens_with_sell_signal
             if has_sell_signal and has_position:
                 to_liquidate.add(token_id)
@@ -8369,7 +8558,7 @@ class AutoRunManager:
             has_position = False
             if pos_info == "ok":
                 pos_size = float(pos_snapshot.get(token_id, 0.0) or 0.0)
-                has_position = pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+                has_position = not self._is_position_dust(pos_size)
 
             if has_position or pos_info != "ok":
                 self._remove_pending_topic(token_id)
@@ -9526,12 +9715,54 @@ class AutoRunManager:
         state_name = str(state.get("state") or "").strip().upper()
         return state_name in {
             "STOPLOSS_EXITED_WAITING_WINDOW",
+            "STOPLOSS_EXITED_WAITING_PROBE",
             "STOPLOSS_EXITED_WAITING_REBOUND",
             "REENTRY_HOLD",
             "STOPLOSS_IOC_RETRY_PENDING",
             "STOPLOSS_IOC_RETRY_ESCALATED",
+            "STOPLOSS_MANUAL_INTERVENTION_REQUIRED",
             "STOPLOSS_CLEAR_PENDING_CONFIRM",
+            "STOPLOSS_CLEAR_PENDING_ESCALATED",
         }
+
+    def _resolve_runtime_owner(
+        self,
+        token_id: str,
+        *,
+        orphan_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> str:
+        if not token_id:
+            return "none"
+        detail = self.topic_details.get(token_id) or {}
+        queue_role = str(detail.get("queue_role") or "").strip().lower()
+        if queue_role == "manual_intervention":
+            return "manual_intervention"
+        if self._has_stoploss_runtime_owner(token_id):
+            return "stoploss"
+        if self._has_orphan_runtime_owner(token_id, orphan_states):
+            return "orphan_recovery"
+        if queue_role in {"startup_reconcile_position", "startup_reconcile_buy", "restored_token"}:
+            return "startup_reconcile"
+        return "none"
+
+    def _has_higher_priority_runtime_owner(
+        self,
+        token_id: str,
+        claimant: str,
+        *,
+        orphan_states: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> bool:
+        priority = {
+            "none": 0,
+            "active_unmanaged_rearm": 10,
+            "startup_restore": 20,
+            "startup_reconcile": 30,
+            "orphan_recovery": 200,
+            "stoploss": 300,
+            "manual_intervention": 400,
+        }
+        owner = self._resolve_runtime_owner(token_id, orphan_states=orphan_states)
+        return priority.get(owner, 0) > priority.get(str(claimant or "none"), 0)
 
     def _has_orphan_runtime_owner(
         self,
@@ -9551,9 +9782,10 @@ class AutoRunManager:
         *,
         orphan_states: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> bool:
-        return self._has_stoploss_runtime_owner(token_id) or self._has_orphan_runtime_owner(
+        return self._has_higher_priority_runtime_owner(
             token_id,
-            orphan_states,
+            "startup_reconcile",
+            orphan_states=orphan_states,
         )
 
     def _has_runtime_owner_blocking_plain_restore(
@@ -9563,8 +9795,9 @@ class AutoRunManager:
         orphan_states: Optional[Dict[str, Dict[str, Any]]] = None,
         pending_exit_topics: Optional[set[str]] = None,
     ) -> bool:
-        if self._has_runtime_owner_blocking_startup_reconcile(
+        if self._has_higher_priority_runtime_owner(
             token_id,
+            "startup_restore",
             orphan_states=orphan_states,
         ):
             return True
@@ -9622,9 +9855,11 @@ class AutoRunManager:
                 continue
             if token_id in managed_scope:
                 continue
-            if self._has_stoploss_runtime_owner(token_id):
-                continue
-            if self._has_orphan_runtime_owner(token_id, orphan_states):
+            if self._has_higher_priority_runtime_owner(
+                token_id,
+                "active_unmanaged_rearm",
+                orphan_states=orphan_states,
+            ):
                 continue
             suppressed_until = float(
                 self._active_unmanaged_rearm_suppressed_until.get(token_id) or 0.0
@@ -9704,7 +9939,7 @@ class AutoRunManager:
                 if stale_key in detail:
                     stale_keys_cleared.append(stale_key)
                     detail.pop(stale_key, None)
-            has_position = float(pos_snapshot.get(token_id, 0.0) or 0.0) > POSITION_CLEANUP_DUST_THRESHOLD
+            has_position = not self._is_position_dust(pos_snapshot.get(token_id, 0.0))
             detail["schedule_lane"] = "base"
             rearm_path = "startup_reconcile_position" if has_position else "startup_reconcile_buy"
             detail["queue_role"] = rearm_path
@@ -10337,7 +10572,7 @@ class AutoRunManager:
             token_id,
         )
         normalized_pos_size = float(pos_size or 0.0)
-        has_position = normalized_pos_size > POSITION_CLEANUP_DUST_THRESHOLD
+        has_position = not self._is_position_dust(normalized_pos_size)
         if info != "ok" and not has_position:
             print(f"[COPYTRADE][INFO] 持仓检查失败 token={token_id} info={info}")
         self._position_snapshot_cache[token_id] = {

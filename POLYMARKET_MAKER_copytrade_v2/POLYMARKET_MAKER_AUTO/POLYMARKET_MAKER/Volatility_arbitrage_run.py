@@ -189,6 +189,29 @@ def _normalize_cycle_gate_ratio(value: Any) -> Optional[float]:
     return numeric
 
 
+def _is_buy_stage_active_for_inactive_release(
+    *,
+    current_state: Any,
+    awaiting: Any,
+    strategy_position_size: Any,
+    local_position_size: Optional[float],
+    effective_min_order_size: float,
+    sell_only_active: bool,
+    now_ts: float,
+    buy_cooldown_until: float,
+) -> bool:
+    if sell_only_active or now_ts < buy_cooldown_until:
+        return False
+    dust_floor = max(float(effective_min_order_size or 0.0), 1e-4)
+    for pos in (local_position_size, _extract_position_size({"position_size": strategy_position_size})):
+        if pos is not None and float(pos) > dust_floor:
+            return False
+    awaiting_val = getattr(awaiting, "value", awaiting)
+    if awaiting_val in {ActionType.BUY, ActionType.SELL, "BUY", "SELL"}:
+        return False
+    return str(current_state or "").strip().upper() == "FLAT"
+
+
 def _atomic_write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -4831,6 +4854,8 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     last_log: Optional[float] = None
     pending_buy: Optional[Action] = None
     pending_buy_ts: Optional[float] = None
+    buy_inactive_timeout_sec = sell_inactive_timeout_sec
+    buy_inactive_since_ts: Optional[float] = None
     shock_reject_since_ts: Optional[float] = None
     short_buy_cooldown = 1.0
     next_position_sync: float = 0.0
@@ -6138,6 +6163,36 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 if stop_event.is_set():
                     break
 
+                status_for_buy_inactive = strategy.status()
+                if buy_inactive_timeout_sec > 0 and _is_buy_stage_active_for_inactive_release(
+                    current_state=status_for_buy_inactive.get("state"),
+                    awaiting=status_for_buy_inactive.get("awaiting"),
+                    strategy_position_size=status_for_buy_inactive.get("position_size"),
+                    local_position_size=position_size,
+                    effective_min_order_size=effective_min_order_size,
+                    sell_only_active=sell_only_event.is_set(),
+                    now_ts=now,
+                    buy_cooldown_until=buy_cooldown_until,
+                ):
+                    if buy_inactive_since_ts is None:
+                        buy_inactive_since_ts = now
+                    elif (now - buy_inactive_since_ts) >= buy_inactive_timeout_sec:
+                        print("[RELEASE] 买入侧长期无动作，准备退出并交由回填机制处理。")
+                        _cancel_open_buy_orders_before_exit("BUY_INACTIVE_RELEASE")
+                        snap = latest.get(token_id) or {}
+                        _record_exit_token(token_id, "BUY_INACTIVE_RELEASE", {
+                            "has_position": False,
+                            "inactive_timeout_hours": buy_inactive_timeout_sec / 3600.0,
+                            "last_bid": float(snap.get("best_bid") or 0.0),
+                            "last_ask": float(snap.get("best_ask") or 0.0),
+                            "drop_pct_current": _current_drop_pct_for_exit(),
+                        })
+                        strategy.stop("buy inactive release")
+                        stop_event.set()
+                        break
+                else:
+                    buy_inactive_since_ts = None
+
                 if action is None:
                     continue
 
@@ -6767,6 +6822,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     if strategy_supports_total_position:
                         buy_filled_kwargs["total_position"] = position_size
                     strategy.on_buy_filled(**buy_filled_kwargs)
+                    buy_inactive_since_ts = None
                     _anchor_note_buy(fill_px, position_avg=pos_avg_price)
                     print(
                         f"[STATE] 买入成交 -> status={buy_status or 'N/A'} price={fill_px:.4f} size={position_size:.4f}"
