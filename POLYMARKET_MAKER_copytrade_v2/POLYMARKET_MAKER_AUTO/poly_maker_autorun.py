@@ -2214,6 +2214,7 @@ class AutoRunManager:
             "silence": 0,
         }
         self._ws_last_reconnect_reason: Optional[str] = None
+        self._ws_last_reconnect_detail: Dict[str, Any] = {}
         self._reentry_eligible_tokens: set[str] = set()
         self._reentry_eligible_reasons: Dict[str, str] = {}
         # 日志清理相关（每天清理7天前的日志）
@@ -5721,6 +5722,46 @@ class AutoRunManager:
                 int(self._ws_reconnect_reason_counts.get(state, 0)) + 1
             )
             self._ws_last_reconnect_reason = state
+            detail: Dict[str, Any] = {
+                "state": state,
+                "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            if isinstance(info, dict):
+                for key in (
+                    "connect_count",
+                    "connected_for_sec",
+                    "status_code",
+                    "message",
+                    "error",
+                    "subscribed_tokens",
+                    "desired_tokens",
+                    "pending_subscribe",
+                    "pending_unsubscribe",
+                    "timeout",
+                ):
+                    value = info.get(key)
+                    if value not in (None, ""):
+                        detail[key] = value
+            self._ws_last_reconnect_detail = detail
+            if state == "closed":
+                print(
+                    "[WS][AGGREGATOR] reconnect trigger=closed "
+                    f"code={detail.get('status_code', '-')} "
+                    f"uptime={detail.get('connected_for_sec', '-')}s "
+                    f"subs={detail.get('subscribed_tokens', '-')}"
+                )
+            elif state == "error":
+                print(
+                    "[WS][AGGREGATOR] reconnect trigger=error "
+                    f"uptime={detail.get('connected_for_sec', '-')}s "
+                    f"error={str(detail.get('error') or '-')[:160]}"
+                )
+            elif state == "silence":
+                print(
+                    "[WS][AGGREGATOR] reconnect trigger=silence "
+                    f"timeout={detail.get('timeout', '-')}s "
+                    f"subs={detail.get('subscribed_tokens', '-')}"
+                )
             return
         if state != "open":
             return
@@ -8830,6 +8871,16 @@ class AutoRunManager:
             f"last={self._ws_last_reconnect_reason or '-'} "
             f"reentry_eligible={len(self._reentry_eligible_tokens)}"
         )
+        if self._ws_last_reconnect_detail:
+            detail = self._ws_last_reconnect_detail
+            print(
+                "[STATUS] ws_last_reconnect_detail="
+                f"state={detail.get('state', '-')} "
+                f"code={detail.get('status_code', '-')} "
+                f"uptime={detail.get('connected_for_sec', '-')}s "
+                f"subs={detail.get('subscribed_tokens', '-')} "
+                f"msg={str(detail.get('message') or detail.get('error') or '-')[:160]}"
+            )
         role_base: Dict[str, int] = {}
         for topic_id in self.pending_topics:
             role = self._queue_role(self.topic_details.get(topic_id) or {})
@@ -11101,6 +11152,13 @@ class AutoRunManager:
                         existing = [x for x in loaded if isinstance(x, dict)]
                 except Exception:
                     existing = []
+            token_id = str(record.get("token_id") or "").strip()
+            if token_id:
+                existing = [
+                    item
+                    for item in existing
+                    if str(item.get("token_id") or "").strip() != token_id
+                ]
             existing.append(record)
             if len(existing) > 2000:
                 existing = existing[-2000:]
@@ -11580,6 +11638,7 @@ class AutoRunManager:
         self._reentry_eligible_reasons.clear()
         self._ws_reconnect_reason_counts = {"closed": 0, "error": 0, "silence": 0}
         self._ws_last_reconnect_reason = None
+        self._ws_last_reconnect_detail = {}
 
         self._ws_cache.clear()
         self._ws_token_ids = []
@@ -11839,6 +11898,12 @@ class AutoRunManager:
         self._ws_last_reconnect_reason = str(
             payload.get("ws_last_reconnect_reason") or ""
         ).strip() or None
+        ws_last_reconnect_detail = payload.get("ws_last_reconnect_detail") or {}
+        self._ws_last_reconnect_detail = (
+            dict(ws_last_reconnect_detail)
+            if isinstance(ws_last_reconnect_detail, dict)
+            else {}
+        )
 
     def _dump_runtime_status(self) -> None:
         self._cleanup_active_unmanaged_rearm_blocks()
@@ -11889,6 +11954,7 @@ class AutoRunManager:
             ),
             "ws_reconnect_reason_counts": dict(self._ws_reconnect_reason_counts),
             "ws_last_reconnect_reason": self._ws_last_reconnect_reason,
+            "ws_last_reconnect_detail": dict(self._ws_last_reconnect_detail),
             "token_cycle_state_total": len(self._token_cycle_states),
             "tasks": {},
             "topic_details": topic_details_export,  # 【修复】添加 topic_details 供子进程读取

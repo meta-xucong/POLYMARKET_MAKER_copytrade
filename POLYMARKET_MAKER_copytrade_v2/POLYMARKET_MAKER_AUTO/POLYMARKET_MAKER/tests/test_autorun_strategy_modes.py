@@ -1018,6 +1018,91 @@ def test_restore_runtime_status_restores_active_unmanaged_rearm_block(tmp_path):
     assert manager._active_unmanaged_rearm_block_reasons[token_id] == "SELL_ABANDONED"
 
 
+def test_dump_runtime_status_includes_ws_reconnect_detail(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    status_path = data_dir / "autorun_status.json"
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "runtime_status_path": str(status_path),
+            "handled_topics_path": str(data_dir / "handled_topics.json"),
+            "copytrade_tokens_path": str(data_dir / "tokens_from_copytrade.json"),
+            "copytrade_sell_signals_path": str(data_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(data_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._ws_reconnect_reason_counts = {"closed": 3, "error": 1, "silence": 0}
+    manager._ws_last_reconnect_reason = "closed"
+    manager._ws_last_reconnect_detail = {
+        "state": "closed",
+        "status_code": 1001,
+        "message": "server restart",
+        "connected_for_sec": 42.5,
+        "subscribed_tokens": 7,
+    }
+
+    manager._dump_runtime_status()
+
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["ws_last_reconnect_reason"] == "closed"
+    assert payload["ws_last_reconnect_detail"]["status_code"] == 1001
+    assert payload["ws_last_reconnect_detail"]["message"] == "server restart"
+
+
+def test_restore_runtime_status_restores_ws_reconnect_detail(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    status_path = data_dir / "autorun_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "pending_topics": [],
+                "pending_exit_topics": [],
+                "tasks": {},
+                "ws_reconnect_reason_counts": {
+                    "closed": 5,
+                    "error": 2,
+                    "silence": 1,
+                },
+                "ws_last_reconnect_reason": "closed",
+                "ws_last_reconnect_detail": {
+                    "state": "closed",
+                    "status_code": 1006,
+                    "message": "abnormal closure",
+                    "connected_for_sec": 8.75,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "runtime_status_path": str(status_path),
+            "handled_topics_path": str(data_dir / "handled_topics.json"),
+            "copytrade_tokens_path": str(data_dir / "tokens_from_copytrade.json"),
+            "copytrade_sell_signals_path": str(data_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(data_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (None, "stub")  # type: ignore[assignment]
+
+    manager._restore_runtime_status()
+
+    assert manager._ws_reconnect_reason_counts == {
+        "closed": 5,
+        "error": 2,
+        "silence": 1,
+    }
+    assert manager._ws_last_reconnect_reason == "closed"
+    assert manager._ws_last_reconnect_detail["status_code"] == 1006
+    assert manager._ws_last_reconnect_detail["message"] == "abnormal closure"
+
+
 def test_start_process_blocks_when_metadata_unverified_without_position():
     cfg = GlobalConfig.from_dict(
         {
@@ -3666,7 +3751,7 @@ def test_source_detached_timeout_skips_cleanup_below_value_threshold(tmp_path):
     orphan_path = manager.config.data_dir / "orphan_tokens.json"
     assert orphan_path.exists()
     rows = json.loads(orphan_path.read_text(encoding="utf-8"))
-    latest = rows[-1]
+    latest = next(row for row in rows if row.get("token_id") == "t1")
     assert latest.get("token_id") == "t1"
     assert latest.get("reason") == "SOURCE_DETACHED_LOW_VALUE"
 
@@ -3701,7 +3786,7 @@ def test_source_detached_timeout_triggers_cleanup_above_value_threshold(tmp_path
     assert orphan_path.exists()
     rows = json.loads(orphan_path.read_text(encoding="utf-8"))
     assert isinstance(rows, list) and len(rows) >= 1
-    latest = rows[-1]
+    latest = next(row for row in rows if row.get("token_id") == "t1")
     assert latest.get("token_id") == "t1"
 
 
@@ -3734,7 +3819,7 @@ def test_source_detached_cleanup_started_still_moves_directly_to_orphan(tmp_path
     assert "t1" not in manager._stoploss_reentry_states
     orphan_path = manager.config.data_dir / "orphan_tokens.json"
     rows = json.loads(orphan_path.read_text(encoding="utf-8"))
-    latest = rows[-1]
+    latest = next(row for row in rows if row.get("token_id") == "t1")
     assert latest.get("token_id") == "t1"
     assert latest.get("reason") == "SOURCE_DETACHED_TIMEOUT"
 
@@ -3763,7 +3848,7 @@ def test_mark_token_orphaned_clears_stoploss_owner_immediately(tmp_path):
     assert detail.get("orphaned") is True
     orphan_path = manager.config.data_dir / "orphan_tokens.json"
     rows = json.loads(orphan_path.read_text(encoding="utf-8"))
-    latest = rows[-1]
+    latest = next(row for row in rows if row.get("token_id") == "t1")
     assert latest.get("token_id") == "t1"
     assert latest.get("status") == "orphaned"
 

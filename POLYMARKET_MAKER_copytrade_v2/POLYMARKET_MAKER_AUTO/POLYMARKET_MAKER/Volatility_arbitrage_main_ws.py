@@ -136,6 +136,7 @@ class WSAggregatorClient:
         self._connect_count = 0
         self._subscribe_count = 0
         self._unsubscribe_count = 0
+        self._last_open_monotonic = 0.0
 
     def _chunked(self, values: List[str], chunk_size: int) -> List[List[str]]:
         if chunk_size <= 0:
@@ -329,6 +330,7 @@ class WSAggregatorClient:
         self._ws_connected = True
         self._reconnect_delay = 1
         self._last_event_ts = time.monotonic()
+        self._last_open_monotonic = self._last_event_ts
 
         if self._verbose:
             print(f"[{_now()}][WS][AGGREGATOR][OPEN] 连接已建立 (第{self._connect_count}次)")
@@ -367,7 +369,13 @@ class WSAggregatorClient:
         # 启动辅助线程
         self._start_helper_threads(ws)
 
-        self._notify_state("open", {"connect_count": self._connect_count})
+        self._notify_state(
+            "open",
+            {
+                "connect_count": self._connect_count,
+                "open_monotonic": self._last_open_monotonic,
+            },
+        )
 
     def _start_helper_threads(self, ws) -> None:
         """启动辅助线程（flush、ping、silence guard）"""
@@ -567,14 +575,43 @@ class WSAggregatorClient:
         """WS错误回调"""
         if self._verbose:
             print(f"[{_now()}][WS][AGGREGATOR][ERROR] {error}")
-        self._notify_state("error", {"error": str(error)})
+        now = time.monotonic()
+        self._notify_state(
+            "error",
+            {
+                "error": str(error),
+                "connect_count": self._connect_count,
+                "connected_for_sec": round(
+                    max(0.0, now - float(self._last_open_monotonic or now)), 3
+                ),
+                "subscribed_tokens": len(self._subscribed_ids),
+                "desired_tokens": len(self._desired_ids),
+                "pending_subscribe": len(self._pending_subscribe),
+                "pending_unsubscribe": len(self._pending_unsubscribe),
+            },
+        )
 
     def _on_close(self, ws, status_code, msg) -> None:
         """WS关闭回调"""
         self._ws_connected = False
         if self._verbose:
             print(f"[{_now()}][WS][AGGREGATOR][CLOSED] {status_code} {msg}")
-        self._notify_state("closed", {"status_code": status_code, "message": msg})
+        now = time.monotonic()
+        self._notify_state(
+            "closed",
+            {
+                "status_code": status_code,
+                "message": msg,
+                "connect_count": self._connect_count,
+                "connected_for_sec": round(
+                    max(0.0, now - float(self._last_open_monotonic or now)), 3
+                ),
+                "subscribed_tokens": len(self._subscribed_ids),
+                "desired_tokens": len(self._desired_ids),
+                "pending_subscribe": len(self._pending_subscribe),
+                "pending_unsubscribe": len(self._pending_unsubscribe),
+            },
+        )
 
     def _notify_state(self, state: str, info: Optional[Dict[str, Any]] = None) -> None:
         """通知连接状态变化"""
