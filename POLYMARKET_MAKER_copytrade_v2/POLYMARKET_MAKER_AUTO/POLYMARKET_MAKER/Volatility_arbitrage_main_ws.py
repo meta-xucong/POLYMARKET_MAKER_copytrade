@@ -472,6 +472,8 @@ class WSAggregatorClient:
             for chunk_idx, chunk in enumerate(chunks, start=1):
                 msg = {"operation": "subscribe", "assets_ids": chunk}
                 msg["custom_feature_enabled"] = self._custom_feature_enabled
+                # Dynamic subscribe does not need a full initial dump every time.
+                msg["initial_dump"] = False
                 if self._auth:
                     msg["auth"] = self._auth
                 try:

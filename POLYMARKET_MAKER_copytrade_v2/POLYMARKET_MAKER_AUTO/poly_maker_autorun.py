@@ -129,7 +129,7 @@ DEFAULT_GLOBAL_CONFIG = {
         "clear_confirm_timeout_sec": 180.0,
         "clear_confirm_retry_interval_sec": 1800.0,
         "clear_confirm_max_retries": 3,
-        "daily_reentry_loss_circuit_breaker_pct": 0.10,
+        "daily_reentry_max_full_clears": 2,
         "drawdown_step_per_cycle_pct": 0.01,
         "min_age_minutes": 5.0,
         "confirm_rounds": 2,
@@ -165,23 +165,23 @@ DEFAULT_GLOBAL_CONFIG = {
     "price_cap_refill_stuck_minutes": 120.0,
     "shock_refill_stuck_minutes": 45.0,
     # Shared WS 等待配置
-    "shared_ws_max_pending_wait_sec": 45.0,
+    "shared_ws_max_pending_wait_sec": 20.0,
     "shared_ws_wait_poll_sec": 0.5,
-    "shared_ws_wait_failures_before_pause": 2,
-    "shared_ws_wait_pause_minutes": 3.0,
+    "shared_ws_wait_failures_before_pause": 3,
+    "shared_ws_wait_pause_minutes": 1.0,
     "shared_ws_wait_escalation_window_sec": 240.0,
     "shared_ws_wait_escalation_min_failures": 2,
     "ws_no_event_warn_interval_sec": 30.0,
     "ws_cache_flush_min_interval_sec": 0.5,  # 限制脏缓存刷盘频率，避免高负载
     "ws_silence_timeout_sec": 1200.0,  # WS静默重连阈值（默认20分钟，降低低活跃误重连）
     "ws_custom_feature_enabled": True,  # 订阅 custom feature，启用 best_bid_ask/new_market 等事件
-    "ws_subscribe_chunk_size": 30,  # WS订阅分片大小（避免单包过大）
+    "ws_subscribe_chunk_size": 20,  # WS订阅分片大小（当前负载下更保守，降低首包/增量包体积）
     "ws_subscribe_chunk_interval_ms": 150.0,  # WS分片发送间隔（毫秒）
     "ws_ready_use_confirmed": True,  # 允许以 WS confirmed 状态作为 ready 信号
     "ws_ready_confirm_grace_sec": 2.0,  # confirmed-ready 过渡窗口（秒）
     "ws_unsubscribe_grace_sec": 120.0,  # token离开调度后保留订阅宽限，降低订阅抖动
-    "ws_ping_interval_sec": 20.0,  # WS协议层ping间隔（应用层PING会按 interval/2 发送）
-    "ws_ping_timeout_sec": 10.0,  # WS协议层pong超时（必须小于ping间隔）
+    "ws_ping_interval_sec": 20.0,  # 兼容字段：当前主要依赖应用层 text PING，每10秒发送一次
+    "ws_ping_timeout_sec": 10.0,  # 兼容字段：保留配置面，当前未启用 websocket-client 协议层 ping
     "ws_enable_text_ping": True,  # 应用层文本 PING（Polymarket 官方建议每 10 秒）
     "exit_start_stagger_sec": 1.0,  # 清仓进程错峰启动间隔（秒）
     # 可选策略模式（classic/aggressive）
@@ -1058,8 +1058,8 @@ class GlobalConfig:
     stoploss_clear_confirm_max_retries: int = int(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("clear_confirm_max_retries", 3)
     )
-    stoploss_daily_reentry_loss_circuit_breaker_pct: float = float(
-        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("daily_reentry_loss_circuit_breaker_pct", 0.10)
+    stoploss_daily_reentry_max_full_clears: int = int(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("daily_reentry_max_full_clears", 2)
     )
     stoploss_drawdown_step_per_cycle_pct: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("drawdown_step_per_cycle_pct", 0.01)
@@ -1800,14 +1800,14 @@ class GlobalConfig:
                     )
                 ),
             ),
-            stoploss_daily_reentry_loss_circuit_breaker_pct=max(
-                0.0,
-                float(
+            stoploss_daily_reentry_max_full_clears=max(
+                1,
+                int(
                     stoploss_cfg.get(
-                        "daily_reentry_loss_circuit_breaker_pct",
+                        "daily_reentry_max_full_clears",
                         merged.get(
-                            "stoploss_daily_reentry_loss_circuit_breaker_pct",
-                            cls.stoploss_daily_reentry_loss_circuit_breaker_pct,
+                            "stoploss_daily_reentry_max_full_clears",
+                            cls.stoploss_daily_reentry_max_full_clears,
                         ),
                     )
                 ),
@@ -2169,6 +2169,8 @@ class AutoRunManager:
         self._active_unmanaged_rearm_last_ts: Dict[str, float] = {}
         self._active_unmanaged_rearm_recent_ts: Dict[str, List[float]] = {}
         self._active_unmanaged_rearm_suppressed_until: Dict[str, float] = {}
+        self._active_unmanaged_rearm_blocked_until: Dict[str, float] = {}
+        self._active_unmanaged_rearm_block_reasons: Dict[str, str] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._clob_book_probe_cache: Dict[str, Dict[str, Any]] = {}
         self._gamma_market_probe_cache: Dict[str, Dict[str, Any]] = {}
@@ -2407,9 +2409,73 @@ class AutoRunManager:
 
     def _save_token_cycle_states(self) -> None:
         with self._file_io_lock:
+            disk_states: Dict[str, Dict[str, Any]] = {}
+            if self._token_cycle_state_path.exists():
+                try:
+                    with self._token_cycle_state_path.open("r", encoding="utf-8") as f:
+                        payload = json.load(f)
+                    raw_token_states = payload.get("token_states") if isinstance(payload, dict) else {}
+                    if isinstance(raw_token_states, dict):
+                        for token_id, raw_record in raw_token_states.items():
+                            normalized = self._normalize_cycle_state_record(raw_record)
+                            if normalized is not None:
+                                disk_states[str(token_id)] = normalized
+                except (json.JSONDecodeError, OSError):
+                    disk_states = {}
+
+            merged_states: Dict[str, Dict[str, Any]] = dict(disk_states)
+            for token_id, raw_record in self._token_cycle_states.items():
+                memory_state = self._normalize_cycle_state_record(raw_record)
+                if memory_state is None:
+                    continue
+                disk_state = disk_states.get(token_id)
+                if not disk_state:
+                    merged_states[token_id] = memory_state
+                    continue
+
+                memory_round = int(memory_state.get("cycle_round", 0) or 0)
+                disk_round = int(disk_state.get("cycle_round", 0) or 0)
+                memory_last_completed = float(
+                    memory_state.get("last_cycle_completed_ts", 0.0) or 0.0
+                )
+                disk_last_completed = float(
+                    disk_state.get("last_cycle_completed_ts", 0.0) or 0.0
+                )
+                memory_next_buy = float(memory_state.get("next_buy_allowed_ts", 0.0) or 0.0)
+                disk_next_buy = float(disk_state.get("next_buy_allowed_ts", 0.0) or 0.0)
+                disk_cycle_is_newer = (
+                    disk_round > memory_round
+                    or (
+                        disk_round == memory_round
+                        and (
+                            disk_last_completed > memory_last_completed
+                            or (
+                                abs(disk_last_completed - memory_last_completed) <= 1e-9
+                                and disk_next_buy > memory_next_buy
+                            )
+                        )
+                    )
+                )
+
+                merged_state = dict(memory_state)
+                if disk_cycle_is_newer:
+                    for key in (
+                        "cycle_round",
+                        "next_buy_allowed_ts",
+                        "last_cycle_completed_ts",
+                        "next_drop_pct",
+                        "next_profit_pct",
+                    ):
+                        if key in disk_state:
+                            merged_state[key] = disk_state[key]
+                        else:
+                            merged_state.pop(key, None)
+                merged_states[token_id] = self._normalize_cycle_state_record(merged_state) or merged_state
+
+            self._token_cycle_states = merged_states
             payload = {
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "token_states": self._token_cycle_states,
+                "token_states": merged_states,
             }
             try:
                 _atomic_json_write(self._token_cycle_state_path, payload)
@@ -2448,6 +2514,7 @@ class AutoRunManager:
             "old_maker_profit_pct": None,
             "old_entry_price": None,
             "old_last_buy_price": None,
+            "daily_stoploss_full_clear_count": 0,
             "today_realized_loss_pct": 0.0,
             "loss_date_utc": self._today_utc_date(),
             "reentry_paused_for_day": False,
@@ -2495,6 +2562,9 @@ class AutoRunManager:
         )
         merged["stoploss_confirm_hits"] = max(
             0, int(_coerce_float(merged.get("stoploss_confirm_hits")) or 0)
+        )
+        merged["daily_stoploss_full_clear_count"] = max(
+            0, int(_coerce_float(merged.get("daily_stoploss_full_clear_count")) or 0)
         )
         merged["probe_confirm_hits"] = max(
             0, int(_coerce_float(merged.get("probe_confirm_hits")) or 0)
@@ -2598,6 +2668,9 @@ class AutoRunManager:
         merged["reentry_quote_missing_hits"] = max(
             0, int(_coerce_float(merged.get("reentry_quote_missing_hits")) or 0)
         )
+        # Legacy informational field retained for observability; pause gating now uses
+        # daily_stoploss_full_clear_count plus reentry_paused_for_day.
+        self._sync_stoploss_pause_status_fields(merged)
         return merged
 
     def _load_stoploss_reentry_states(self) -> None:
@@ -2634,6 +2707,13 @@ class AutoRunManager:
             self._save_stoploss_reentry_states()
 
     def _save_stoploss_reentry_states(self) -> None:
+        normalized_states: Dict[str, Dict[str, Any]] = {}
+        for token_id, raw in self._stoploss_reentry_states.items():
+            token = str(token_id).strip()
+            if not token:
+                continue
+            normalized_states[token] = self._normalize_stoploss_reentry_state_record(token, raw)
+        self._stoploss_reentry_states = normalized_states
         payload = {
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "version": 4,
@@ -2704,9 +2784,22 @@ class AutoRunManager:
         if str(state.get("loss_date_utc") or "") == str(today):
             return False
         state["loss_date_utc"] = str(today)
+        state["daily_stoploss_full_clear_count"] = 0
         state["today_realized_loss_pct"] = 0.0
         state["reentry_paused_for_day"] = False
         return True
+
+    @staticmethod
+    def _sync_stoploss_pause_status_fields(state: Dict[str, Any]) -> None:
+        if not isinstance(state, dict):
+            return
+        paused = bool(state.get("reentry_paused_for_day", False))
+        status = str(state.get("market_status_last") or "")
+        if paused:
+            state["market_status_last"] = "reentry_paused_for_day"
+            return
+        if status == "reentry_paused_for_day":
+            state["market_status_last"] = ""
 
     def _estimate_token_tick_size(
         self, token_id: str, position_row: Optional[Dict[str, Any]] = None
@@ -3567,7 +3660,7 @@ class AutoRunManager:
         drawdown_step: float,
         extra_reentry_cd: float,
         window_cd: float,
-        circuit_loss: float,
+        max_daily_full_clears: int,
     ) -> None:
         reentry_line, zone_lower, probe_line = self._build_stoploss_reentry_band(
             token_id=token_id,
@@ -3617,7 +3710,10 @@ class AutoRunManager:
         state["pending_confirm_drawdown"] = 0.0
         realized_loss = max(0.0, -drawdown)
         state["today_realized_loss_pct"] = float(state.get("today_realized_loss_pct") or 0.0) + realized_loss
-        if state["today_realized_loss_pct"] >= circuit_loss > 0:
+        state["daily_stoploss_full_clear_count"] = int(
+            max(0, int(state.get("daily_stoploss_full_clear_count") or 0)) + 1
+        )
+        if int(state["daily_stoploss_full_clear_count"]) >= max(1, int(max_daily_full_clears or 1)):
             state["reentry_paused_for_day"] = True
             state["market_status_last"] = "reentry_paused_for_day"
         self._append_exit_token_record(
@@ -3630,6 +3726,8 @@ class AutoRunManager:
                 "after_size": after_size,
                 "phase": "waiting_reentry",
                 "lifecycle_terminal": False,
+                "daily_stoploss_full_clear_count": int(state.get("daily_stoploss_full_clear_count") or 0),
+                "daily_stoploss_max_full_clears": max(1, int(max_daily_full_clears or 1)),
             },
             refillable=False,
         )
@@ -3705,9 +3803,9 @@ class AutoRunManager:
             * 3600.0,
             window_cd=max(0.0, float(self.config.stoploss_reentry_window_cooldown_minutes))
             * 60.0,
-            circuit_loss=max(
-                0.0,
-                float(self.config.stoploss_daily_reentry_loss_circuit_breaker_pct),
+            max_daily_full_clears=max(
+                1,
+                int(self.config.stoploss_daily_reentry_max_full_clears),
             ),
         )
         return True
@@ -3880,7 +3978,7 @@ class AutoRunManager:
         )
         clear_confirm_max_retries = max(1, int(self.config.stoploss_clear_confirm_max_retries))
         drawdown_step = max(0.0, float(self.config.stoploss_drawdown_step_per_cycle_pct))
-        circuit_loss = max(0.0, float(self.config.stoploss_daily_reentry_loss_circuit_breaker_pct))
+        max_daily_full_clears = max(1, int(self.config.stoploss_daily_reentry_max_full_clears))
 
         positions: Dict[str, Dict[str, Any]] = {}
         for row in rows:
@@ -4292,7 +4390,7 @@ class AutoRunManager:
                     drawdown_step=drawdown_step,
                     extra_reentry_cd=extra_reentry_cd,
                     window_cd=window_cd,
-                    circuit_loss=circuit_loss,
+                    max_daily_full_clears=max_daily_full_clears,
                 )
             state_dirty = True
 
@@ -4351,7 +4449,7 @@ class AutoRunManager:
                     drawdown_step=drawdown_step,
                     extra_reentry_cd=extra_reentry_cd,
                     window_cd=window_cd,
-                    circuit_loss=circuit_loss,
+                    max_daily_full_clears=max_daily_full_clears,
                 )
                 state_dirty = True
                 continue
@@ -5673,6 +5771,44 @@ class AutoRunManager:
                 "[AGGRESSIVE][REENTRY] 清理回补标记 token="
                 f"{token_id} source={src} reason={clear_reason}"
             )
+
+    def _cleanup_active_unmanaged_rearm_blocks(self, now: Optional[float] = None) -> None:
+        current = time.time() if now is None else float(now)
+        expired = [
+            token_id
+            for token_id, until_ts in self._active_unmanaged_rearm_blocked_until.items()
+            if float(until_ts or 0.0) <= current
+        ]
+        for token_id in expired:
+            self._active_unmanaged_rearm_blocked_until.pop(token_id, None)
+            self._active_unmanaged_rearm_block_reasons.pop(token_id, None)
+
+    def _set_active_unmanaged_rearm_block(
+        self,
+        token_id: str,
+        *,
+        reason: str,
+        now: Optional[float] = None,
+    ) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        current = time.time() if now is None else float(now)
+        guard_sec = max(
+            900.0,
+            float(self.config.refill_cooldown_minutes_with_position) * 60.0,
+        )
+        self._active_unmanaged_rearm_blocked_until[token_id] = current + guard_sec
+        self._active_unmanaged_rearm_block_reasons[token_id] = (
+            str(reason or "").strip().upper() or "UNKNOWN"
+        )
+
+    def _clear_active_unmanaged_rearm_block(self, token_id: str) -> None:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return
+        self._active_unmanaged_rearm_blocked_until.pop(token_id, None)
+        self._active_unmanaged_rearm_block_reasons.pop(token_id, None)
 
     def _refresh_ws_cache_after_reconnect(self, connect_count: int) -> None:
         now = time.time()
@@ -7182,10 +7318,16 @@ class AutoRunManager:
     ) -> None:
         if not token_id:
             return
+        reason_upper = str(exit_reason or "").strip().upper()
+        if reason_upper == "SELL_ABANDONED":
+            self._set_active_unmanaged_rearm_block(
+                token_id,
+                reason=reason_upper,
+            )
         if self._is_reentry_eligible_exit(exit_reason, exit_data):
             self._mark_reentry_eligible_token(
                 token_id,
-                source=str(exit_reason or "").strip().upper(),
+                source=reason_upper,
             )
         merged_exit_data = dict(exit_data or {})
         trigger_source = str(
@@ -7917,6 +8059,7 @@ class AutoRunManager:
         self._exit_cleanup_retry_counts.pop(topic_id, None)
         self._sell_exit_deadlines.pop(topic_id, None)
         self._seen_self_sell_tokens.discard(topic_id)
+        self._clear_active_unmanaged_rearm_block(topic_id)
         # 检查是否是回填启动。
         # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
         detail = self.topic_details.get(topic_id) or {}
@@ -8630,6 +8773,7 @@ class AutoRunManager:
         self._active_unmanaged_rearm_last_ts.pop(token_id, None)
         self._active_unmanaged_rearm_recent_ts.pop(token_id, None)
         self._active_unmanaged_rearm_suppressed_until.pop(token_id, None)
+        self._clear_active_unmanaged_rearm_block(token_id)
         self._refilled_tokens.discard(token_id)
         self._refill_retry_counts.pop(token_id, None)
         self._completed_exit_cleanup_tokens.discard(token_id)
@@ -9839,6 +9983,7 @@ class AutoRunManager:
         )
         orphan_states = self._load_latest_orphan_states()
         now = time.time()
+        self._cleanup_active_unmanaged_rearm_blocks(now)
         cooldown_sec = max(60.0, float(self.config.active_unmanaged_rearm_cooldown_sec))
         budget_window_sec = max(
             300.0, float(self.config.active_unmanaged_rearm_budget_window_sec)
@@ -9865,6 +10010,11 @@ class AutoRunManager:
                 self._active_unmanaged_rearm_suppressed_until.get(token_id) or 0.0
             )
             if suppressed_until > now:
+                continue
+            blocked_until = float(
+                self._active_unmanaged_rearm_blocked_until.get(token_id) or 0.0
+            )
+            if blocked_until > now:
                 continue
             last_rearm_ts = float(self._active_unmanaged_rearm_last_ts.get(token_id) or 0.0)
             if last_rearm_ts > 0 and (now - last_rearm_ts) < cooldown_sec:
@@ -11652,6 +11802,30 @@ class AutoRunManager:
                 for k, v in reentry_eligible_reasons.items()
                 if str(k).strip()
             }
+        active_unmanaged_rearm_blocked_until = (
+            payload.get("active_unmanaged_rearm_blocked_until") or {}
+        )
+        if isinstance(active_unmanaged_rearm_blocked_until, dict):
+            for token_id, until_ts in active_unmanaged_rearm_blocked_until.items():
+                token_id = str(token_id).strip()
+                if not token_id:
+                    continue
+                try:
+                    until_val = float(until_ts or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if until_val > time.time():
+                    self._active_unmanaged_rearm_blocked_until[token_id] = until_val
+        active_unmanaged_rearm_block_reasons = (
+            payload.get("active_unmanaged_rearm_block_reasons") or {}
+        )
+        if isinstance(active_unmanaged_rearm_block_reasons, dict):
+            self._active_unmanaged_rearm_block_reasons = {
+                str(k): str(v)
+                for k, v in active_unmanaged_rearm_block_reasons.items()
+                if str(k).strip()
+            }
+        self._cleanup_active_unmanaged_rearm_blocks()
 
         ws_reconnect_reason_counts = payload.get("ws_reconnect_reason_counts") or {}
         if isinstance(ws_reconnect_reason_counts, dict):
@@ -11667,6 +11841,7 @@ class AutoRunManager:
         ).strip() or None
 
     def _dump_runtime_status(self) -> None:
+        self._cleanup_active_unmanaged_rearm_blocks()
         # GC: 清理 _completed_exit_cleanup_tokens 中不再活跃的条目
         # 仅保留仍在 sell 信号文件、pending 队列或 tasks 中的 token
         active_tokens = (
@@ -11706,6 +11881,12 @@ class AutoRunManager:
             "exit_cleanup_retry_counts": dict(self._exit_cleanup_retry_counts),
             "reentry_eligible_tokens": sorted(self._reentry_eligible_tokens),
             "reentry_eligible_reasons": dict(self._reentry_eligible_reasons),
+            "active_unmanaged_rearm_blocked_until": dict(
+                self._active_unmanaged_rearm_blocked_until
+            ),
+            "active_unmanaged_rearm_block_reasons": dict(
+                self._active_unmanaged_rearm_block_reasons
+            ),
             "ws_reconnect_reason_counts": dict(self._ws_reconnect_reason_counts),
             "ws_last_reconnect_reason": self._ws_last_reconnect_reason,
             "token_cycle_state_total": len(self._token_cycle_states),

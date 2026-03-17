@@ -5131,7 +5131,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
         floor_hint: Optional[float],
         source: str,
     ) -> None:
-        nonlocal position_size, last_order_size, position_sync_block_until, next_position_sync, next_loop_after, market_closed_detected
+        nonlocal position_size, last_order_size, position_sync_block_until, next_position_sync, next_loop_after, market_closed_detected, buy_cooldown_until
 
         position_snapshot_cache: Optional[
             Tuple[Optional[float], Optional[float], Optional[str]]

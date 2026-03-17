@@ -39,6 +39,7 @@ def test_flush_pending_subscriptions_sends_subscribe_in_chunks():
     # 5 个 token，chunk_size=2 -> 至少 3 条 subscribe 消息
     subscribe_msgs = [msg for msg in ws.sent if '"operation": "subscribe"' in msg]
     assert len(subscribe_msgs) == 3
+    assert all('"initial_dump": false' in msg.lower() for msg in subscribe_msgs)
 
 
 def test_flush_pending_subscriptions_sends_unsubscribe_in_chunks():

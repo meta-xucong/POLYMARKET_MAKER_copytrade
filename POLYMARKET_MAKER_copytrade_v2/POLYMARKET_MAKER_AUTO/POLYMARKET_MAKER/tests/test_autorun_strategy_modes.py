@@ -976,6 +976,48 @@ def test_restore_runtime_status_skips_manual_intervention_owned_task_snapshot(tm
     assert detail.get("queue_role") == "manual_intervention"
 
 
+def test_restore_runtime_status_restores_active_unmanaged_rearm_block(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    status_path = data_dir / "autorun_status.json"
+    token_id = "blocked_token"
+    future_ts = time.time() + 600.0
+    status_path.write_text(
+        json.dumps(
+            {
+                "pending_topics": [],
+                "pending_exit_topics": [],
+                "tasks": {},
+                "active_unmanaged_rearm_blocked_until": {
+                    token_id: future_ts,
+                },
+                "active_unmanaged_rearm_block_reasons": {
+                    token_id: "SELL_ABANDONED",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "data_dir": str(data_dir),
+            "runtime_status_path": str(status_path),
+            "handled_topics_path": str(data_dir / "handled_topics.json"),
+            "copytrade_tokens_path": str(data_dir / "tokens_from_copytrade.json"),
+            "copytrade_sell_signals_path": str(data_dir / "copytrade_sell_signals.json"),
+            "copytrade_blacklist_path": str(data_dir / "liquidation_blacklist.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+    manager._fetch_market_metadata_from_gamma_by_token_id = lambda _tid: (None, "stub")  # type: ignore[assignment]
+
+    manager._restore_runtime_status()
+
+    assert manager._active_unmanaged_rearm_blocked_until[token_id] == future_ts
+    assert manager._active_unmanaged_rearm_block_reasons[token_id] == "SELL_ABANDONED"
+
+
 def test_start_process_blocks_when_metadata_unverified_without_position():
     cfg = GlobalConfig.from_dict(
         {
@@ -1494,6 +1536,47 @@ def test_refresh_topics_suppresses_runtime_rearm_after_budget_exhausted():
     assert "t1" not in manager.pending_topics
     assert captured and captured[-1][1] == "ACTIVE_UNMANAGED_REARM_SUPPRESSED"
     assert float((captured[-1][2]["exit_data"] or {}).get("suppressed_until_ts") or 0.0) > now
+
+
+def test_append_exit_token_record_sell_abandoned_sets_rearm_block():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    manager._load_exit_tokens = lambda: []  # type: ignore[assignment]
+
+    manager._append_exit_token_record(
+        "t1",
+        "SELL_ABANDONED",
+        exit_data={"has_position": True},
+        refillable=True,
+    )
+
+    assert float(manager._active_unmanaged_rearm_blocked_until.get("t1") or 0.0) > time.time()
+    assert manager._active_unmanaged_rearm_block_reasons.get("t1") == "SELL_ABANDONED"
+
+
+def test_refresh_topics_skips_runtime_rearm_while_sell_abandoned_block_active():
+    cfg = GlobalConfig.from_dict(
+        {
+            "active_unmanaged_rearm_cooldown_sec": 60.0,
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._startup_sync_retry_needed = False
+    manager.handled_topics.add("t1")
+    manager._is_buy_paused_by_balance = lambda: False  # type: ignore[assignment]
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"topic_id": "t1", "token_id": "t1", "title": "Token 1"}
+    ]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+    manager._load_copytrade_blacklist = lambda: set()  # type: ignore[assignment]
+    manager._apply_sell_signals = lambda _: None  # type: ignore[assignment]
+    manager._refresh_sell_position_snapshot = lambda: ({"t1": 1.0}, "ok")  # type: ignore[assignment]
+    manager._active_unmanaged_rearm_blocked_until["t1"] = time.time() + 300.0
+    manager._active_unmanaged_rearm_block_reasons["t1"] = "SELL_ABANDONED"
+
+    manager._refresh_topics()
+
+    assert "t1" not in manager.pending_topics
 
 
 def test_rebalance_moves_new_token_from_burst_to_base_but_keeps_reentry_in_burst():
@@ -2060,6 +2143,58 @@ def test_advance_shared_cycle_state_after_sell_updates_round_cooldown_and_thresh
     assert payload["token_states"]["t1"]["cycle_round"] == 2
 
 
+def test_save_token_cycle_states_preserves_newer_disk_cycle_fields(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    state_path = manager.config.token_cycle_state_path
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "token_states": {
+                    "t1": {
+                        "cycle_round": 2,
+                        "next_buy_allowed_ts": 220.0,
+                        "last_cycle_completed_ts": 100.0,
+                        "next_drop_pct": 0.054,
+                        "next_profit_pct": 0.012,
+                        "local_cycle_status": "cycle_closed",
+                        "local_cycle_started_ts": 0.0,
+                        "local_cycle_invalidated_ts": 0.0,
+                        "local_cycle_invalidate_reason": "",
+                        "local_cycle_started_mode": "",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager._token_cycle_states["t1"] = {
+        "cycle_round": 0,
+        "next_buy_allowed_ts": 0.0,
+        "last_cycle_completed_ts": 0.0,
+        "local_cycle_status": "started_not_bought",
+        "local_cycle_started_ts": 150.0,
+        "local_cycle_invalidated_ts": 0.0,
+        "local_cycle_invalidate_reason": "",
+        "local_cycle_started_mode": "started_not_bought",
+    }
+
+    manager._save_token_cycle_states()
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    record = payload["token_states"]["t1"]
+    assert record["cycle_round"] == 2
+    assert abs(float(record["next_buy_allowed_ts"]) - 220.0) < 1e-9
+    assert abs(float(record["last_cycle_completed_ts"]) - 100.0) < 1e-9
+    assert abs(float(record["next_drop_pct"]) - 0.054) < 1e-9
+    assert abs(float(record["next_profit_pct"]) - 0.012) < 1e-9
+    assert record["local_cycle_status"] == "started_not_bought"
+    assert abs(float(record["local_cycle_started_ts"]) - 150.0) < 1e-9
+
+
 def test_apply_sell_signals_ignores_signal_without_local_cycle(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
@@ -2322,7 +2457,7 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
                     "reentry_line_ticks": 2,
                     "reentry_zone_lower_pct": 0.02,
                     "probe_break_pct": 0.08,
-                    "daily_reentry_loss_circuit_breaker_pct": 0.10,
+                    "daily_reentry_max_full_clears": 2,
                     "drawdown_step_per_cycle_pct": 0.01,
                     "max_tokens_per_cycle": 2,
                 }
@@ -2339,7 +2474,7 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
     assert cfg.stoploss_reentry_line_ticks == 2
     assert cfg.stoploss_reentry_zone_lower_pct == 0.02
     assert cfg.stoploss_probe_break_pct == 0.08
-    assert cfg.stoploss_daily_reentry_loss_circuit_breaker_pct == 0.10
+    assert cfg.stoploss_daily_reentry_max_full_clears == 2
     assert cfg.stoploss_drawdown_step_per_cycle_pct == 0.01
     assert cfg.stoploss_max_tokens_per_cycle == 2
 
@@ -2376,7 +2511,7 @@ def _build_stoploss_manager(tmp_path, *, mode="classic", stoploss_overrides=None
         "clear_confirm_timeout_sec": 180.0,
         "clear_confirm_retry_interval_sec": 1800.0,
         "clear_confirm_max_retries": 3,
-        "daily_reentry_loss_circuit_breaker_pct": 0.10,
+        "daily_reentry_max_full_clears": 2,
         "drawdown_step_per_cycle_pct": 0.01,
         "max_tokens_per_cycle": 1,
     }
@@ -2762,6 +2897,7 @@ def test_token_daily_reentry_pause_rolls_over_without_position(tmp_path):
             "reentry_earliest_ts": now + 3600.0,
             "source_detached": False,
             "loss_date_utc": old_day,
+            "daily_stoploss_full_clear_count": 2,
             "today_realized_loss_pct": 0.123,
             "reentry_paused_for_day": True,
         },
@@ -2776,8 +2912,25 @@ def test_token_daily_reentry_pause_rolls_over_without_position(tmp_path):
 
     state = manager._stoploss_reentry_states["t1"]
     assert state.get("loss_date_utc") == manager._today_utc_date(now)
+    assert int(state.get("daily_stoploss_full_clear_count") or 0) == 0
     assert float(state.get("today_realized_loss_pct") or 0.0) == 0.0
     assert bool(state.get("reentry_paused_for_day", True)) is False
+
+
+def test_stoploss_state_normalize_clears_stale_pause_status_text(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    state = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "daily_stoploss_full_clear_count": 2.0,
+            "reentry_paused_for_day": False,
+            "market_status_last": "reentry_paused_for_day",
+        },
+    )
+
+    assert isinstance(state.get("daily_stoploss_full_clear_count"), int)
+    assert state["daily_stoploss_full_clear_count"] == 2
+    assert state["market_status_last"] == ""
 
 
 def test_market_closed_removes_state_immediately(tmp_path):
@@ -3764,6 +3917,53 @@ def test_stoploss_liquidation_uses_whitelisted_ioc_reason(tmp_path):
 
     assert len(liq_calls) == 1
     assert liq_calls[0].get("reason") == "STOPLOSS_REENTRY"
+
+
+def test_stoploss_daily_pause_triggers_after_second_full_clear(tmp_path):
+    manager = _build_stoploss_manager(
+        tmp_path,
+        stoploss_overrides={"daily_reentry_max_full_clears": 2},
+    )
+    now = time.time()
+    manager._estimate_token_tick_size = lambda token_id, position_row=None: 0.01  # type: ignore[assignment]
+    state = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_EXITED_WAITING_WINDOW",
+            "stoploss_cycle_count": 1,
+            "daily_stoploss_full_clear_count": 1,
+            "today_realized_loss_pct": 0.07,
+            "loss_date_utc": manager._today_utc_date(now),
+            "reentry_paused_for_day": False,
+        },
+    )
+
+    manager._finalize_stoploss_waiting_reentry(
+        "t1",
+        state,
+        now=now,
+        before_size=10.0,
+        after_size=0.0,
+        exec_price=0.90,
+        exec_source="unit_test",
+        drawdown=-0.05,
+        line_ticks=2,
+        zone_lower_pct=0.02,
+        probe_break_pct=0.08,
+        drawdown_step=0.01,
+        extra_reentry_cd=0.0,
+        window_cd=3600.0,
+        max_daily_full_clears=2,
+    )
+
+    assert state["state"] == "STOPLOSS_EXITED_WAITING_WINDOW"
+    assert int(state.get("daily_stoploss_full_clear_count") or 0) == 2
+    assert bool(state.get("reentry_paused_for_day")) is True
+    assert state.get("market_status_last") == "reentry_paused_for_day"
+    rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
+    assert rows[-1]["exit_reason"] == "STOPLOSS_FULL_CLEAR"
+    assert rows[-1]["exit_data"]["daily_stoploss_full_clear_count"] == 2
+    assert rows[-1]["exit_data"]["daily_stoploss_max_full_clears"] == 2
 
 
 def test_stoploss_records_started_and_no_fill_when_ioc_does_not_execute(tmp_path):
