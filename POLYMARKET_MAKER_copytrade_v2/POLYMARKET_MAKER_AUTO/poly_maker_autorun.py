@@ -2761,8 +2761,16 @@ class AutoRunManager:
     def _remove_stoploss_reentry_state(self, token_id: str) -> None:
         self._stoploss_reentry_states.pop(str(token_id), None)
 
-    def _update_stoploss_source_detached_flags(self, copytrade_scope: set[str], *, now: float) -> bool:
+    def _update_stoploss_source_detached_flags(
+        self,
+        copytrade_scope: set[str],
+        *,
+        now: float,
+        scope_available: bool,
+    ) -> bool:
         changed = False
+        if not scope_available:
+            return False
         for token_id, state in self._stoploss_reentry_states.items():
             detached = token_id not in copytrade_scope
             prev_detached = bool(state.get("source_detached", False))
@@ -3851,6 +3859,67 @@ class AutoRunManager:
         )
         return True
 
+    def _requeue_position_reconcile_after_clean_exit(
+        self,
+        task: TopicTask,
+        *,
+        rc: int,
+    ) -> bool:
+        if task.no_restart:
+            return False
+        if rc != 0:
+            return False
+        detail = self.topic_details.setdefault(task.topic_id, {})
+        queue_role = str(detail.get("queue_role") or "").strip()
+        if queue_role != "startup_reconcile_position":
+            return False
+        _rows, snapshot, info, _source = self._refresh_unified_position_snapshot(
+            force_refresh=True
+        )
+        if info != "ok":
+            return False
+        position_size = float(snapshot.get(task.topic_id, 0.0) or 0.0)
+        if self._is_position_dust(position_size):
+            return False
+        detail["queue_role"] = "startup_reconcile_position"
+        detail["schedule_lane"] = "base"
+        if (
+            task.topic_id not in self.pending_topics
+            and task.topic_id not in self.pending_burst_topics
+            and task.topic_id not in self.pending_exit_topics
+        ):
+            self._enqueue_pending_topic(task.topic_id)
+        backoff_sec = max(10.0, float(self.config.process_retry_delay_sec))
+        blocked_until = time.time() + backoff_sec
+        prev_blocked_until = float(
+            self._active_unmanaged_rearm_blocked_until.get(task.topic_id) or 0.0
+        )
+        self._active_unmanaged_rearm_blocked_until[task.topic_id] = max(
+            prev_blocked_until,
+            blocked_until,
+        )
+        self._append_exit_token_record(
+            task.topic_id,
+            "POSITION_RECONCILE_EXITED_WITH_POSITION",
+            exit_data={
+                "source": "startup_reconcile_position",
+                "rc": rc,
+                "position_size": position_size,
+                "action": "requeued_startup_reconcile_position",
+                "requeue_backoff_sec": backoff_sec,
+            },
+            refillable=False,
+        )
+        task.status = "pending"
+        task.heartbeat(
+            "position reconcile process exited rc=0 with remaining position; requeued"
+        )
+        print(
+            "[AUTO][REQUEUE] startup_reconcile_position clean exit but position remains, requeue: "
+            f"token={task.topic_id} size={position_size:.4f} backoff={backoff_sec:.1f}s"
+        )
+        return True
+
     def _enter_stoploss_clear_pending_confirm(
         self,
         token_id: str,
@@ -3938,18 +4007,38 @@ class AutoRunManager:
             return
         self._stoploss_quote_cycle_cache = {}
 
+        copytrade_token_last_seen_ts: Dict[str, float] = {}
+        copytrade_token_scope_ok = False
+        copytrade_sell_scope_ok = False
         try:
+            token_path_exists = bool(self.config.copytrade_tokens_path.exists())
+            loaded_copytrade_tokens = self._load_copytrade_tokens()
+            copytrade_token_scope_ok = token_path_exists
             copytrade_token_scope = {
                 token_id
-                for item in self._load_copytrade_tokens()
+                for item in loaded_copytrade_tokens
                 if (token_id := _topic_id_from_entry(item))
             }
+            for item in loaded_copytrade_tokens:
+                token_id = _topic_id_from_entry(item)
+                if not token_id:
+                    continue
+                entry = item if isinstance(item, dict) else {}
+                token_last_seen_ts = self._coerce_sell_signal_ts(entry)
+                if token_last_seen_ts is not None and token_last_seen_ts > 0.0:
+                    copytrade_token_last_seen_ts[token_id] = float(token_last_seen_ts)
         except Exception:
             copytrade_token_scope = set()
+            copytrade_token_last_seen_ts = {}
+            copytrade_token_scope_ok = False
         try:
+            sell_path_exists = bool(self.config.copytrade_sell_signals_path.exists())
             copytrade_sell_signal_scope = set(self._load_copytrade_sell_signals().keys())
+            copytrade_sell_scope_ok = sell_path_exists
         except Exception:
             copytrade_sell_signal_scope = set()
+            copytrade_sell_scope_ok = False
+        copytrade_scope_available = bool(copytrade_token_scope_ok or copytrade_sell_scope_ok)
         copytrade_scope = set(copytrade_token_scope)
         copytrade_scope.update(copytrade_sell_signal_scope)
         managed_scope = set(copytrade_scope)
@@ -3980,6 +4069,11 @@ class AutoRunManager:
         clear_confirm_max_retries = max(1, int(self.config.stoploss_clear_confirm_max_retries))
         drawdown_step = max(0.0, float(self.config.stoploss_drawdown_step_per_cycle_pct))
         max_daily_full_clears = max(1, int(self.config.stoploss_daily_reentry_max_full_clears))
+        waiting_reentry_states = {
+            "STOPLOSS_EXITED_WAITING_WINDOW",
+            "STOPLOSS_EXITED_WAITING_PROBE",
+            "STOPLOSS_EXITED_WAITING_REBOUND",
+        }
 
         positions: Dict[str, Dict[str, Any]] = {}
         for row in rows:
@@ -3994,7 +4088,11 @@ class AutoRunManager:
 
         state_dirty = False
         action_count = 0
-        if self._update_stoploss_source_detached_flags(copytrade_scope, now=now):
+        if self._update_stoploss_source_detached_flags(
+            copytrade_scope,
+            now=now,
+            scope_available=copytrade_scope_available,
+        ):
             state_dirty = True
 
         for token_id, row in positions.items():
@@ -4010,6 +4108,18 @@ class AutoRunManager:
             state["last_price_check_ts"] = float(now)
             state["last_position_seen_ts"] = float(now)
             state_name = str(state.get("state") or "NORMAL_MAKER")
+            if state_name in waiting_reentry_states:
+                state["state"] = "NORMAL_MAKER"
+                state["probe_confirm_hits"] = 0
+                state["rebound_confirm_hits"] = 0
+                state["pending_cleanup_since_ts"] = 0.0
+                state["last_error"] = "waiting_reentry_state_with_position_auto_normalized"
+                state["market_status_last"] = "waiting_reentry_state_with_position_auto_normalized"
+                print(
+                    f"[STATE_SYNC] token={token_id[:20]}... waiting reentry state with position -> NORMAL_MAKER"
+                )
+                state_dirty = True
+                state_name = "NORMAL_MAKER"
             if state_name in {"STOPLOSS_CLEAR_PENDING_CONFIRM", "STOPLOSS_CLEAR_PENDING_ESCALATED"}:
                 continue
             if state_name == "STOPLOSS_IOC_RETRY_PENDING":
@@ -4055,6 +4165,11 @@ class AutoRunManager:
                 continue
 
             if bool(state.get("source_detached", False)):
+                if not copytrade_scope_available:
+                    state["market_status_last"] = "source_detached_scope_unavailable_hold"
+                    state["last_error"] = "copytrade scope unavailable; detached transition frozen"
+                    state_dirty = True
+                    continue
                 detached_since = float(state.get("source_detached_since_ts") or now)
                 detached_age = max(0.0, now - detached_since)
                 state["pending_cleanup_since_ts"] = 0.0
@@ -4457,11 +4572,7 @@ class AutoRunManager:
             if state_name == "STOPLOSS_CLEAR_PENDING_ESCALATED":
                 continue
             if self._stoploss_is_market_closed(token_id):
-                if state_name in {
-                    "STOPLOSS_EXITED_WAITING_WINDOW",
-                    "STOPLOSS_EXITED_WAITING_PROBE",
-                    "STOPLOSS_EXITED_WAITING_REBOUND",
-                }:
+                if state_name in waiting_reentry_states:
                     self._abandon_stoploss_reentry(
                         token_id,
                         state,
@@ -4474,11 +4585,7 @@ class AutoRunManager:
                 state_dirty = True
                 continue
 
-            if state_name in {
-                "STOPLOSS_EXITED_WAITING_WINDOW",
-                "STOPLOSS_EXITED_WAITING_PROBE",
-                "STOPLOSS_EXITED_WAITING_REBOUND",
-            }:
+            if state_name in waiting_reentry_states:
                 has_sell_signal = token_id in copytrade_sell_signal_scope
                 not_in_follow_list = token_id not in copytrade_token_scope
                 if has_sell_signal or not_in_follow_list:
@@ -4501,6 +4608,34 @@ class AutoRunManager:
                         )
                     continue
                 stop_exit_ts = float(state.get("stop_exit_ts") or 0.0)
+                fresh_target_buy_ts = float(copytrade_token_last_seen_ts.get(token_id) or 0.0)
+                if (
+                    stop_exit_ts > 0.0
+                    and fresh_target_buy_ts > 0.0
+                    and fresh_target_buy_ts > stop_exit_ts + 1e-6
+                ):
+                    state["state"] = "NORMAL_MAKER"
+                    state["probe_confirm_hits"] = 0
+                    state["rebound_confirm_hits"] = 0
+                    state["pending_cleanup_since_ts"] = 0.0
+                    state["last_error"] = ""
+                    state["market_status_last"] = "target_buy_seen_after_stoploss_exit"
+                    self._append_exit_token_record(
+                        token_id,
+                        "STOPLOSS_WAITING_RELEASED_BY_TARGET_BUY",
+                        exit_data={
+                            "source": "stoploss_v4",
+                            "stop_exit_ts": stop_exit_ts,
+                            "target_buy_ts": fresh_target_buy_ts,
+                            "previous_state": state_name,
+                        },
+                        refillable=False,
+                    )
+                    print(
+                        f"[STATE_SYNC] token={token_id[:20]}... release waiting reentry after target buy refresh"
+                    )
+                    state_dirty = True
+                    continue
                 if stop_exit_ts > 0.0 and (now - stop_exit_ts) >= reentry_timeout_sec:
                     self._abandon_stoploss_reentry(
                         token_id,
@@ -6708,6 +6843,8 @@ class AutoRunManager:
                 self._mark_token_cycle_closed_runtime(task.topic_id, task=task)
 
         if self._finalize_position_reconcile_exit_if_flat(task, rc=rc):
+            return
+        if self._requeue_position_reconcile_after_clean_exit(task, rc=rc):
             return
 
         if task.no_restart:
@@ -10045,6 +10182,57 @@ class AutoRunManager:
         suppress_sec = max(
             300.0, float(self.config.active_unmanaged_rearm_budget_suppress_sec)
         )
+        guard_sec = max(
+            900.0,
+            float(self.config.refill_cooldown_minutes_with_position) * 60.0,
+        )
+        unresolved_active = set(active_copytrade_topics)
+        hydrated_blocks = 0
+        for record in reversed(self._load_exit_tokens()):
+            token_id = str(record.get("token_id") or "").strip()
+            if not token_id or token_id not in unresolved_active:
+                continue
+            unresolved_active.discard(token_id)
+            reason = str(record.get("exit_reason") or "").strip().upper()
+            if reason != "SELL_ABANDONED":
+                if not unresolved_active:
+                    break
+                continue
+            exit_data = record.get("exit_data") or {}
+            inactive_timeout_hours = _coerce_float(
+                exit_data.get("inactive_timeout_hours") if isinstance(exit_data, dict) else None
+            )
+            # Only hydrate SELL_ABANDONED blocks from strategy-runtime records.
+            # Child runtime records include inactive_timeout_hours; synthetic/manual records usually do not.
+            if inactive_timeout_hours is None:
+                if not unresolved_active:
+                    break
+                continue
+            exit_ts = float(_coerce_float(record.get("exit_ts")) or 0.0)
+            if exit_ts <= 0.0:
+                if not unresolved_active:
+                    break
+                continue
+            blocked_until = exit_ts + guard_sec
+            if blocked_until > now:
+                current_until = float(
+                    self._active_unmanaged_rearm_blocked_until.get(token_id) or 0.0
+                )
+                if blocked_until > current_until:
+                    self._active_unmanaged_rearm_blocked_until[token_id] = blocked_until
+                    self._active_unmanaged_rearm_block_reasons[token_id] = "SELL_ABANDONED"
+                    hydrated_blocks += 1
+            if not unresolved_active:
+                break
+        if hydrated_blocks:
+            self._log_throttled(
+                "active_unmanaged_rearm_hydrated_sell_abandoned_blocks",
+                120.0,
+                (
+                    "[HANDLED][RUNTIME_REARM] hydrated SELL_ABANDONED blocks from exit records: "
+                    f"count={hydrated_blocks}"
+                ),
+            )
         candidates: List[str] = []
         for token_id in sorted(active_copytrade_topics):
             if token_id in blocked_tokens or token_id in sell_signals:

@@ -2697,7 +2697,13 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     startup_double_zero_probe_interval_sec = max(
         0.0, float(_coerce_float(run_cfg.get("startup_double_zero_probe_interval_sec")) or 1.0)
     )
-    if startup_skip_if_open_sell:
+    resume_state_cfg = run_cfg.get("resume_state")
+    startup_requires_buy_stage = True
+    if bool(run_cfg.get("exit_only", False)) or bool(run_cfg.get("force_sell_only_on_startup", False)):
+        startup_requires_buy_stage = False
+    elif isinstance(resume_state_cfg, dict) and bool(resume_state_cfg.get("skip_buy", False)):
+        startup_requires_buy_stage = False
+    if startup_skip_if_open_sell and startup_requires_buy_stage:
         zero_hits = 0
         attempts = startup_double_zero_confirm_hits
         for probe_idx in range(1, attempts + 1):
@@ -2738,6 +2744,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 f"token={token_id}, exiting."
             )
             return
+    elif startup_skip_if_open_sell:
+        print(
+            "[INIT][BUY_GATE] startup double-zero guard skipped "
+            f"(buy stage disabled) token={token_id}"
+        )
 
     manual_order_size: Optional[float] = _coerce_float(run_cfg.get("order_size"))
     manual_size_is_target = bool(

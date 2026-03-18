@@ -386,6 +386,8 @@ def run_once(
     blacklist_tokens = _load_blacklist_tokens(blacklist_path)
 
     now_ms = int(time.time() * 1000)
+    initial_lookback_sec = max(0.0, float(config.get("initial_lookback_sec", 3600) or 0.0))
+    initial_lookback_ms = int(initial_lookback_sec * 1000.0)
     changed = False
     sell_changed = False
 
@@ -440,13 +442,13 @@ def run_once(
         target_state = state["targets"].get(account, {})
         since_ms = int(target_state.get("last_timestamp_ms") or 0)
         if since_ms <= 0:
-            init_ms = now_ms
+            init_ms = max(0, now_ms - initial_lookback_ms)
             state["targets"][account] = {
                 "last_timestamp_ms": init_ms,
                 "updated_at": _utc_now_iso(),
             }
             logger.info("初始化目标账户状态，忽略已有仓位: account=%s", account)
-            continue
+            since_ms = init_ms
 
         actions, latest_ms = _collect_trades(client, account, since_ms, min_size, logger)
         if latest_ms > since_ms:
