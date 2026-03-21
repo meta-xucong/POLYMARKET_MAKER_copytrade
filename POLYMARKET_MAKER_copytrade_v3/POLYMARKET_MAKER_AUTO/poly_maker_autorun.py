@@ -695,6 +695,16 @@ def _coerce_float(value: Any) -> Optional[float]:
     return None
 
 
+def _normalize_ws_event_timestamp(value: Any, *, now: Optional[float] = None) -> float:
+    current = time.time() if now is None else float(now)
+    ts = _coerce_float(value)
+    if ts is None or ts <= 0.0:
+        return current
+    if ts > current + 86400.0:
+        return current
+    return float(ts)
+
+
 def _extract_top_price_from_levels(levels: Any, side: str) -> Optional[float]:
     """从订单簿档位中提取最优价格（兼容 dict/list 结构）。
 
@@ -4077,6 +4087,33 @@ class AutoRunManager:
             self._classify_position_truth(task.topic_id, position_size)
         ):
             return False
+        gap_backoff = self._get_active_gap_skip_backoff(task.topic_id)
+        if gap_backoff:
+            hold_until_ts = float(gap_backoff.get("hold_until_ts", 0.0) or 0.0)
+            remaining_sec = max(
+                0.0,
+                float(gap_backoff.get("remaining_seconds", 0.0) or 0.0),
+            )
+            detail["gap_hold_reason"] = "POSITION_SYNC_SKIP_GAP"
+            detail["gap_hold_until_ts"] = hold_until_ts
+            detail["gap_hold_streak"] = int(gap_backoff.get("streak", 0.0) or 0.0)
+            detail["gap_hold_latest_exit_ts"] = float(
+                gap_backoff.get("latest_exit_ts", 0.0) or 0.0
+            )
+            task.end_reason = "position sync gap hold"
+            task.heartbeat(
+                "position reconcile exited with remaining position; "
+                f"gap hold active for {remaining_sec:.1f}s"
+            )
+            print(
+                "[AUTO][GAP_HOLD] startup_reconcile_position clean exit respects gap backoff: "
+                f"token={task.topic_id} size={position_size:.4f} hold={remaining_sec:.1f}s"
+            )
+            return True
+        detail.pop("gap_hold_reason", None)
+        detail.pop("gap_hold_until_ts", None)
+        detail.pop("gap_hold_streak", None)
+        detail.pop("gap_hold_latest_exit_ts", None)
         detail["queue_role"] = "startup_reconcile_position"
         detail["schedule_lane"] = "base"
         if (
@@ -6324,10 +6361,9 @@ class AutoRunManager:
                     print(f"[WS][STATS] 过滤事件类型: {self._ws_filtered_types}")
                 self._ws_last_stats_log = now
             return
-        ts = ev.get("timestamp") or ev.get("ts") or ev.get("time")
-        # 确保时间戳总是有效的
-        if ts is None:
-            ts = time.time()
+        ts = _normalize_ws_event_timestamp(
+            ev.get("timestamp") or ev.get("ts") or ev.get("time")
+        )
 
         status_keys = (
             "status",
@@ -8487,7 +8523,11 @@ class AutoRunManager:
         detail = self.topic_details.setdefault(token_id, {})
         queue_role = str(detail.get("queue_role") or "").strip().lower()
         has_existing_resume = isinstance(detail.get("resume_state"), dict)
-        should_probe = queue_role == "restored_token" or has_existing_resume
+        should_probe = queue_role in {
+            "restored_token",
+            "startup_reconcile_position",
+            "refill_with_position",
+        } or has_existing_resume
         if not should_probe:
             return
 
@@ -9979,6 +10019,37 @@ class AutoRunManager:
                 "latest_exit_ts": float(ordered[0].get("exit_ts") or 0.0),
             }
         return backoff
+
+    def _get_active_gap_skip_backoff(
+        self,
+        token_id: str,
+        *,
+        exit_records: Optional[List[Dict[str, Any]]] = None,
+        now: Optional[float] = None,
+    ) -> Optional[Dict[str, float]]:
+        token = str(token_id or "").strip()
+        if not token:
+            return None
+        records = exit_records if exit_records is not None else self._load_exit_tokens()
+        backoff = self._build_gap_skip_backoff_seconds_by_token(records).get(token)
+        if not backoff:
+            return None
+        latest_exit_ts = float(backoff.get("latest_exit_ts", 0.0) or 0.0)
+        backoff_seconds = float(backoff.get("seconds", 0.0) or 0.0)
+        if latest_exit_ts <= 0.0 or backoff_seconds <= 0.0:
+            return None
+        current_ts = time.time() if now is None else float(now)
+        hold_until_ts = latest_exit_ts + backoff_seconds
+        remaining_seconds = max(0.0, hold_until_ts - current_ts)
+        if remaining_seconds <= 0.0:
+            return None
+        return {
+            "seconds": backoff_seconds,
+            "streak": float(backoff.get("streak", 0.0) or 0.0),
+            "latest_exit_ts": latest_exit_ts,
+            "hold_until_ts": hold_until_ts,
+            "remaining_seconds": remaining_seconds,
+        }
 
     def _schedule_refill(self) -> None:
         """

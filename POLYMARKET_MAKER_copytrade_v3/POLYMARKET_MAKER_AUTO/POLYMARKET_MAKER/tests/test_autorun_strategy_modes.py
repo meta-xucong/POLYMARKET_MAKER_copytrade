@@ -1154,6 +1154,30 @@ def test_ensure_resume_state_from_live_position_sets_skip_buy():
     assert resume.get("skip_buy") is True
 
 
+def test_ensure_resume_state_from_live_position_sets_skip_buy_for_startup_reconcile_position():
+    cfg = GlobalConfig.from_dict({})
+    manager = _build_manager(cfg)
+    token_id = "startup_reconcile_live_pos"
+    manager.topic_details[token_id] = {"queue_role": "startup_reconcile_position"}
+    manager._stoploss_reentry_states[token_id] = manager._default_stoploss_reentry_state(
+        token_id
+    )
+    manager._refresh_unified_position_snapshot = lambda **_kwargs: (  # type: ignore[assignment]
+        [{"asset": token_id, "size": 3.0, "avgPrice": 0.41}],
+        {token_id: 3.0},
+        "ok",
+        "live",
+    )
+
+    manager._ensure_resume_state_from_live_position(token_id)
+
+    resume = (manager.topic_details.get(token_id) or {}).get("resume_state") or {}
+    assert resume.get("has_position") is True
+    assert float(resume.get("position_size") or 0.0) == 3.0
+    assert float(resume.get("entry_price") or 0.0) == 0.41
+    assert resume.get("skip_buy") is True
+
+
 def test_reconcile_position_restore_before_start_downgrades_startup_reconcile_without_position():
     cfg = GlobalConfig.from_dict({})
     manager = _build_manager(cfg)
@@ -2803,6 +2827,30 @@ def test_tick_size_change_event_updates_cache_without_wiping_quotes(tmp_path):
         assert abs(float(manager._ws_cache["t1"]["best_ask"]) - 0.53) < 1e-12
 
 
+def test_ws_tick_event_negative_timestamp_is_sanitized(tmp_path):
+    manager = _build_manager(GlobalConfig.from_dict({}))
+    manager._ws_token_ids = ["t1"]
+
+    before = time.time()
+    manager._on_ws_event(
+        {
+            "event_type": "tick",
+            "asset_id": "t1",
+            "best_bid": "0.51",
+            "best_ask": "0.53",
+            "timestamp": -123456789.0,
+        }
+    )
+    after = time.time()
+
+    with manager._ws_cache_lock:
+        payload = dict(manager._ws_cache["t1"])
+    assert abs(float(payload["best_bid"]) - 0.51) < 1e-12
+    assert abs(float(payload["best_ask"]) - 0.53) < 1e-12
+    assert float(payload["ts"]) >= before
+    assert float(payload["ts"]) <= after + 1.0
+
+
 def test_reentry_requires_probe_then_rebound_zone(tmp_path):
     manager = _build_stoploss_manager(tmp_path)
     now = time.time()
@@ -3399,6 +3447,105 @@ def test_process_exit_startup_reconcile_position_cleanup_success_when_only_dust_
     assert task.end_reason == "position reconcile cleanup success"
     assert manager.topic_details["t1"]["queue_role"] == "cycle_closed"
     assert cycle_calls and cycle_calls[0][0] == "t1"
+
+
+def test_process_exit_startup_reconcile_position_respects_gap_skip_backoff(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.topic_details["t1"] = {"queue_role": "startup_reconcile_position"}
+    manager._refresh_unified_position_snapshot = lambda force_refresh=True: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 14.28, "avgPrice": 0.07}],
+        {"t1": 14.28},
+        "ok",
+        "live",
+    )
+    exit_path = manager.config.data_dir / "exit_tokens.json"
+    exit_path.parent.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    exit_path.write_text(
+        json.dumps(
+            [
+                {
+                    "token_id": "t1",
+                    "exit_ts": now,
+                    "exit_reason": "POSITION_SYNC_SKIP_GAP",
+                    "exit_data": {
+                        "has_position": True,
+                        "position_size": 14.28,
+                        "sell_floor_price": 0.073,
+                        "last_ask": 0.065,
+                    },
+                    "refillable": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    task = TopicTask(topic_id="t1")
+    manager._handle_process_exit(task, 0)
+
+    assert task.status == "exited"
+    assert task.end_reason == "position sync gap hold"
+    assert "t1" not in manager.pending_topics
+    assert "t1" not in manager.pending_burst_topics
+    assert manager.topic_details["t1"]["queue_role"] == "startup_reconcile_position"
+    assert float(manager.topic_details["t1"]["gap_hold_until_ts"]) > now
+    rows = json.loads(exit_path.read_text(encoding="utf-8"))
+    assert len(rows) == 1
+    assert rows[0]["exit_reason"] == "POSITION_SYNC_SKIP_GAP"
+
+
+def test_process_exit_startup_reconcile_position_requeues_after_gap_skip_backoff_expires(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager.topic_details["t1"] = {"queue_role": "startup_reconcile_position"}
+    manager._refresh_unified_position_snapshot = lambda force_refresh=True: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 14.28, "avgPrice": 0.07}],
+        {"t1": 14.28},
+        "ok",
+        "live",
+    )
+    exit_path = manager.config.data_dir / "exit_tokens.json"
+    exit_path.parent.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    exit_path.write_text(
+        json.dumps(
+            [
+                {
+                    "token_id": "t1",
+                    "exit_ts": now - 301.0,
+                    "exit_reason": "POSITION_SYNC_SKIP_GAP",
+                    "exit_data": {
+                        "has_position": True,
+                        "position_size": 14.28,
+                        "sell_floor_price": 0.073,
+                        "last_ask": 0.065,
+                    },
+                    "refillable": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    task = TopicTask(topic_id="t1")
+    manager._handle_process_exit(task, 0)
+
+    assert task.status == "pending"
+    assert "t1" in manager.pending_topics
+    assert manager.topic_details["t1"]["queue_role"] == "startup_reconcile_position"
+    assert "gap_hold_until_ts" not in manager.topic_details["t1"]
+    rows = json.loads(exit_path.read_text(encoding="utf-8"))
+    assert rows[-1]["exit_reason"] == "POSITION_RECONCILE_EXITED_WITH_POSITION"
 
 
 def test_remove_token_from_copytrade_files_soft_invalidates_records(tmp_path):
