@@ -5058,7 +5058,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                 return
             _anchor_note_position_avg(fallback_px, source=reason)
             strategy.on_buy_filled(fallback_px, total_position=new_size, size=0.0)
-            _set_cycle_phase("IN_CYCLE", reason="position_sync_detected_position")
+            _set_cycle_phase("IN_CYCLE", reason="resume_existing_position")
             print(
                 f"[STATE] 同步策略持仓 -> price={fallback_px:.4f} size={new_size:.4f}"
             )

@@ -2280,6 +2280,47 @@ def test_save_token_cycle_states_preserves_newer_disk_cycle_fields(tmp_path):
     assert abs(float(record["local_cycle_started_ts"]) - 150.0) < 1e-9
 
 
+def test_load_token_cycle_states_drops_placeholder_keys_when_real_tokens_exist(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    state_path = manager.config.token_cycle_state_path
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    real_token = "123456789012345678901234567890"
+    state_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "token_states": {
+                    "t1": {"cycle_round": 0, "next_buy_allowed_ts": 0.0},
+                    real_token: {"cycle_round": 2, "next_buy_allowed_ts": 120.0},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager._load_token_cycle_states()
+
+    assert "t1" not in manager._token_cycle_states
+    assert real_token in manager._token_cycle_states
+
+
+def test_save_token_cycle_states_drops_placeholder_keys_when_real_tokens_exist(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    real_token = "123456789012345678901234567890"
+    manager._token_cycle_states = {
+        "t1": {"cycle_round": 0, "next_buy_allowed_ts": 0.0},
+        real_token: {"cycle_round": 1, "next_buy_allowed_ts": 60.0},
+    }
+
+    manager._save_token_cycle_states()
+
+    payload = json.loads(manager.config.token_cycle_state_path.read_text(encoding="utf-8"))
+    assert "t1" not in payload["token_states"]
+    assert real_token in payload["token_states"]
+
+
 def test_apply_sell_signals_ignores_signal_without_local_cycle(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
@@ -3714,9 +3755,42 @@ def test_source_detached_with_position_is_guard_held_without_forced_sell(tmp_pat
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
     state = manager._stoploss_reentry_states["t1"]
     assert bool(state.get("source_detached", False)) is True
-    assert state.get("market_status_last") == "source_detached_guard_hold"
+    assert state.get("market_status_last") == "source_detached"
     assert liq_calls == []
     assert sell_calls == []
+
+
+def test_source_detached_normal_maker_does_not_claim_stoploss_runtime_owner(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "NORMAL_MAKER",
+            "source_detached": True,
+            "market_status_last": "source_detached_guard_hold",
+            "last_error": "source_detached guard hold (within grace)",
+            "pending_stoploss_before_size": 10.0,
+        },
+    )
+
+    assert manager._has_stoploss_runtime_owner("t1") is False
+    state = manager._stoploss_reentry_states["t1"]
+    assert state.get("market_status_last") == "source_detached"
+    assert state.get("last_error") == ""
+    assert "pending_stoploss_before_size" not in state
+
+
+def test_source_detached_waiting_probe_still_claims_stoploss_runtime_owner(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_EXITED_WAITING_PROBE",
+            "source_detached": True,
+        },
+    )
+
+    assert manager._has_stoploss_runtime_owner("t1") is True
 
 
 def test_source_detached_timeout_skips_cleanup_below_value_threshold(tmp_path):
