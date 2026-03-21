@@ -3113,6 +3113,69 @@ def test_waiting_reentry_target_sell_cancels_with_record(tmp_path):
     assert (latest.get("exit_data") or {}).get("abandon_reason") == "target_sell_signal_while_waiting_reentry"
 
 
+def test_waiting_reentry_target_buy_does_not_release_stoploss_waiting(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    stop_exit_ts = now - 7200.0
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"token_id": "t1", "introduced_by_buy": True, "last_seen": "2026-03-21T08:23:13Z"}
+    ]
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_EXITED_WAITING_PROBE",
+            "stop_exit_ts": stop_exit_ts,
+            "reentry_line_price": 0.88,
+            "reentry_zone_lower_price": 0.87,
+            "probe_line_price": 0.836,
+            "source_detached": False,
+        },
+    )
+    manager._estimate_reentry_buyable_price = lambda token_id, row=None: None  # type: ignore[assignment]
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: ([], "ok")  # type: ignore[assignment]
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_EXITED_WAITING_PROBE"
+    assert state.get("market_status_last") != "target_buy_seen_after_stoploss_exit"
+    exit_path = manager.config.data_dir / "exit_tokens.json"
+    if exit_path.exists():
+        rows = json.loads(exit_path.read_text(encoding="utf-8"))
+        assert all(row.get("exit_reason") != "STOPLOSS_WAITING_RELEASED_BY_TARGET_BUY" for row in rows)
+
+
+def test_waiting_window_still_transitions_to_probe_without_target_buy_release(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._load_copytrade_tokens = lambda: [  # type: ignore[assignment]
+        {"token_id": "t1", "introduced_by_buy": True, "last_seen": "2026-03-21T08:23:13Z"}
+    ]
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_EXITED_WAITING_WINDOW",
+            "stop_exit_ts": now - 7200.0,
+            "reentry_earliest_ts": now - 1.0,
+            "reentry_line_price": 0.88,
+            "reentry_zone_lower_price": 0.87,
+            "probe_line_price": 0.836,
+            "source_detached": False,
+        },
+    )
+    manager._estimate_reentry_buyable_price = lambda token_id, row=None: None  # type: ignore[assignment]
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: ([], "ok")  # type: ignore[assignment]
+    try:
+        manager._run_stoploss_check(now)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_EXITED_WAITING_PROBE"
+
+
 def test_reentry_hold_recovery_marker_promotes_to_normal_maker(tmp_path):
     manager = _build_stoploss_manager(tmp_path)
     now = time.time()

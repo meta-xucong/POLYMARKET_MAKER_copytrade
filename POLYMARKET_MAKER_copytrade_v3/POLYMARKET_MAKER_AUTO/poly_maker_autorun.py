@@ -4783,6 +4783,7 @@ class AutoRunManager:
             if state_name in waiting_reentry_states:
                 has_sell_signal = token_id in copytrade_sell_signal_scope
                 not_in_follow_list = token_id not in copytrade_token_scope
+                stop_exit_ts = float(state.get("stop_exit_ts") or 0.0)
                 if has_sell_signal or not_in_follow_list:
                     reason = "target_sell_signal_while_waiting_reentry" if has_sell_signal else "target_not_following_while_waiting_reentry"
                     self._abandon_stoploss_reentry(
@@ -4802,35 +4803,9 @@ class AutoRunManager:
                             note="skip_reentry_after_target_sell",
                         )
                     continue
-                stop_exit_ts = float(state.get("stop_exit_ts") or 0.0)
-                fresh_target_buy_ts = float(copytrade_token_last_seen_ts.get(token_id) or 0.0)
-                if (
-                    stop_exit_ts > 0.0
-                    and fresh_target_buy_ts > 0.0
-                    and fresh_target_buy_ts > stop_exit_ts + 1e-6
-                ):
-                    state["state"] = "NORMAL_MAKER"
-                    state["probe_confirm_hits"] = 0
-                    state["rebound_confirm_hits"] = 0
-                    state["pending_cleanup_since_ts"] = 0.0
-                    state["last_error"] = ""
-                    state["market_status_last"] = "target_buy_seen_after_stoploss_exit"
-                    self._append_exit_token_record(
-                        token_id,
-                        "STOPLOSS_WAITING_RELEASED_BY_TARGET_BUY",
-                        exit_data={
-                            "source": "stoploss_v4",
-                            "stop_exit_ts": stop_exit_ts,
-                            "target_buy_ts": fresh_target_buy_ts,
-                            "previous_state": state_name,
-                        },
-                        refillable=False,
-                    )
-                    print(
-                        f"[STATE_SYNC] token={token_id[:20]}... release waiting reentry after target buy refresh"
-                    )
-                    state_dirty = True
-                    continue
+                # Target BUY must not bypass stoploss reentry gating. Once a token
+                # enters stoploss waiting, only explicit cancel paths or the stoploss
+                # reentry state machine may bring it back.
                 if stop_exit_ts > 0.0 and (now - stop_exit_ts) >= reentry_timeout_sec:
                     self._abandon_stoploss_reentry(
                         token_id,
