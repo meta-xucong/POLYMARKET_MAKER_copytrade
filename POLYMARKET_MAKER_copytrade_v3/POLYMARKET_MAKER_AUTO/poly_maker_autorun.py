@@ -2412,6 +2412,33 @@ class AutoRunManager:
             normalized["stoploss_first_cut_drawdown"] = float(stoploss_first_cut_drawdown)
         return normalized
 
+    @staticmethod
+    def _is_likely_real_token_id(token_id: Any) -> bool:
+        token = str(token_id or "").strip()
+        return len(token) >= 20 and token.isdigit()
+
+    @classmethod
+    def _filter_cycle_state_rows(
+        cls, rows: Dict[str, Any]
+    ) -> tuple[Dict[str, Dict[str, Any]], int]:
+        has_real_token = any(cls._is_likely_real_token_id(token_id) for token_id in rows.keys())
+        normalized: Dict[str, Dict[str, Any]] = {}
+        dropped = 0
+        for token_id, raw_record in rows.items():
+            token = str(token_id).strip()
+            if not token:
+                dropped += 1
+                continue
+            if has_real_token and not cls._is_likely_real_token_id(token):
+                dropped += 1
+                continue
+            record = cls._normalize_cycle_state_record(raw_record)
+            if record is None:
+                dropped += 1
+                continue
+            normalized[token] = record
+        return normalized, dropped
+
     def _load_token_cycle_states(self) -> None:
         with self._file_io_lock:
             if not self._token_cycle_state_path.exists():
@@ -2428,16 +2455,10 @@ class AutoRunManager:
             if not isinstance(token_states, dict):
                 self._token_cycle_states = {}
                 return
-            normalized: Dict[str, Dict[str, Any]] = {}
-            for token_id, raw_record in token_states.items():
-                token = str(token_id).strip()
-                if not token:
-                    continue
-                record = self._normalize_cycle_state_record(raw_record)
-                if record is None:
-                    continue
-                normalized[token] = record
+            normalized, dropped = self._filter_cycle_state_rows(token_states)
             self._token_cycle_states = normalized
+        if dropped:
+            print(f"[CYCLE_GATE][CLEANUP] 已忽略 {dropped} 条占位/脏 token 状态")
         if self._token_cycle_states:
             print(f"[CYCLE_GATE] 已加载 {len(self._token_cycle_states)} 条 token 周期状态")
 
@@ -2450,10 +2471,7 @@ class AutoRunManager:
                         payload = json.load(f)
                     raw_token_states = payload.get("token_states") if isinstance(payload, dict) else {}
                     if isinstance(raw_token_states, dict):
-                        for token_id, raw_record in raw_token_states.items():
-                            normalized = self._normalize_cycle_state_record(raw_record)
-                            if normalized is not None:
-                                disk_states[str(token_id)] = normalized
+                        disk_states, _ = self._filter_cycle_state_rows(raw_token_states)
                 except (json.JSONDecodeError, OSError):
                     disk_states = {}
 
@@ -2506,6 +2524,7 @@ class AutoRunManager:
                             merged_state.pop(key, None)
                 merged_states[token_id] = self._normalize_cycle_state_record(merged_state) or merged_state
 
+            merged_states, dropped = self._filter_cycle_state_rows(merged_states)
             self._token_cycle_states = merged_states
             payload = {
                 "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -2515,6 +2534,9 @@ class AutoRunManager:
                 _atomic_json_write(self._token_cycle_state_path, payload)
             except OSError as exc:
                 print(f"[CYCLE_GATE][WARN] 写入状态失败: {exc}")
+            else:
+                if dropped:
+                    print(f"[CYCLE_GATE][CLEANUP] 已清理 {dropped} 条占位/脏 token 状态")
 
     @staticmethod
     def _today_utc_date(now: Optional[float] = None) -> str:
@@ -2705,7 +2727,27 @@ class AutoRunManager:
         # Legacy informational field retained for observability; pause gating now uses
         # daily_stoploss_full_clear_count plus reentry_paused_for_day.
         self._sync_stoploss_pause_status_fields(merged)
+        self._sanitize_stoploss_runtime_release_state(merged)
         return merged
+
+    @staticmethod
+    def _sanitize_stoploss_runtime_release_state(state: Dict[str, Any]) -> None:
+        state_name = str(state.get("state") or "").strip().upper()
+        if state_name != "NORMAL_MAKER":
+            return
+        if str(state.get("market_status_last") or "").strip() == "source_detached_guard_hold":
+            state["market_status_last"] = "source_detached"
+        last_error = str(state.get("last_error") or "").strip()
+        if last_error == "source_detached guard hold (within grace)":
+            state["last_error"] = ""
+        for key in (
+            "pending_stoploss_before_size",
+            "pending_stoploss_after_size",
+            "pending_stoploss_exit_price",
+            "pending_stoploss_exec_source",
+            "pending_stoploss_drawdown",
+        ):
+            state.pop(key, None)
 
     def _load_stoploss_reentry_states(self) -> None:
         with self._file_io_lock:
@@ -10224,8 +10266,6 @@ class AutoRunManager:
         state = self._stoploss_reentry_states.get(token_id) or {}
         if not isinstance(state, dict) or not state:
             return False
-        if bool(state.get("source_detached", False)):
-            return True
         state_name = str(state.get("state") or "").strip().upper()
         return state_name in {
             "STOPLOSS_EXITED_WAITING_WINDOW",
