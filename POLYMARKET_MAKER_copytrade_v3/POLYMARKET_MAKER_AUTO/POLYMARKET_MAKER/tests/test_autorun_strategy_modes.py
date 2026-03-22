@@ -1130,6 +1130,48 @@ def test_start_process_blocks_when_metadata_unverified_without_position():
     assert captured[0][1] == "TITLE_BLACKLIST_METADATA_UNVERIFIED_NO_POSITION"
 
 
+def test_start_process_preserves_refill_retry_count_for_same_runtime_lifecycle(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(tmp_path / "data")},
+            "handled_topics_path": str(tmp_path / "data" / "handled_topics.json"),
+        }
+    )
+    manager = _build_manager(cfg)
+    token_id = "t1"
+    manager.topic_details[token_id] = {}
+    manager._ws_cache[token_id] = {"bid": 0.5, "ask": 0.6, "ts": time.time()}
+    manager._refill_retry_counts[token_id] = 6
+    manager._hydrate_topic_metadata_for_blacklist = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+    manager._apply_metadata_unverified_guard = lambda *_args, **_kwargs: ""  # type: ignore[assignment]
+    manager._enforce_title_blacklist_policy = lambda *_args, **_kwargs: ""  # type: ignore[assignment]
+    manager._is_sell_cleanup_in_flight = lambda *_args, **_kwargs: False  # type: ignore[assignment]
+    manager._block_topic_start_for_active_sell = lambda *_args, **_kwargs: False  # type: ignore[assignment]
+    manager._reconcile_position_restore_before_start = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+    manager._build_run_config = lambda *_args, **_kwargs: {}  # type: ignore[assignment]
+    manager._apply_token_cycle_buy_gate_and_drop_override = lambda *_args, **_kwargs: True  # type: ignore[assignment]
+    manager._mark_token_cycle_local_start = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+
+    class _DummyProc:
+        pid = 12345
+
+        def poll(self):
+            return None
+
+    old_popen = autorun_mod.subprocess.Popen
+    old_sleep = autorun_mod.time.sleep
+    autorun_mod.subprocess.Popen = lambda *args, **kwargs: _DummyProc()  # type: ignore[assignment]
+    autorun_mod.time.sleep = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+    try:
+        ok = manager._start_topic_process(token_id)
+    finally:
+        autorun_mod.subprocess.Popen = old_popen  # type: ignore[assignment]
+        autorun_mod.time.sleep = old_sleep  # type: ignore[assignment]
+
+    assert ok is True
+    assert manager._refill_retry_counts[token_id] == 6
+
+
 def test_ensure_resume_state_from_live_position_sets_skip_buy():
     cfg = GlobalConfig.from_dict({})
     manager = _build_manager(cfg)
@@ -1455,6 +1497,7 @@ def test_refresh_topics_rearms_active_unmanaged_handled_token():
     manager = _build_manager(cfg)
     manager._startup_sync_retry_needed = False
     manager.handled_topics.add("t1")
+    manager._refill_retry_counts["t1"] = 6
     manager.topic_details["t1"] = {
         "resume_state": {"has_position": True},
         "refill_exit_reason": "SELL_ABANDONED",
@@ -3385,6 +3428,7 @@ def test_process_exit_startup_reconcile_position_late_cleanup_success_when_flat(
     assert "t1" not in manager.handled_topics
     assert manager.topic_details["t1"]["queue_role"] == "cycle_closed"
     assert cycle_calls and cycle_calls[0][0] == "t1"
+    assert "t1" not in manager._refill_retry_counts
     rows = json.loads((manager.config.data_dir / "exit_tokens.json").read_text(encoding="utf-8"))
     assert rows[-1]["exit_reason"] == "POSITION_RECONCILE_LATE_CLEANUP_SUCCESS"
 
@@ -3401,6 +3445,7 @@ def test_process_exit_startup_reconcile_position_cleanup_success_on_rc_zero(tmp_
         "resume_state": {"has_position": True},
     }
     manager.handled_topics.add("t1")
+    manager._refill_retry_counts["t1"] = 4
     cycle_calls = []
     manager._advance_token_cycle_state_on_cleanup = (  # type: ignore[method-assign]
         lambda token_id, run_cfg: cycle_calls.append((token_id, dict(run_cfg or {})))
@@ -3417,6 +3462,7 @@ def test_process_exit_startup_reconcile_position_cleanup_success_on_rc_zero(tmp_
     assert manager.topic_details["t1"]["queue_role"] == "cycle_closed"
     assert "resume_state" not in manager.topic_details["t1"]
     assert cycle_calls and cycle_calls[0][0] == "t1"
+    assert "t1" not in manager._refill_retry_counts
 
 
 def test_process_exit_startup_reconcile_position_cleanup_success_when_only_dust_remains(tmp_path):
@@ -4137,6 +4183,46 @@ def test_mark_token_orphaned_clears_stoploss_owner_immediately(tmp_path):
     assert latest.get("status") == "orphaned"
 
 
+def test_mark_token_orphaned_terminal_blocks_existing_refill_records(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(tmp_path / "data")},
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._refill_retry_counts["t1"] = 6
+    exit_path = manager.config.data_dir / "exit_tokens.json"
+    exit_path.parent.mkdir(parents=True, exist_ok=True)
+    exit_path.write_text(
+        json.dumps(
+            [
+                {
+                    "token_id": "t1",
+                    "exit_ts": time.time(),
+                    "exit_reason": "SELL_ABANDONED",
+                    "exit_data": {"has_position": True},
+                    "refillable": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    manager._mark_token_orphaned(
+        "t1",
+        reason="MARKET_TERMINAL_DETECTED",
+        trigger_source="unit_test",
+        position_snapshot={"size": 2.0, "snapshot_info": "ok"},
+    )
+
+    rows = json.loads(exit_path.read_text(encoding="utf-8"))
+    latest = next(row for row in rows if row.get("token_id") == "t1")
+    assert latest.get("refillable") is False
+    assert latest.get("refill_block_reason") == "MARKET_TERMINAL_DETECTED"
+    assert latest.get("refill_block_source") == "terminal_orphan"
+    assert "t1" not in manager._refill_retry_counts
+
+
 def test_waiting_reentry_times_out_and_is_abandoned(tmp_path):
     manager = _build_stoploss_manager(tmp_path, stoploss_overrides={"reentry_timeout_hours": 24.0})
     now = time.time()
@@ -4164,6 +4250,40 @@ def test_waiting_reentry_times_out_and_is_abandoned(tmp_path):
     assert latest.get("exit_reason") == "STOPLOSS_REENTRY_ABANDONED"
     exit_data = latest.get("exit_data") or {}
     assert exit_data.get("abandon_reason") == "reentry_timeout"
+
+
+def test_filter_refillable_tokens_skips_terminal_orphan_even_with_refillable_exit(tmp_path):
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(tmp_path / "data")},
+            "refill": {
+                "refill_cooldown_minutes_with_position": 0,
+                "refill_cooldown_minutes_no_position": 0,
+            },
+        }
+    )
+    manager = _build_manager(cfg)
+    manager._load_latest_orphan_states = lambda: {  # type: ignore[assignment]
+        "t1": {
+            "token_id": "t1",
+            "status": "orphaned",
+            "reason": "MARKET_TERMINAL_DETECTED",
+        }
+    }
+
+    refillable = manager._filter_refillable_tokens(
+        [
+            {
+                "token_id": "t1",
+                "exit_ts": time.time() - 3600.0,
+                "exit_reason": "SELL_ABANDONED",
+                "exit_data": {"has_position": True, "position_size": 3.0},
+                "refillable": True,
+            }
+        ]
+    )
+
+    assert refillable == []
 
 
 def test_reentry_fill_above_line_is_recovered_into_reentry_hold(tmp_path):

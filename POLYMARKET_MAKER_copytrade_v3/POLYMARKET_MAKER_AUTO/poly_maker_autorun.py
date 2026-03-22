@@ -3480,6 +3480,8 @@ class AutoRunManager:
         ):
             detail.pop(stale_key, None)
         detail["queue_role"] = "cycle_closed"
+        self._refill_retry_counts.pop(token_id, None)
+        self._refilled_tokens.discard(token_id)
         self._remove_pending_topic(token_id)
         task_ref = task or self.tasks.get(token_id)
         if task_ref is not None:
@@ -8475,18 +8477,10 @@ class AutoRunManager:
         self._sell_exit_deadlines.pop(topic_id, None)
         self._seen_self_sell_tokens.discard(topic_id)
         self._clear_active_unmanaged_rearm_block(topic_id)
-        # 检查是否是回填启动。
-        # 注意：无持仓回填时 resume_state 可能为 None，不能仅靠 resume_state 判断。
+        # refill retry count 属于“同一笔未闭合仓位恢复链”的状态。
+        # 这里不再按启动来源猜测是否清零，避免 startup_reconcile_position
+        # 等路径把同一生命周期误判成新一轮并重置 1/6..6/6 计数。
         detail = self.topic_details.get(topic_id) or {}
-        is_refill_start = bool(
-            detail.get("refill_exit_reason")
-            or detail.get("refill_retry_count", 0)
-            or detail.get("resume_state") is not None
-        )
-        # 只有非回填启动（新交易周期）时才重置回填重试计数；
-        # 回填启动时保留计数，确保 PRICE_NONE_STREAK/NO_DATA_TIMEOUT 的重试限制生效。
-        if not is_refill_start:
-            self._refill_retry_counts.pop(topic_id, None)
         cycle_mode = "started_not_bought"
         resume_state = detail.get("resume_state")
         if bool(config_data.get("exit_only")):
@@ -9581,6 +9575,52 @@ class AutoRunManager:
         if len(self.latest_topics) < original_len:
             print(f"[CLEANUP] 已从 latest_topics 内存中移除 token={token_id[:20]}...")
 
+    def _is_terminal_exit_reason(self, reason: Any) -> bool:
+        return str(reason or "").strip().upper() in {
+            "MARKET_CLOSED",
+            "MARKET_RESOLVED",
+            "MARKET_ARCHIVED",
+            "MARKET_NOT_FOUND",
+            "MARKET_CLOSED_ON_REFILL",
+            "MARKET_TERMINAL_DETECTED",
+        }
+
+    def _orphan_state_blocks_refill(self, state: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(state, dict):
+            return False
+        return self._is_terminal_exit_reason(
+            state.get("reason") or state.get("trigger_reason") or ""
+        )
+
+    def _invalidate_refill_records_for_token(
+        self,
+        token_id: str,
+        *,
+        block_reason: str,
+        block_source: str,
+    ) -> int:
+        if not token_id:
+            return 0
+        changed = 0
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with self._file_io_lock:
+            records = self._load_exit_tokens()
+            if not isinstance(records, list) or not records:
+                return 0
+            for record in records:
+                if str(record.get("token_id") or "").strip() != str(token_id):
+                    continue
+                if not bool(record.get("refillable", True)):
+                    continue
+                record["refillable"] = False
+                record["refill_block_reason"] = str(block_reason)
+                record["refill_block_source"] = str(block_source)
+                record["refill_blocked_at"] = now_iso
+                changed += 1
+            if changed > 0:
+                _atomic_json_write(self._exit_tokens_path, records)
+        return changed
+
     # ========== Slot Refill (回填) 逻辑 ==========
     def _load_exit_tokens(self) -> List[Dict[str, Any]]:
         """
@@ -9700,6 +9740,7 @@ class AutoRunManager:
             "MARKET_ARCHIVED",
             "MARKET_NOT_FOUND",
             "MARKET_CLOSED_ON_REFILL",
+            "MARKET_TERMINAL_DETECTED",
             "USER_STOPPED",
             "DEADLINE_REACHED",
         }
@@ -9737,6 +9778,7 @@ class AutoRunManager:
         gap_backoff_by_token = self._build_gap_skip_backoff_seconds_by_token(
             exit_records
         )
+        orphan_states = self._load_latest_orphan_states()
 
         for record in sorted_records:
             token_id = record.get("token_id")
@@ -9749,6 +9791,12 @@ class AutoRunManager:
                 skip_stats["duplicate_token"] = skip_stats.get("duplicate_token", 0) + 1
                 continue
             seen_tokens.add(token_id)
+
+            if self._orphan_state_blocks_refill(orphan_states.get(str(token_id))):
+                skip_stats["terminal_orphan_block"] = (
+                    skip_stats.get("terminal_orphan_block", 0) + 1
+                )
+                continue
 
             exit_reason = record.get("exit_reason", "")
             exit_ts = record.get("exit_ts", 0)
@@ -11857,9 +11905,18 @@ class AutoRunManager:
             "position_snapshot": position_snapshot or {},
         }
         self._append_orphan_token_record(record)
+        invalidated_refill_records = 0
+        if self._is_terminal_exit_reason(reason):
+            invalidated_refill_records = self._invalidate_refill_records_for_token(
+                token_id,
+                block_reason=str(reason),
+                block_source="terminal_orphan",
+            )
+            self._refill_retry_counts.pop(token_id, None)
         print(
             f"[ORPHAN] token={token_id[:20]}... reason={reason} source={trigger_source} "
-            f"note={note or '-'} stoploss_owner_cleared={had_stoploss_owner}"
+            f"note={note or '-'} stoploss_owner_cleared={had_stoploss_owner} "
+            f"refill_records_blocked={invalidated_refill_records}"
         )
 
     def _unified_position_cycle_interval_sec(self) -> float:
@@ -12131,10 +12188,10 @@ class AutoRunManager:
             print(f"[RESTORE] 从运行状态恢复 {len(active_tokens_from_snapshot)} 个活跃 token 到 handled_topics")
 
         # ===== 构建黑名单：确定已死亡的 token =====
-        # 只过滤 MARKET_CLOSED 的 token，避免误删正常 token
+        # 过滤已确认 terminal 的 token，避免 runtime restore 把它们重新拉回普通路径。
         dead_tokens: set = set()
         for record in self._load_exit_tokens():
-            if record.get("exit_reason") == "MARKET_CLOSED":
+            if self._is_terminal_exit_reason(record.get("exit_reason")):
                 tid = record.get("token_id")
                 if tid:
                     dead_tokens.add(str(tid))
