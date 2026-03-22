@@ -5514,6 +5514,11 @@ def main(run_config: Optional[Dict[str, Any]] = None):
             print(f"[ERR] {source} 卖出挂单异常：{exc}")
             err_text = str(exc or "")
             err_text_lower = err_text.lower()
+            invalid_price_error = (
+                "price (" in err_text_lower
+                and "max:" in err_text_lower
+                and "min:" in err_text_lower
+            )
             missing_orderbook = (
                 "no orderbook exists for the requested token id" in err_text_lower
                 or ("orderbook" in err_text_lower and "does not exist" in err_text_lower)
@@ -5533,6 +5538,10 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     strategy.stop("market closed")
                     stop_event.set()
                     return
+            if invalid_price_error:
+                strategy.mark_awaiting(ActionType.SELL)
+                strategy.on_reject(f"sell invalid price: {exc}")
+                return
             strategy.on_reject(str(exc))
             return
 
