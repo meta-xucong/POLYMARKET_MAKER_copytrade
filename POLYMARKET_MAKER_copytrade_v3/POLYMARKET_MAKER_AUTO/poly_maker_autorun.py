@@ -166,6 +166,13 @@ DEFAULT_GLOBAL_CONFIG = {
         "drawdown_step_per_cycle_pct": 0.01,
         "min_age_minutes": 5.0,
         "confirm_rounds": 2,
+        "spread_guard_enabled": True,
+        "wide_spread_pct": 0.05,
+        "new_position_spread_grace_minutes": 15.0,
+        "new_position_hard_grace_minutes": 5.0,
+        "wide_spread_extra_confirm_rounds": 2,
+        "wide_spread_extra_buffer_ticks": 3,
+        "wide_spread_require_mid_break": True,
         "min_maker_order_size": 5.0,
         "max_tokens_per_cycle": 3,
         "skip_if_global_liquidation_active": True,
@@ -1116,6 +1123,37 @@ class GlobalConfig:
     stoploss_confirm_rounds: int = int(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("confirm_rounds", 2)
     )
+    stoploss_spread_guard_enabled: bool = bool(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("spread_guard_enabled", True)
+    )
+    stoploss_wide_spread_pct: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("wide_spread_pct", 0.05)
+    )
+    stoploss_new_position_spread_grace_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "new_position_spread_grace_minutes", 15.0
+        )
+    )
+    stoploss_new_position_hard_grace_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "new_position_hard_grace_minutes", 5.0
+        )
+    )
+    stoploss_wide_spread_extra_confirm_rounds: int = int(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "wide_spread_extra_confirm_rounds", 2
+        )
+    )
+    stoploss_wide_spread_extra_buffer_ticks: int = int(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "wide_spread_extra_buffer_ticks", 3
+        )
+    )
+    stoploss_wide_spread_require_mid_break: bool = bool(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get(
+            "wide_spread_require_mid_break", True
+        )
+    )
     stoploss_min_maker_order_size: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("min_maker_order_size", 5.0)
     )
@@ -1922,6 +1960,84 @@ class GlobalConfig:
                         merged.get("stoploss_confirm_rounds", cls.stoploss_confirm_rounds),
                     )
                 ),
+            ),
+            stoploss_spread_guard_enabled=bool(
+                stoploss_cfg.get(
+                    "spread_guard_enabled",
+                    merged.get(
+                        "stoploss_spread_guard_enabled",
+                        cls.stoploss_spread_guard_enabled,
+                    ),
+                )
+            ),
+            stoploss_wide_spread_pct=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "wide_spread_pct",
+                        merged.get(
+                            "stoploss_wide_spread_pct",
+                            cls.stoploss_wide_spread_pct,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_new_position_spread_grace_minutes=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "new_position_spread_grace_minutes",
+                        merged.get(
+                            "stoploss_new_position_spread_grace_minutes",
+                            cls.stoploss_new_position_spread_grace_minutes,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_new_position_hard_grace_minutes=max(
+                0.0,
+                float(
+                    stoploss_cfg.get(
+                        "new_position_hard_grace_minutes",
+                        merged.get(
+                            "stoploss_new_position_hard_grace_minutes",
+                            cls.stoploss_new_position_hard_grace_minutes,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_wide_spread_extra_confirm_rounds=max(
+                0,
+                int(
+                    stoploss_cfg.get(
+                        "wide_spread_extra_confirm_rounds",
+                        merged.get(
+                            "stoploss_wide_spread_extra_confirm_rounds",
+                            cls.stoploss_wide_spread_extra_confirm_rounds,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_wide_spread_extra_buffer_ticks=max(
+                0,
+                int(
+                    stoploss_cfg.get(
+                        "wide_spread_extra_buffer_ticks",
+                        merged.get(
+                            "stoploss_wide_spread_extra_buffer_ticks",
+                            cls.stoploss_wide_spread_extra_buffer_ticks,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_wide_spread_require_mid_break=bool(
+                stoploss_cfg.get(
+                    "wide_spread_require_mid_break",
+                    merged.get(
+                        "stoploss_wide_spread_require_mid_break",
+                        cls.stoploss_wide_spread_require_mid_break,
+                    ),
+                )
             ),
             stoploss_min_maker_order_size=max(
                 0.0,
@@ -4620,6 +4736,86 @@ class AutoRunManager:
             )
             state["next_stoploss_trigger_ticks"] = int(threshold_ticks)
             stoploss_trigger_price = max(0.0, float(avg_price) - float(threshold_ticks) * float(tick))
+            effective_confirm_rounds = int(confirm_rounds)
+            if bool(self.config.stoploss_spread_guard_enabled):
+                quote = self._get_stoploss_cycle_quote(token_id)
+                quote_bid = _coerce_float((quote or {}).get("bid"))
+                quote_ask = _coerce_float((quote or {}).get("ask"))
+                if (
+                    quote_bid is not None
+                    and quote_bid > 0
+                    and quote_ask is not None
+                    and quote_ask > 0
+                    and quote_ask >= quote_bid
+                ):
+                    mid_price = (float(quote_bid) + float(quote_ask)) / 2.0
+                    spread_pct = (
+                        ((float(quote_ask) - float(quote_bid)) / mid_price)
+                        if mid_price > 0
+                        else 0.0
+                    )
+                    state["last_stoploss_spread_pct"] = float(spread_pct)
+                    state["last_stoploss_spread_bid"] = float(quote_bid)
+                    state["last_stoploss_spread_ask"] = float(quote_ask)
+                    if spread_pct > float(self.config.stoploss_wide_spread_pct):
+                        hard_grace_sec = max(
+                            0.0,
+                            float(self.config.stoploss_new_position_hard_grace_minutes),
+                        ) * 60.0
+                        grace_sec = max(
+                            hard_grace_sec,
+                            float(self.config.stoploss_new_position_spread_grace_minutes),
+                        ) * 60.0
+                        position_age = max(0.0, float(now) - position_opened_ts)
+                        extra_buffer_ticks = max(
+                            0, int(self.config.stoploss_wide_spread_extra_buffer_ticks)
+                        )
+                        deep_trigger_price = max(
+                            0.0,
+                            float(stoploss_trigger_price)
+                            - float(extra_buffer_ticks) * float(tick),
+                        )
+                        deep_bid_broken = float(sellable_price) <= deep_trigger_price + 1e-12
+                        mid_broken = mid_price <= float(stoploss_trigger_price) + 1e-12
+                        if position_age < hard_grace_sec:
+                            state["stoploss_confirm_hits"] = 0
+                            state["last_error"] = (
+                                f"wide spread hard grace active age={position_age:.0f}s "
+                                f"spread={spread_pct:.3f}"
+                            )
+                            state_dirty = True
+                            continue
+                        if position_age < grace_sec and not deep_bid_broken:
+                            state["stoploss_confirm_hits"] = 0
+                            state["last_error"] = (
+                                f"wide spread grace active age={position_age:.0f}s "
+                                f"spread={spread_pct:.3f} deep_bid_required"
+                            )
+                            state_dirty = True
+                            continue
+                        if (
+                            position_age >= grace_sec
+                            and bool(self.config.stoploss_wide_spread_require_mid_break)
+                            and not mid_broken
+                            and not deep_bid_broken
+                        ):
+                            state["stoploss_confirm_hits"] = 0
+                            state["last_error"] = (
+                                f"wide spread guard active spread={spread_pct:.3f} "
+                                f"mid={mid_price:.6f} trigger={float(stoploss_trigger_price):.6f}"
+                            )
+                            state_dirty = True
+                            continue
+                        effective_confirm_rounds = max(
+                            effective_confirm_rounds,
+                            int(confirm_rounds)
+                            + max(
+                                0,
+                                int(
+                                    self.config.stoploss_wide_spread_extra_confirm_rounds
+                                ),
+                            ),
+                        )
             if float(sellable_price) > stoploss_trigger_price + 1e-12:
                 if int(state.get("stoploss_confirm_hits") or 0) != 0:
                     state["stoploss_confirm_hits"] = 0
@@ -4629,7 +4825,7 @@ class AutoRunManager:
             hits = int(state.get("stoploss_confirm_hits") or 0) + 1
             state["stoploss_confirm_hits"] = hits
             state_dirty = True
-            if hits < confirm_rounds:
+            if hits < effective_confirm_rounds:
                 continue
             if action_count >= max_actions:
                 break
@@ -4646,6 +4842,7 @@ class AutoRunManager:
                     "sellable_price": float(sellable_price),
                     "target_size": float(pos_size),
                     "confirm_hits": int(hits),
+                    "confirm_required": int(effective_confirm_rounds),
                     "threshold_pct": float(threshold),
                     "threshold_ticks": int(threshold_ticks),
                     "trigger_price": float(stoploss_trigger_price),
@@ -4661,6 +4858,7 @@ class AutoRunManager:
                     "sellable_price": float(sellable_price),
                     "target_size": float(pos_size),
                     "confirm_hits": hits,
+                    "confirm_required": int(effective_confirm_rounds),
                     "threshold_pct": threshold,
                     "threshold_ticks": int(threshold_ticks),
                     "trigger_price": float(stoploss_trigger_price),
