@@ -2285,6 +2285,7 @@ class AutoRunManager:
         self._stoploss_reentry_states: Dict[str, Dict[str, Any]] = {}
         self._stoploss_quote_cycle_cache: Dict[str, Dict[str, Any]] = {}
         self._load_stoploss_reentry_states()
+        self._reconcile_strategy_freeze_on_startup()
         
         if MARKET_STATE_CHECKER_AVAILABLE:
             try:
@@ -2398,6 +2399,23 @@ class AutoRunManager:
             )
         except (TypeError, ValueError):
             stoploss_position_opened_ts = 0.0
+        strategy_freeze_state = str(raw.get("strategy_freeze_state") or "none").strip().lower()
+        if strategy_freeze_state not in {
+            "none",
+            "sell_abandoned_frozen",
+            "stoploss_frozen",
+        }:
+            strategy_freeze_state = "none"
+        try:
+            strategy_freeze_since_ts = max(
+                0.0, float(raw.get("strategy_freeze_since_ts", 0.0) or 0.0)
+            )
+        except (TypeError, ValueError):
+            strategy_freeze_since_ts = 0.0
+        strategy_freeze_reason = str(raw.get("strategy_freeze_reason") or "").strip()
+        if strategy_freeze_state == "none":
+            strategy_freeze_since_ts = 0.0
+            strategy_freeze_reason = ""
         normalized = {
             "cycle_round": cycle_round,
             "next_buy_allowed_ts": next_buy_allowed_ts,
@@ -2413,6 +2431,9 @@ class AutoRunManager:
             "stoploss_confirm_hits": stoploss_confirm_hits,
             "stoploss_last_action_ts": stoploss_last_action_ts,
             "stoploss_position_opened_ts": stoploss_position_opened_ts,
+            "strategy_freeze_state": strategy_freeze_state,
+            "strategy_freeze_since_ts": strategy_freeze_since_ts,
+            "strategy_freeze_reason": strategy_freeze_reason,
         }
         if next_drop_pct is not None:
             normalized["next_drop_pct"] = next_drop_pct
@@ -2471,6 +2492,70 @@ class AutoRunManager:
             print(f"[CYCLE_GATE][CLEANUP] 已忽略 {dropped} 条占位/脏 token 状态")
         if self._token_cycle_states:
             print(f"[CYCLE_GATE] 已加载 {len(self._token_cycle_states)} 条 token 周期状态")
+
+    def _reconcile_strategy_freeze_on_startup(self) -> None:
+        if not self._token_cycle_states:
+            return
+        released_sell_abandoned = 0
+        kept_stoploss = 0
+        kept_stoploss_without_owner = 0
+        normalized_unknown = 0
+        changed = False
+        for token_id, raw_record in list(self._token_cycle_states.items()):
+            record = dict(raw_record or {})
+            freeze_state = str(record.get("strategy_freeze_state") or "none").strip().lower()
+            if freeze_state in {"", "none"}:
+                continue
+            if freeze_state == "sell_abandoned_frozen":
+                record["strategy_freeze_state"] = "none"
+                record["strategy_freeze_since_ts"] = 0.0
+                record["strategy_freeze_reason"] = ""
+                self._token_cycle_states[token_id] = (
+                    self._normalize_cycle_state_record(record) or record
+                )
+                released_sell_abandoned += 1
+                changed = True
+                continue
+            if freeze_state == "stoploss_frozen":
+                kept_stoploss += 1
+                if not self._has_stoploss_runtime_owner(token_id):
+                    kept_stoploss_without_owner += 1
+                continue
+            record["strategy_freeze_state"] = "none"
+            record["strategy_freeze_since_ts"] = 0.0
+            record["strategy_freeze_reason"] = ""
+            self._token_cycle_states[token_id] = (
+                self._normalize_cycle_state_record(record) or record
+            )
+            normalized_unknown += 1
+            changed = True
+        if changed:
+            self._save_token_cycle_states()
+        if released_sell_abandoned:
+            print(
+                "[STRATEGY_FREEZE][RESET] 启动时已释放 SELL_ABANDONED 冻结: "
+                f"count={released_sell_abandoned}"
+            )
+        if kept_stoploss:
+            print(
+                "[STRATEGY_FREEZE][KEEP] 启动时保留 STOPLOSS 冻结: "
+                f"count={kept_stoploss} owner_missing={kept_stoploss_without_owner}"
+            )
+        if normalized_unknown:
+            print(
+                "[STRATEGY_FREEZE][CLEANUP] 启动时已清理未知冻结状态: "
+                f"count={normalized_unknown}"
+            )
+
+    def _get_strategy_freeze_state(self, token_id: str) -> str:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return "none"
+        state = self._token_cycle_states.get(token_id) or {}
+        freeze_state = str(state.get("strategy_freeze_state") or "none").strip().lower()
+        if freeze_state not in {"sell_abandoned_frozen", "stoploss_frozen"}:
+            return "none"
+        return freeze_state
 
     def _save_token_cycle_states(self) -> None:
         with self._file_io_lock:
@@ -11846,6 +11931,25 @@ class AutoRunManager:
                 or token_id in self.pending_exit_topics
             )
             if tracked:
+                continue
+            freeze_state = self._get_strategy_freeze_state(token_id)
+            if freeze_state != "none":
+                delay = self._orphan_probe_delay_sec(max(1, attempts + 1))
+                self._append_orphan_token_record(
+                    {
+                        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                        "updated_ts": float(now),
+                        "token_id": token_id,
+                        "status": "probe_failed",
+                        # 保持 attempts 不递增，避免主动冻结误触发 manual_only 终止。
+                        "probe_attempts": int(attempts),
+                        "next_probe_at": float(now + delay),
+                        "reason": str(state.get("reason") or ""),
+                        "trigger_source": "orphan_recovery_probe",
+                        "note": f"strategy_frozen:{freeze_state}",
+                    }
+                )
+                failed += 1
                 continue
             if token_id not in copytrade_active:
                 reason = "copytrade_not_active"

@@ -2388,6 +2388,63 @@ def test_save_token_cycle_states_drops_placeholder_keys_when_real_tokens_exist(t
     assert real_token in payload["token_states"]
 
 
+def test_startup_reconcile_strategy_freeze_clears_only_sell_abandoned(tmp_path):
+    data_dir = tmp_path / "data"
+    copytrade_dir = tmp_path / "copytrade"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    copytrade_dir.mkdir(parents=True, exist_ok=True)
+    state_path = data_dir / "token_cycle_gate.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "",
+                "token_states": {
+                    "sell_token": {
+                        "cycle_round": 0,
+                        "next_buy_allowed_ts": 0.0,
+                        "strategy_freeze_state": "sell_abandoned_frozen",
+                        "strategy_freeze_since_ts": 123.0,
+                        "strategy_freeze_reason": "max_refill_retries_reached:6",
+                    },
+                    "stop_token": {
+                        "cycle_round": 0,
+                        "next_buy_allowed_ts": 0.0,
+                        "strategy_freeze_state": "stoploss_frozen",
+                        "strategy_freeze_since_ts": 456.0,
+                        "strategy_freeze_reason": "STOPLOSS_FULL_CLEAR",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    stoploss_state = copytrade_dir / "stoploss_reentry_state.json"
+    stoploss_backup = copytrade_dir / "stoploss_reentry_state.bak.json"
+    stoploss_state.write_text(
+        json.dumps({"updated_at": "", "version": 4, "token_states": {}}),
+        encoding="utf-8",
+    )
+    stoploss_backup.write_text(
+        json.dumps({"updated_at": "", "version": 4, "token_states": {}}),
+        encoding="utf-8",
+    )
+    cfg = GlobalConfig.from_dict(
+        {
+            "paths": {"data_directory": str(data_dir)},
+            "stoploss_reentry_state_path": str(stoploss_state),
+            "stoploss_reentry_state_backup_path": str(stoploss_backup),
+        }
+    )
+
+    manager = _build_manager(cfg)
+
+    assert manager._get_strategy_freeze_state("sell_token") == "none"
+    assert manager._get_strategy_freeze_state("stop_token") == "stoploss_frozen"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["token_states"]["sell_token"]["strategy_freeze_state"] == "none"
+    assert payload["token_states"]["stop_token"]["strategy_freeze_state"] == "stoploss_frozen"
+
+
 def test_apply_sell_signals_ignores_signal_without_local_cycle(tmp_path):
     copytrade_dir = tmp_path / "copytrade"
     copytrade_dir.mkdir(parents=True, exist_ok=True)
@@ -4467,6 +4524,54 @@ def test_orphan_probe_stops_when_official_positions_confirm_no_position(tmp_path
     assert latest.get("reason") == "POSITIONS_NO_POSITION"
     assert latest.get("next_probe_at") == 0.0
     assert latest.get("note") == "official_positions_absent"
+
+
+def test_orphan_probe_skips_strategy_frozen_without_consuming_attempts(tmp_path):
+    cfg = GlobalConfig.from_dict({"paths": {"data_directory": str(tmp_path / "data")}})
+    manager = _build_manager(cfg)
+    now = time.time()
+    max_attempts = int(manager.config.orphan_recovery_max_attempts)
+    manager._append_orphan_token_record(
+        {
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 60.0)),
+            "updated_ts": float(now - 60.0),
+            "token_id": "t1",
+            "status": "orphaned",
+            "probe_attempts": max_attempts,
+            "next_probe_at": float(now - 1.0),
+            "reason": "UNIT_TEST_ORPHAN",
+            "trigger_source": "unit_test",
+        }
+    )
+    manager._token_cycle_states["t1"] = {
+        "cycle_round": 0,
+        "next_buy_allowed_ts": 0.0,
+        "last_cycle_completed_ts": 0.0,
+        "next_drop_pct": None,
+        "next_profit_pct": None,
+        "local_cycle_status": "idle",
+        "local_cycle_started_ts": 0.0,
+        "local_cycle_invalidated_ts": 0.0,
+        "local_cycle_invalidate_reason": "",
+        "local_cycle_started_mode": "",
+        "strategy_freeze_state": "sell_abandoned_frozen",
+        "strategy_freeze_since_ts": float(now - 30.0),
+        "strategy_freeze_reason": "max_refill_retries_reached:6",
+    }
+    manager._build_copytrade_active_token_set = lambda: {"t1"}  # type: ignore[assignment]
+    manager._refresh_sell_position_snapshot = lambda: ({"t1": 3.0}, "ok")  # type: ignore[assignment]
+    manager._load_copytrade_sell_signals = lambda: {}  # type: ignore[assignment]
+
+    manager._run_orphan_recovery_probe(now)
+
+    rows = json.loads((manager.config.data_dir / "orphan_tokens.json").read_text(encoding="utf-8"))
+    latest = next(row for row in rows if row.get("token_id") == "t1")
+    assert latest.get("status") == "probe_failed"
+    assert int(latest.get("probe_attempts") or 0) == max_attempts
+    assert float(latest.get("next_probe_at") or 0.0) > now
+    assert latest.get("note") == "strategy_frozen:sell_abandoned_frozen"
+    assert latest.get("status") != "manual_only"
+    assert "t1" not in manager.pending_topics
 
 
 def test_reentry_fill_above_line_is_recovered_into_reentry_hold(tmp_path):
