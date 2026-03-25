@@ -5074,20 +5074,18 @@ def test_stoploss_wide_spread_hard_grace_blocks_confirm_hits(tmp_path):
     assert float(state.get("last_stoploss_spread_pct") or 0.0) > float(manager.config.stoploss_wide_spread_pct)
 
 
-def test_stoploss_wide_spread_requires_mid_break_and_extra_confirms(tmp_path):
+def test_stoploss_wide_spread_uses_widened_trigger_after_grace(tmp_path):
     manager = _build_stoploss_manager(
         tmp_path,
         stoploss_overrides={
             "min_age_minutes": 0.0,
-            "new_position_hard_grace_minutes": 0.0,
-            "new_position_spread_grace_minutes": 0.0,
-            "wide_spread_extra_buffer_ticks": 10,
-            "wide_spread_extra_confirm_rounds": 2,
+            "new_position_hard_grace_minutes": 5.0,
+            "new_position_spread_grace_minutes": 15.0,
         },
     )
     now = time.time()
     manager.config.stoploss_confirm_rounds = 1
-    manager._ws_cache["t1"] = {"best_bid": 0.91, "best_ask": 0.97, "updated_at": now}
+    manager._ws_cache["t1"] = {"best_bid": 0.94, "best_ask": 0.98, "updated_at": now, "tick_size": 0.01}
     liq_calls = []
     manager._total_liquidation.liquidate_single_token_taker = (  # type: ignore[attr-defined]
         lambda *args, **kwargs: liq_calls.append(kwargs) or {
@@ -5100,17 +5098,52 @@ def test_stoploss_wide_spread_requires_mid_break_and_extra_confirms(tmp_path):
     )
     old_fetch = autorun_mod._fetch_position_rows_from_data_api
     autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
-        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.91}],
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.94}],
         "ok",
     )
     try:
         manager._run_stoploss_check(now)
-        manager._run_stoploss_check(now + 61.0)
-        manager._run_stoploss_check(now + 122.0)
-        assert liq_calls == []
-        state = manager._stoploss_reentry_states["t1"]
-        assert int(state.get("stoploss_confirm_hits") or 0) == 2
-        manager._run_stoploss_check(now + 183.0)
+        manager._run_stoploss_check(now + 901.0)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+
+    assert liq_calls == []
+    state = manager._stoploss_reentry_states["t1"]
+    assert int(state.get("stoploss_confirm_hits") or 0) == 0
+    assert int(state.get("last_stoploss_spread_extra_ticks") or 0) == 2
+    assert abs(float(state.get("last_stoploss_effective_trigger_price") or 0.0) - 0.93) < 1e-9
+
+
+def test_stoploss_wide_spread_still_triggers_once_widened_trigger_breaks(tmp_path):
+    manager = _build_stoploss_manager(
+        tmp_path,
+        stoploss_overrides={
+            "min_age_minutes": 0.0,
+            "new_position_hard_grace_minutes": 5.0,
+            "new_position_spread_grace_minutes": 15.0,
+        },
+    )
+    now = time.time()
+    manager.config.stoploss_confirm_rounds = 1
+    manager._ws_cache["t1"] = {"best_bid": 0.93, "best_ask": 0.97, "updated_at": now, "tick_size": 0.01}
+    liq_calls = []
+    manager._total_liquidation.liquidate_single_token_taker = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: liq_calls.append(kwargs) or {
+            "ok": True,
+            "before_size": 10.0,
+            "after_size": 0.0,
+            "requested_size": kwargs.get("target_size", 10.0),
+            "reason": kwargs.get("reason"),
+        }
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: (  # type: ignore[assignment]
+        [{"asset": "t1", "size": 10.0, "avgPrice": 1.0, "curPrice": 0.93}],
+        "ok",
+    )
+    try:
+        manager._run_stoploss_check(now)
+        manager._run_stoploss_check(now + 901.0)
     finally:
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
 
@@ -5119,7 +5152,10 @@ def test_stoploss_wide_spread_requires_mid_break_and_extra_confirms(tmp_path):
     journal_path = manager.config.data_dir / "stoploss_event_journal.jsonl"
     lines = journal_path.read_text(encoding="utf-8").strip().splitlines()
     payload = json.loads(lines[0])
-    assert payload["data"]["confirm_required"] == 3
+    assert payload["data"]["confirm_required"] == 1
+    assert payload["data"]["spread_extra_ticks"] == 2
+    assert abs(float(payload["data"]["base_trigger_price"]) - 0.95) < 1e-9
+    assert abs(float(payload["data"]["trigger_price"]) - 0.93) < 1e-9
 
 
 def test_stoploss_pending_confirm_schedules_retry_before_escalation(tmp_path):
