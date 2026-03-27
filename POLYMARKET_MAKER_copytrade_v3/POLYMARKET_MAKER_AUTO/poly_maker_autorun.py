@@ -158,6 +158,9 @@ DEFAULT_GLOBAL_CONFIG = {
         "reentry_line_ticks": 2,
         "reentry_zone_lower_pct": 0.02,
         "probe_break_pct": 0.08,
+        "reentry_maker_timeout_minutes": 30.0,
+        "reentry_maker_refresh_sec": 60.0,
+        "reentry_taker_retry_cooldown_sec": 60.0,
         "drawdown_step_per_cycle_ticks": 1,
         "clear_confirm_timeout_sec": 180.0,
         "clear_confirm_retry_interval_sec": 1800.0,
@@ -1102,6 +1105,15 @@ class GlobalConfig:
     stoploss_probe_break_pct: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("probe_break_pct", 0.08)
     )
+    stoploss_reentry_maker_timeout_minutes: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_maker_timeout_minutes", 30.0)
+    )
+    stoploss_reentry_maker_refresh_sec: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_maker_refresh_sec", 60.0)
+    )
+    stoploss_reentry_taker_retry_cooldown_sec: float = float(
+        (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("reentry_taker_retry_cooldown_sec", 60.0)
+    )
     stoploss_clear_confirm_timeout_sec: float = float(
         (DEFAULT_GLOBAL_CONFIG.get("stoploss") or {}).get("clear_confirm_timeout_sec", 180.0)
     )
@@ -1860,6 +1872,42 @@ class GlobalConfig:
                     stoploss_cfg.get(
                         "probe_break_pct",
                         merged.get("stoploss_probe_break_pct", cls.stoploss_probe_break_pct),
+                    )
+                ),
+            ),
+            stoploss_reentry_maker_timeout_minutes=max(
+                1.0,
+                float(
+                    stoploss_cfg.get(
+                        "reentry_maker_timeout_minutes",
+                        merged.get(
+                            "stoploss_reentry_maker_timeout_minutes",
+                            cls.stoploss_reentry_maker_timeout_minutes,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_reentry_maker_refresh_sec=max(
+                5.0,
+                float(
+                    stoploss_cfg.get(
+                        "reentry_maker_refresh_sec",
+                        merged.get(
+                            "stoploss_reentry_maker_refresh_sec",
+                            cls.stoploss_reentry_maker_refresh_sec,
+                        ),
+                    )
+                ),
+            ),
+            stoploss_reentry_taker_retry_cooldown_sec=max(
+                5.0,
+                float(
+                    stoploss_cfg.get(
+                        "reentry_taker_retry_cooldown_sec",
+                        merged.get(
+                            "stoploss_reentry_taker_retry_cooldown_sec",
+                            cls.stoploss_reentry_taker_retry_cooldown_sec,
+                        ),
                     )
                 ),
             ),
@@ -2852,6 +2900,15 @@ class AutoRunManager:
             "position_opened_ts": 0.0,
             "last_error": "",
             "reentry_quote_missing_hits": 0,
+            "reentry_target_size": 0.0,
+            "reentry_started_ts": 0.0,
+            "reentry_deadline_ts": 0.0,
+            "reentry_next_action_ts": 0.0,
+            "reentry_reference_price": None,
+            "reentry_last_bid": None,
+            "reentry_last_ask": None,
+            "reentry_maker_order_id": "",
+            "reentry_taker_attempts": 0,
             "closed_final_ts": 0.0,
             "closed_final_reason": "",
             "pending_cleanup_since_ts": 0.0,
@@ -2902,6 +2959,9 @@ class AutoRunManager:
         merged["nofill_retry_count"] = max(
             0, int(_coerce_float(merged.get("nofill_retry_count")) or 0)
         )
+        merged["reentry_taker_attempts"] = max(
+            0, int(_coerce_float(merged.get("reentry_taker_attempts")) or 0)
+        )
         for key in (
             "next_stoploss_threshold_pct",
             "next_stoploss_trigger_ticks",
@@ -2925,6 +2985,13 @@ class AutoRunManager:
             "last_position_seen_ts",
             "position_opened_ts",
             "closed_final_ts",
+            "reentry_target_size",
+            "reentry_started_ts",
+            "reentry_deadline_ts",
+            "reentry_next_action_ts",
+            "reentry_reference_price",
+            "reentry_last_bid",
+            "reentry_last_ask",
             "pending_cleanup_since_ts",
             "pending_confirm_started_ts",
             "pending_confirm_next_retry_ts",
@@ -2975,6 +3042,10 @@ class AutoRunManager:
         )
         merged["pending_confirm_drawdown"] = float(merged.get("pending_confirm_drawdown") or 0.0)
         merged["nofill_next_retry_ts"] = max(0.0, float(merged.get("nofill_next_retry_ts") or 0.0))
+        merged["reentry_target_size"] = max(0.0, float(merged.get("reentry_target_size") or 0.0))
+        merged["reentry_started_ts"] = max(0.0, float(merged.get("reentry_started_ts") or 0.0))
+        merged["reentry_deadline_ts"] = max(0.0, float(merged.get("reentry_deadline_ts") or 0.0))
+        merged["reentry_next_action_ts"] = max(0.0, float(merged.get("reentry_next_action_ts") or 0.0))
         merged["probe_seen"] = bool(merged.get("probe_seen", False))
         merged["reentry_paused_for_day"] = bool(merged.get("reentry_paused_for_day", False))
         merged["source_detached"] = bool(merged.get("source_detached", False))
@@ -2989,6 +3060,7 @@ class AutoRunManager:
         merged["pending_confirm_exec_price_source"] = str(
             merged.get("pending_confirm_exec_price_source") or ""
         )
+        merged["reentry_maker_order_id"] = str(merged.get("reentry_maker_order_id") or "")
         merged["reentry_quote_missing_hits"] = max(
             0, int(_coerce_float(merged.get("reentry_quote_missing_hits")) or 0)
         )
@@ -3016,6 +3088,15 @@ class AutoRunManager:
             "pending_stoploss_drawdown",
         ):
             state.pop(key, None)
+        state["reentry_target_size"] = 0.0
+        state["reentry_started_ts"] = 0.0
+        state["reentry_deadline_ts"] = 0.0
+        state["reentry_next_action_ts"] = 0.0
+        state["reentry_reference_price"] = None
+        state["reentry_last_bid"] = None
+        state["reentry_last_ask"] = None
+        state["reentry_maker_order_id"] = ""
+        state["reentry_taker_attempts"] = 0
 
     def _load_stoploss_reentry_states(self) -> None:
         with self._file_io_lock:
@@ -3328,16 +3409,24 @@ class AutoRunManager:
     def _estimate_reentry_buyable_price(
         self, token_id: str, position_row: Optional[Dict[str, Any]] = None
     ) -> Optional[float]:
-        # Use live CLOB book first to avoid stale WS cache blocking reentry checks.
+        # Probe uses executable buy-side quote when possible.
+        # Prefer ask, but fall back to bid so maker-first reentry can still progress
+        # on thin books where ask briefly disappears.
         quote = self._get_stoploss_cycle_quote(token_id)
         ask = _coerce_float((quote or {}).get("ask"))
         if ask is not None and ask > 0:
             return float(ask)
+        bid = _coerce_float((quote or {}).get("bid"))
+        if bid is not None and bid > 0:
+            return float(bid)
         cache = self._ws_cache.get(token_id) or {}
         ask = _coerce_float(cache.get("best_ask"))
         updated_at = _coerce_float(cache.get("updated_at"))
         if ask is not None and ask > 0 and updated_at is not None and (time.time() - updated_at) <= 120.0:
             return float(ask)
+        bid = _coerce_float(cache.get("best_bid"))
+        if bid is not None and bid > 0 and updated_at is not None and (time.time() - updated_at) <= 120.0:
+            return float(bid)
         return None
 
     @staticmethod
@@ -3472,6 +3561,242 @@ class AutoRunManager:
             "state": "REENTRY_HOLD",
         }
         self._enqueue_burst_topic(token_id, promote=True)
+
+    def _start_stoploss_reentry_maker_phase(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        now: float,
+        target_size: float,
+        reference_price: Optional[float],
+    ) -> None:
+        maker_timeout_sec = max(
+            60.0,
+            float(self.config.stoploss_reentry_maker_timeout_minutes) * 60.0,
+        )
+        state["state"] = "STOPLOSS_REENTRY_MAKER_WORKING"
+        state["reentry_target_size"] = float(max(0.0, target_size))
+        state["reentry_started_ts"] = float(now)
+        state["reentry_deadline_ts"] = float(now + maker_timeout_sec)
+        state["reentry_next_action_ts"] = 0.0
+        state["reentry_reference_price"] = (
+            float(reference_price) if reference_price is not None and reference_price > 0 else None
+        )
+        state["reentry_maker_order_id"] = ""
+        state["reentry_taker_attempts"] = 0
+        state["last_error"] = ""
+        print(
+            f"[REENTRY_EXEC] token={token_id[:20]}... start maker phase "
+            f"target={float(max(0.0, target_size)):.4f} timeout={maker_timeout_sec:.0f}s "
+            f"ref={(float(reference_price) if reference_price else 0.0):.6f}"
+        )
+
+    def _finalize_stoploss_reentry_hold(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        now: float,
+        position_size: float,
+        entry_price: float,
+        source: str,
+    ) -> None:
+        next_stoploss_cd = max(
+            0.0, float(self.config.stoploss_next_stoploss_cooldown_minutes)
+        ) * 60.0
+        reentry_line = float(state.get("reentry_line_price") or 0.0)
+        recovered_above_line = False
+        if reentry_line > 0 and float(entry_price) > reentry_line + 1e-12:
+            recovered_above_line = True
+            state["last_error"] = (
+                f"reentry price above line buy={float(entry_price):.6f} "
+                f"line={reentry_line:.6f}"
+            )
+            print(
+                f"[RISK_GUARD] token={token_id[:20]}... {state['last_error']} -> "
+                "recovering into managed reentry hold"
+            )
+
+        hold_floor = _coerce_float(state.get("old_maker_floor_price"))
+        hold_profit = _coerce_float(state.get("old_maker_profit_pct"))
+        if hold_profit is None or hold_profit < 0:
+            hold_profit = self._resolve_profit_pct_for_token(token_id)
+        self._queue_reentry_task_after_buy(
+            token_id,
+            position_size=position_size,
+            entry_price=float(entry_price),
+            hold_floor_price=hold_floor if hold_floor is not None and hold_floor > 0 else None,
+            hold_profit_pct=hold_profit,
+        )
+        state["state"] = "REENTRY_HOLD"
+        state["market_status_last"] = "reentry_done"
+        state["probe_seen"] = False
+        state["probe_confirm_hits"] = 0
+        state["rebound_confirm_hits"] = 0
+        state["next_stoploss_earliest_ts"] = float(now + next_stoploss_cd)
+        state["last_reentry_above_line"] = bool(recovered_above_line)
+        state["last_reentry_above_line_price"] = (
+            float(entry_price) if recovered_above_line else None
+        )
+        if not recovered_above_line:
+            state["last_error"] = ""
+        state["reentry_target_size"] = 0.0
+        state["reentry_started_ts"] = 0.0
+        state["reentry_deadline_ts"] = 0.0
+        state["reentry_next_action_ts"] = 0.0
+        state["reentry_reference_price"] = None
+        state["reentry_maker_order_id"] = ""
+        state["reentry_taker_attempts"] = 0
+        print(
+            f"[REENTRY_EXEC] token={token_id[:20]}... success({source}) "
+            f"buy={float(entry_price):.6f} size={float(position_size):.4f} "
+            f"state=REENTRY_HOLD next_stoploss_in={next_stoploss_cd:.0f}s"
+        )
+
+    def _advance_stoploss_reentry_execution(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        now: float,
+        position_row: Optional[Dict[str, Any]],
+    ) -> bool:
+        state_name = str(state.get("state") or "")
+        target_size = max(
+            0.0,
+            float(state.get("reentry_target_size") or state.get("last_stoploss_size") or 0.0),
+        )
+        if target_size <= 0:
+            state["state"] = "STOPLOSS_EXITED_WAITING_REBOUND"
+            state["rebound_confirm_hits"] = 0
+            state["last_error"] = "invalid reentry target size"
+            return True
+
+        current_size = 0.0
+        current_avg_price: Optional[float] = None
+        if isinstance(position_row, dict):
+            current_size = max(0.0, float(_extract_position_size(position_row) or 0.0))
+            current_avg_price = _extract_position_avg_price(position_row)
+        remaining = max(0.0, target_size - current_size)
+        if remaining <= 1e-6 and self._has_actionable_position(token_id, current_size, row=position_row):
+            entry_price = (
+                float(current_avg_price)
+                if current_avg_price is not None and current_avg_price > 0
+                else float(_coerce_float(state.get("reentry_reference_price")) or 0.0)
+            )
+            if entry_price <= 0:
+                entry_price = float(_coerce_float(state.get("reentry_line_price")) or 0.01)
+            self._finalize_stoploss_reentry_hold(
+                token_id,
+                state,
+                now=now,
+                position_size=current_size,
+                entry_price=entry_price,
+                source="position_sync",
+            )
+            return True
+
+        if state_name == "STOPLOSS_REENTRY_MAKER_WORKING":
+            deadline_ts = float(state.get("reentry_deadline_ts") or 0.0)
+            if deadline_ts > 0 and now >= deadline_ts:
+                state["state"] = "STOPLOSS_REENTRY_TAKER_PENDING"
+                state["reentry_next_action_ts"] = 0.0
+                state["last_error"] = "maker reentry timeout -> taker fallback"
+                print(
+                    f"[REENTRY_EXEC] token={token_id[:20]}... maker timeout "
+                    f"remaining={remaining:.4f} -> taker fallback"
+                )
+                return True
+
+            next_action_ts = float(state.get("reentry_next_action_ts") or 0.0)
+            if now < next_action_ts:
+                return False
+            reference_price = _coerce_float(state.get("reentry_reference_price"))
+            maker_resp = self._total_liquidation.reenter_single_token_maker(
+                self,
+                token_id,
+                target_size=target_size,
+                max_buy_price=reference_price if reference_price and reference_price > 0 else None,
+                reason="stoploss_v4_reentry_maker",
+            )
+            state["reentry_last_bid"] = _coerce_float(maker_resp.get("quote_bid"))
+            state["reentry_last_ask"] = _coerce_float(maker_resp.get("quote_ask"))
+            refresh_sec = max(5.0, float(self.config.stoploss_reentry_maker_refresh_sec))
+            state["reentry_next_action_ts"] = float(now + refresh_sec)
+            if not bool(maker_resp.get("ok")):
+                state["last_error"] = str(maker_resp.get("error") or "maker reentry failed")
+                print(f"[REENTRY_EXEC] token={token_id[:20]}... maker failed error={state['last_error']}")
+                return True
+            state["reentry_maker_order_id"] = str(maker_resp.get("order_id") or "")
+            state["last_error"] = ""
+            print(
+                f"[REENTRY_EXEC] token={token_id[:20]}... maker working "
+                f"price={float(_coerce_float(maker_resp.get('placed_price')) or 0.0):.6f} "
+                f"remaining={max(0.0, float(maker_resp.get('remaining_target') or remaining)):.4f}"
+            )
+            after_size = max(0.0, float(_coerce_float(maker_resp.get("after_size")) or 0.0))
+            remaining_after = max(0.0, target_size - after_size)
+            if remaining_after <= 1e-6 and self._has_actionable_position(token_id, after_size):
+                entry_price = _coerce_float(maker_resp.get("placed_price"))
+                if entry_price is None or entry_price <= 0:
+                    entry_price = _coerce_float(state.get("reentry_reference_price"))
+                if entry_price is None or entry_price <= 0:
+                    entry_price = _coerce_float(state.get("reentry_line_price"))
+                self._finalize_stoploss_reentry_hold(
+                    token_id,
+                    state,
+                    now=now,
+                    position_size=after_size,
+                    entry_price=float(entry_price or 0.01),
+                    source="maker",
+                )
+            return True
+
+        if state_name == "STOPLOSS_REENTRY_TAKER_PENDING":
+            next_action_ts = float(state.get("reentry_next_action_ts") or 0.0)
+            if now < next_action_ts:
+                return False
+            reference_price = _coerce_float(state.get("reentry_reference_price"))
+            taker_resp = self._total_liquidation.reenter_single_token_taker(
+                self,
+                token_id,
+                target_size=remaining,
+                reference_buy_price=reference_price if reference_price and reference_price > 0 else None,
+                reason="stoploss_v4_reentry",
+            )
+            after_size = max(0.0, current_size + float(_coerce_float(taker_resp.get("filled_size")) or 0.0))
+            if _coerce_float(taker_resp.get("after_size")) is not None:
+                after_size = max(0.0, float(_coerce_float(taker_resp.get("after_size")) or 0.0))
+            remaining_after = max(0.0, target_size - after_size)
+            if remaining_after <= 1e-6 and self._has_actionable_position(token_id, after_size):
+                exec_buy = _coerce_float(taker_resp.get("executed_avg_price"))
+                if exec_buy is None or exec_buy <= 0:
+                    exec_buy = _coerce_float(state.get("reentry_reference_price"))
+                if exec_buy is None or exec_buy <= 0:
+                    exec_buy = _coerce_float(state.get("reentry_line_price"))
+                self._finalize_stoploss_reentry_hold(
+                    token_id,
+                    state,
+                    now=now,
+                    position_size=after_size,
+                    entry_price=float(exec_buy or 0.01),
+                    source="taker_fallback",
+                )
+                return True
+            state["reentry_taker_attempts"] = int(state.get("reentry_taker_attempts") or 0) + 1
+            state["last_error"] = str(taker_resp.get("error") or "taker fallback failed")
+            cooldown_sec = max(
+                5.0, float(self.config.stoploss_reentry_taker_retry_cooldown_sec)
+            )
+            state["reentry_next_action_ts"] = float(now + cooldown_sec)
+            print(
+                f"[REENTRY_EXEC] token={token_id[:20]}... taker pending "
+                f"attempt={int(state['reentry_taker_attempts'])} "
+                f"remaining={remaining_after:.4f} error={state['last_error']}"
+            )
+            return True
+        return False
 
     def _sync_reentry_hold_recovered_from_log(self, task: TopicTask) -> bool:
         excerpt = str(task.log_excerpt or "")
@@ -4585,6 +4910,11 @@ class AutoRunManager:
             "STOPLOSS_EXITED_WAITING_PROBE",
             "STOPLOSS_EXITED_WAITING_REBOUND",
         }
+        reentry_execution_states = {
+            "STOPLOSS_REENTRY_MAKER_WORKING",
+            "STOPLOSS_REENTRY_TAKER_PENDING",
+        }
+        active_reentry_states = waiting_reentry_states | reentry_execution_states
 
         positions: Dict[str, Dict[str, Any]] = {}
         for row in rows:
@@ -4631,6 +4961,15 @@ class AutoRunManager:
                 )
                 state_dirty = True
                 state_name = "NORMAL_MAKER"
+            if state_name in reentry_execution_states:
+                if self._advance_stoploss_reentry_execution(
+                    token_id,
+                    state,
+                    now=now,
+                    position_row=row,
+                ):
+                    state_dirty = True
+                continue
             if state_name in {"STOPLOSS_CLEAR_PENDING_CONFIRM", "STOPLOSS_CLEAR_PENDING_ESCALATED"}:
                 continue
             if state_name == "STOPLOSS_IOC_RETRY_PENDING":
@@ -5150,7 +5489,7 @@ class AutoRunManager:
             if state_name == "STOPLOSS_CLEAR_PENDING_ESCALATED":
                 continue
             if self._stoploss_is_market_closed(token_id):
-                if state_name in waiting_reentry_states:
+                if state_name in active_reentry_states:
                     self._abandon_stoploss_reentry(
                         token_id,
                         state,
@@ -5163,7 +5502,7 @@ class AutoRunManager:
                 state_dirty = True
                 continue
 
-            if state_name in waiting_reentry_states:
+            if state_name in active_reentry_states:
                 has_sell_signal = token_id in copytrade_sell_signal_scope
                 not_in_follow_list = token_id not in copytrade_token_scope
                 stop_exit_ts = float(state.get("stop_exit_ts") or 0.0)
@@ -5256,6 +5595,16 @@ class AutoRunManager:
                 state_dirty = True
                 continue
 
+            if state_name in reentry_execution_states:
+                if self._advance_stoploss_reentry_execution(
+                    token_id,
+                    state,
+                    now=now,
+                    position_row=None,
+                ):
+                    state_dirty = True
+                continue
+
             if state_name == "STOPLOSS_EXITED_WAITING_WINDOW":
                 if float(state.get("reentry_earliest_ts") or 0.0) <= now:
                     state["state"] = "STOPLOSS_EXITED_WAITING_PROBE"
@@ -5276,8 +5625,8 @@ class AutoRunManager:
                 state["reentry_quote_missing_hits"] = int(state.get("reentry_quote_missing_hits") or 0) + 1
                 state["probe_confirm_hits"] = 0
                 state["rebound_confirm_hits"] = 0
-                state["last_error"] = "ask missing or stale"
-                print(f"[RISK_GUARD] token={token_id[:20]}... skip reentry due to ask missing/stale")
+                state["last_error"] = "reentry quote missing or stale"
+                print(f"[RISK_GUARD] token={token_id[:20]}... skip reentry due to quote missing/stale")
                 state_dirty = True
                 continue
             state["last_price_check_ts"] = float(now)
@@ -5327,61 +5676,23 @@ class AutoRunManager:
                 state_dirty = True
                 continue
             reentry_line = float(state.get("reentry_line_price") or 0.0)
-            reenter = self._total_liquidation.reenter_single_token_taker(
-                self,
+            self._start_stoploss_reentry_maker_phase(
                 token_id,
+                state,
+                now=now,
                 target_size=target_size,
-                reference_buy_price=reentry_line if reentry_line > 0 else None,
-                reason="stoploss_v4_reentry",
+                reference_price=reentry_line if reentry_line > 0 else None,
             )
-            after_size = max(0.0, float(_coerce_float(reenter.get("after_size")) or 0.0))
-            if (not bool(reenter.get("ok"))) or (not self._has_actionable_position(token_id, after_size)):
-                state["rebound_confirm_hits"] = 0
-                state["last_error"] = str(reenter.get("error") or "reentry failed")
-                print(f"[REENTRY_EXEC] token={token_id[:20]}... failed error={state['last_error']}")
-                state_dirty = True
-                continue
-
-            exec_buy = _coerce_float(reenter.get("executed_avg_price"))
-            if exec_buy is None or exec_buy <= 0:
-                exec_buy = quote
-            recovered_above_line = False
-            if reentry_line > 0 and float(exec_buy) > reentry_line + 1e-12:
-                recovered_above_line = True
-                state["last_error"] = f"reentry price above line buy={float(exec_buy):.6f} line={reentry_line:.6f}"
-                print(
-                    f"[RISK_GUARD] token={token_id[:20]}... {state['last_error']} -> "
-                    "recovering into managed reentry hold"
-                )
-
-            hold_floor = _coerce_float(state.get("old_maker_floor_price"))
-            hold_profit = _coerce_float(state.get("old_maker_profit_pct"))
-            if hold_profit is None or hold_profit < 0:
-                hold_profit = self._resolve_profit_pct_for_token(token_id)
-            self._queue_reentry_task_after_buy(
-                token_id,
-                position_size=after_size,
-                entry_price=float(exec_buy),
-                hold_floor_price=hold_floor if hold_floor is not None and hold_floor > 0 else None,
-                hold_profit_pct=hold_profit,
-            )
-            state["state"] = "REENTRY_HOLD"
-            state["market_status_last"] = "reentry_done"
-            state["probe_seen"] = False
-            state["probe_confirm_hits"] = 0
             state["rebound_confirm_hits"] = 0
-            state["next_stoploss_earliest_ts"] = float(now + next_stoploss_cd)
-            state["last_reentry_above_line"] = bool(recovered_above_line)
-            state["last_reentry_above_line_price"] = (
-                float(exec_buy) if recovered_above_line else None
-            )
-            if not recovered_above_line:
-                state["last_error"] = ""
-            print(
-                f"[REENTRY_EXEC] token={token_id[:20]}... success buy={float(exec_buy):.6f} "
-                f"size={after_size:.4f} state=REENTRY_HOLD next_stoploss_in={next_stoploss_cd:.0f}s"
-            )
-            state_dirty = True
+            if self._advance_stoploss_reentry_execution(
+                token_id,
+                state,
+                now=now,
+                position_row=None,
+            ):
+                state_dirty = True
+            else:
+                state_dirty = True
 
         for token_id, row in positions.items():
             state = self._stoploss_reentry_states.get(token_id)
@@ -10175,6 +10486,8 @@ class AutoRunManager:
                 "STOPLOSS_EXITED_WAITING_WINDOW",
                 "STOPLOSS_EXITED_WAITING_PROBE",
                 "STOPLOSS_EXITED_WAITING_REBOUND",
+                "STOPLOSS_REENTRY_MAKER_WORKING",
+                "STOPLOSS_REENTRY_TAKER_PENDING",
                 "REENTRY_HOLD",
             }:
                 skip_stats["stoploss_state_owned"] = skip_stats.get("stoploss_state_owned", 0) + 1
@@ -10720,6 +11033,8 @@ class AutoRunManager:
             "STOPLOSS_EXITED_WAITING_WINDOW",
             "STOPLOSS_EXITED_WAITING_PROBE",
             "STOPLOSS_EXITED_WAITING_REBOUND",
+            "STOPLOSS_REENTRY_MAKER_WORKING",
+            "STOPLOSS_REENTRY_TAKER_PENDING",
             "REENTRY_HOLD",
             "STOPLOSS_IOC_RETRY_PENDING",
             "STOPLOSS_IOC_RETRY_ESCALATED",

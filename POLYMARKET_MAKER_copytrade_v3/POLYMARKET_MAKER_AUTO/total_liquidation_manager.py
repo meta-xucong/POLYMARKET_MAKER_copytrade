@@ -898,6 +898,45 @@ class TotalLiquidationManager:
             dedup.append(px)
         return dedup
 
+    @staticmethod
+    def _extract_order_id(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("orderID", "order_id", "id"):
+            value = payload.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        order = payload.get("order")
+        if isinstance(order, dict):
+            for key in ("orderID", "order_id", "id"):
+                value = order.get(key)
+                if value is not None and str(value).strip():
+                    return str(value).strip()
+        return ""
+
+    @staticmethod
+    def _post_order_compat(
+        client: Any,
+        signed_order: Any,
+        order_type: Any,
+        *,
+        post_only: bool = False,
+    ) -> Any:
+        post_order = getattr(client, "post_order", None)
+        if not callable(post_order):
+            raise AttributeError("client has no post_order method")
+        if not post_only:
+            return post_order(signed_order, order_type)
+        # Official API supports post-only for resting orders. Keep compatibility
+        # with different client signatures.
+        try:
+            return post_order(signed_order, order_type, True)
+        except TypeError:
+            try:
+                return post_order(signed_order, order_type, post_only=True)
+            except TypeError:
+                return post_order(signed_order, order_type)
+
     def _place_sell_ioc(self, client: Any, token_id: str, price: float, size: float) -> Dict[str, Any]:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import SELL
@@ -929,6 +968,144 @@ class TotalLiquidationManager:
         if last_exc is not None:
             raise last_exc
         return {}
+
+    def reenter_single_token_maker(
+        self,
+        autorun: Any,
+        token_id: str,
+        *,
+        target_size: float,
+        max_buy_price: Optional[float] = None,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        from py_clob_client.clob_types import OrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY
+
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return {"ok": False, "error": "missing token_id"}
+        requested_size = max(0.0, float(target_size or 0.0))
+        if requested_size <= 0:
+            return {"ok": False, "token_id": token_id, "error": "invalid target_size"}
+
+        client = self._get_cached_client()
+        if client is None:
+            return {"ok": False, "token_id": token_id, "error": "client init failed"}
+
+        before_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+        remaining_target = max(0.0, requested_size - before_size)
+        if remaining_target <= 1e-6:
+            return {
+                "ok": True,
+                "token_id": token_id,
+                "before_size": before_size,
+                "after_size": before_size,
+                "requested_size": requested_size,
+                "remaining_target": 0.0,
+                "placed": False,
+                "reason": reason,
+            }
+
+        bid, ask = self._resolve_bid_ask(autorun, token_id)
+        if bid <= 0:
+            return {
+                "ok": False,
+                "token_id": token_id,
+                "before_size": before_size,
+                "after_size": before_size,
+                "requested_size": requested_size,
+                "remaining_target": remaining_target,
+                "reason": reason,
+                "error": "missing maker bid quote",
+                "quote_bid": bid,
+                "quote_ask": ask,
+            }
+
+        place_price = float(bid)
+        if max_buy_price is not None and max_buy_price > 0:
+            place_price = min(place_price, float(max_buy_price))
+        place_price = min(max(place_price, 0.01), 0.9999)
+        if place_price <= 0:
+            return {
+                "ok": False,
+                "token_id": token_id,
+                "before_size": before_size,
+                "after_size": before_size,
+                "requested_size": requested_size,
+                "remaining_target": remaining_target,
+                "reason": reason,
+                "error": "invalid maker price",
+            }
+
+        clear_info = self._clear_open_orders_for_token(
+            client,
+            token_id,
+            cancel_rounds=2,
+            clear_attempts_per_round=4,
+            sleep_sec=0.25,
+        )
+        if not bool(clear_info.get("cleared")):
+            return {
+                "ok": False,
+                "token_id": token_id,
+                "before_size": before_size,
+                "after_size": before_size,
+                "requested_size": requested_size,
+                "remaining_target": remaining_target,
+                "reason": reason,
+                "error": "failed to clear open orders before maker reentry",
+                "cancel_debug": clear_info,
+            }
+
+        try:
+            order = OrderArgs(
+                token_id=token_id,
+                side=BUY,
+                price=place_price,
+                size=remaining_target,
+            )
+            signed = client.create_order(order)
+            order_type = getattr(OrderType, "GTC", None) or getattr(OrderType, "GTD", None)
+            if order_type is None:
+                raise AttributeError("unsupported order type for maker reentry")
+            resp = self._post_order_compat(
+                client,
+                signed,
+                order_type,
+                post_only=True,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "token_id": token_id,
+                "before_size": before_size,
+                "after_size": before_size,
+                "requested_size": requested_size,
+                "remaining_target": remaining_target,
+                "reason": reason,
+                "error": f"maker reentry place failed: {exc}",
+            }
+
+        after_size = max(0.0, float(self._fetch_single_position_size(token_id)))
+        filled_size = max(0.0, after_size - before_size)
+        order_id = self._extract_order_id(resp)
+        return {
+            "ok": True,
+            "token_id": token_id,
+            "before_size": before_size,
+            "after_size": after_size,
+            "filled_size": filled_size,
+            "requested_size": requested_size,
+            "remaining_target": max(0.0, requested_size - after_size),
+            "placed": True,
+            "order_id": order_id,
+            "placed_price": place_price,
+            "placed_size": remaining_target,
+            "quote_bid": bid,
+            "quote_ask": ask,
+            "reason": reason,
+            "response": resp,
+        }
 
     @staticmethod
     def _extract_filled_and_price(resp: Any) -> Tuple[float, Optional[float]]:
@@ -1044,6 +1221,24 @@ class TotalLiquidationManager:
             ask = float(cached.get("best_ask") or 0.0)
         except (TypeError, ValueError):
             ask = 0.0
+        if bid > 0 and ask > 0:
+            return bid, ask
+        quote_getter = getattr(autorun, "_get_stoploss_cycle_quote", None)
+        if callable(quote_getter):
+            try:
+                quote = quote_getter(token_id) or {}
+            except Exception:
+                quote = {}
+            try:
+                if bid <= 0:
+                    bid = float(quote.get("bid") or 0.0)
+            except (TypeError, ValueError):
+                bid = 0.0
+            try:
+                if ask <= 0:
+                    ask = float(quote.get("ask") or 0.0)
+            except (TypeError, ValueError):
+                ask = 0.0
         return bid, ask
 
     def _is_quote_fresh(self, autorun: Any, token_id: str, max_age_sec: float = 30.0) -> bool:
@@ -1058,7 +1253,22 @@ class TotalLiquidationManager:
         except (TypeError, ValueError):
             return False
         if ts <= 0:
-            return False
+            quote_getter = getattr(autorun, "_get_stoploss_cycle_quote", None)
+            if not callable(quote_getter):
+                return False
+            try:
+                quote = quote_getter(token_id) or {}
+            except Exception:
+                return False
+            try:
+                bid = float(quote.get("bid") or 0.0)
+            except (TypeError, ValueError):
+                bid = 0.0
+            try:
+                ask = float(quote.get("ask") or 0.0)
+            except (TypeError, ValueError):
+                ask = 0.0
+            return bid > 0 or ask > 0
         return (time.time() - ts) <= max(1.0, float(max_age_sec))
 
     def _compute_taker_price(self, bid: float, ask: float) -> float:

@@ -128,6 +128,60 @@ class DataApiClient:
 
         return trades
 
+    def fetch_positions(
+        self,
+        user: str,
+        *,
+        page_size: int = 500,
+        max_pages: int = 20,
+        size_threshold: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        url = f"{self.host}/positions"
+        page_size = max(1, min(int(page_size), 500))
+        max_pages = max(1, int(max_pages))
+        offset = 0
+        pages = 0
+        positions: List[Dict[str, Any]] = []
+
+        while pages < max_pages:
+            params = {
+                "user": user,
+                "limit": page_size,
+                "offset": offset,
+                "sizeThreshold": size_threshold,
+            }
+            try:
+                resp = self.session.get(url, params=params, timeout=self.timeout)
+                resp.raise_for_status()
+                payload = resp.json()
+            except Exception as exc:
+                logger.warning(
+                    "fetch_positions request failed: user=%s offset=%s page_size=%s error=%s",
+                    user,
+                    offset,
+                    page_size,
+                    exc,
+                )
+                break
+
+            if isinstance(payload, list):
+                items = payload
+            elif isinstance(payload, dict):
+                items = payload.get("data") or payload.get("positions") or payload.get("results") or []
+            else:
+                items = []
+
+            if not isinstance(items, list) or not items:
+                break
+
+            positions.extend([item for item in items if isinstance(item, dict)])
+            pages += 1
+            offset += len(items)
+            if len(items) < page_size:
+                break
+
+        return positions
+
     def _to_trade(self, raw: Dict[str, Any]) -> Trade | None:
         side = _pick_first(raw, ["side", "takerSide", "tradeSide"])
         size = _pick_first(raw, ["size", "qty", "amount", "shares"])

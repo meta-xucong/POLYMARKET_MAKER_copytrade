@@ -280,6 +280,116 @@ def _write_tokens(
     _write_json(path, payload)
 
 
+def _upsert_sell_signal(
+    sell_map: Dict[str, Dict[str, Any]],
+    token_id: str,
+    entry: Dict[str, Any],
+) -> bool:
+    key = str(token_id)
+    existing_sell = sell_map.get(key)
+    existing_ts = _parse_last_seen(existing_sell.get("last_seen") if existing_sell else None)
+    new_ts = _parse_last_seen(entry.get("last_seen"))
+    if existing_ts is None or (new_ts and new_ts >= existing_ts):
+        sell_map[key] = entry
+        return True
+    return False
+
+
+def _promote_sell_signal_if_introduced(
+    sell_map: Dict[str, Dict[str, Any]],
+    token_id: str,
+    *,
+    last_seen: Optional[str] = None,
+    logger: Optional[logging.Logger] = None,
+) -> bool:
+    key = str(token_id)
+    entry = sell_map.get(key)
+    if not entry:
+        return False
+    changed = False
+    if not entry.get("introduced_by_buy", False):
+        entry["introduced_by_buy"] = True
+        changed = True
+    status = str(entry.get("status") or "pending").strip().lower()
+    if status == "deferred_wait_buy_introduction":
+        entry["status"] = "pending"
+        changed = True
+    if last_seen:
+        existing_ts = _parse_last_seen(entry.get("last_seen"))
+        new_ts = _parse_last_seen(last_seen)
+        if existing_ts is None or (new_ts and new_ts >= existing_ts):
+            entry["last_seen"] = last_seen
+            changed = True
+    if changed:
+        entry["active"] = True
+        entry["updated_at"] = _utc_now_iso()
+        if logger is not None:
+            logger.info(
+                "promote deferred sell signal after buy introduction: token=%s status=%s",
+                key,
+                entry.get("status"),
+            )
+    return changed
+
+
+def _extract_position_token_id(entry: Dict[str, Any]) -> Optional[str]:
+    for key in ("asset", "token_id", "tokenId", "asset_id", "assetId"):
+        value = entry.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _extract_position_size(entry: Dict[str, Any]) -> float:
+    for key in ("size", "position", "position_size", "amount", "shares", "balance"):
+        value = entry.get(key)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _seed_existing_positions_on_init(
+    *,
+    client: DataApiClient,
+    account: str,
+    token_map: Dict[str, Dict[str, Any]],
+    logger: logging.Logger,
+) -> int:
+    seeded = 0
+    now_iso = _utc_now_iso()
+    try:
+        positions = client.fetch_positions(account, page_size=500, max_pages=5, size_threshold=0.0)
+    except Exception as exc:
+        logger.warning("seed existing positions failed: account=%s error=%s", account, exc)
+        return 0
+
+    for row in positions:
+        if not isinstance(row, dict):
+            continue
+        token_id = _extract_position_token_id(row)
+        if not token_id:
+            continue
+        if _extract_position_size(row) <= 0:
+            continue
+        existing = token_map.get(token_id)
+        if existing and existing.get("introduced_by_buy", False):
+            continue
+        token_map[token_id] = {
+            "token_id": token_id,
+            "source_account": account,
+            "last_seen": (existing or {}).get("last_seen") or now_iso,
+            "active": True,
+            "introduced_by_buy": True,
+        }
+        seeded += 1
+
+    if seeded:
+        logger.info("seed existing positions on init: account=%s count=%s", account, seeded)
+    return seeded
+
+
 def _archive_record(
     active_mapping: Dict[str, Dict[str, Any]],
     archived_mapping: Dict[str, Dict[str, Any]],
@@ -416,7 +526,10 @@ def run_once(
             ) or sell_changed
             continue
         token_entry = token_map.get(token_id)
+        status = str(entry.get("status") or "pending").strip().lower()
         if not token_entry or not token_entry.get("introduced_by_buy", False):
+            if status == "deferred_wait_buy_introduction":
+                continue
             sell_changed = _archive_record(
                 sell_map,
                 archived_sell_map,
@@ -426,9 +539,15 @@ def run_once(
                 status="stale_ignored",
             ) or sell_changed
             continue
-        if not entry.get("introduced_by_buy", False):
-            entry["introduced_by_buy"] = True
-            sell_changed = True
+        sell_changed = (
+            _promote_sell_signal_if_introduced(
+                sell_map,
+                token_id,
+                last_seen=token_entry.get("last_seen"),
+                logger=logger,
+            )
+            or sell_changed
+        )
 
     for target in poll_targets:
         if not isinstance(target, dict):
@@ -449,6 +568,15 @@ def run_once(
             }
             logger.info("初始化目标账户状态，忽略已有仓位: account=%s", account)
             since_ms = init_ms
+            changed = (
+                _seed_existing_positions_on_init(
+                    client=client,
+                    account=account,
+                    token_map=token_map,
+                    logger=logger,
+                )
+                > 0
+            ) or changed
 
         actions, latest_ms = _collect_trades(client, account, since_ms, min_size, logger)
         if latest_ms > since_ms:
@@ -472,8 +600,19 @@ def run_once(
             existing = token_map.get(key)
             existing_intro = bool(existing and existing.get("introduced_by_buy", False))
             if side == "SELL" and not existing_intro:
+                sell_entry = {
+                    "token_id": token_id,
+                    "source_account": account,
+                    "last_seen": last_seen,
+                    "signal_ts": float(action["timestamp"].timestamp()),
+                    "introduced_by_buy": False,
+                    "active": True,
+                    "status": "deferred_wait_buy_introduction",
+                    "attempts": 0,
+                }
+                sell_changed = _upsert_sell_signal(sell_map, key, sell_entry) or sell_changed
                 logger.info(
-                    "skip sell signal before buy introduction: account=%s token=%s",
+                    "defer sell signal before buy introduction: account=%s token=%s",
                     account,
                     token_id,
                 )
@@ -502,6 +641,15 @@ def run_once(
                 if not token_map[key].get("introduced_by_buy", False):
                     token_map[key]["introduced_by_buy"] = True
                     changed = True
+                sell_changed = (
+                    _promote_sell_signal_if_introduced(
+                        sell_map,
+                        key,
+                        last_seen=last_seen,
+                        logger=logger,
+                    )
+                    or sell_changed
+                )
 
             if side == "SELL":
                 sell_entry = {
@@ -514,14 +662,7 @@ def run_once(
                     "status": "pending",
                     "attempts": 0,
                 }
-                existing_sell = sell_map.get(key)
-                existing_ts = _parse_last_seen(
-                    existing_sell.get("last_seen") if existing_sell else None
-                )
-                new_ts = _parse_last_seen(last_seen)
-                if existing_ts is None or (new_ts and new_ts >= existing_ts):
-                    sell_map[key] = sell_entry
-                    sell_changed = True
+                sell_changed = _upsert_sell_signal(sell_map, key, sell_entry) or sell_changed
 
     if changed:
         _write_tokens(token_output_path, token_map, archived_token_map)

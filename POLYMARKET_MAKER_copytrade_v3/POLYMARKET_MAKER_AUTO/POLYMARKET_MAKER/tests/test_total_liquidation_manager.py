@@ -221,6 +221,73 @@ def test_taker_price_applies_slippage_bps():
         assert abs(px - 0.5 * (1 - 0.003)) < 1e-9
 
 
+def test_resolve_bid_ask_falls_back_to_clob_quote_getter():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        autorun = _Autorun(cfg, running_tasks=0)
+        autorun._ws_cache["t1"] = {"best_bid": 0.0, "best_ask": 0.0}
+        autorun._get_stoploss_cycle_quote = lambda token_id: {  # type: ignore[attr-defined]
+            "ok": True,
+            "bid": 0.33,
+            "ask": 0.34,
+        }
+
+        bid, ask = mgr._resolve_bid_ask(autorun, "t1")
+        assert abs(bid - 0.33) < 1e-12
+        assert abs(ask - 0.34) < 1e-12
+
+
+def test_reenter_single_token_maker_places_post_only_gtc():
+    with tempfile.TemporaryDirectory() as td:
+        cfg = _build_cfg(Path(td), enable=True)
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+        cfg.log_dir.mkdir(parents=True, exist_ok=True)
+        mgr = TotalLiquidationManager(cfg, Path(td) / "POLYMARKET_MAKER_AUTO")
+        _install_fake_clob_modules()
+        autorun = _Autorun(cfg, running_tasks=0)
+        autorun._ws_cache["t1"] = {"best_bid": 0.44, "best_ask": 0.45, "updated_at": time.time()}
+
+        class _Client:
+            def __init__(self):
+                self.post_calls = []
+
+            def create_order(self, order):
+                return {"price": order.price, "size": order.size, "token": order.token_id}
+
+            def post_order(self, signed, order_type, post_only=False):
+                self.post_calls.append(
+                    {
+                        "signed": dict(signed),
+                        "order_type": order_type,
+                        "post_only": bool(post_only),
+                    }
+                )
+                return {"orderID": "oid_1"}
+
+            def get_orders(self):
+                return []
+
+        client = _Client()
+        mgr._cached_client = client
+        mgr._fetch_single_position_size = lambda token_id: 0.0  # type: ignore[assignment]
+
+        result = mgr.reenter_single_token_maker(
+            autorun,
+            "t1",
+            target_size=5.0,
+            max_buy_price=0.445,
+            reason="test",
+        )
+        assert result["ok"] is True
+        assert result["order_id"] == "oid_1"
+        assert abs(float(result["placed_price"]) - 0.44) < 1e-12
+        assert client.post_calls and client.post_calls[0]["order_type"] == "GTC"
+        assert client.post_calls[0]["post_only"] is True
+
+
 
 
 def _install_fake_balance_types_module():
@@ -1107,6 +1174,7 @@ def _install_fake_clob_modules():
         FAK = "FAK"
         IOC = "IOC"
         FOK = "FOK"
+        GTC = "GTC"
 
     class _OpenOrderParams:
         pass
@@ -1117,6 +1185,7 @@ def _install_fake_clob_modules():
 
     fake_constants = types.ModuleType("py_clob_client.order_builder.constants")
     fake_constants.SELL = "SELL"
+    fake_constants.BUY = "BUY"
 
     fake_client_mod = types.ModuleType("py_clob_client.client")
 

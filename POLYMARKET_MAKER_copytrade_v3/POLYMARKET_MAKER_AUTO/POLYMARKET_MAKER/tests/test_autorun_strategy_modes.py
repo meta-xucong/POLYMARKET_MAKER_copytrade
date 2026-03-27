@@ -2773,6 +2773,9 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
                     "reentry_line_ticks": 2,
                     "reentry_zone_lower_pct": 0.02,
                     "probe_break_pct": 0.08,
+                    "reentry_maker_timeout_minutes": 30,
+                    "reentry_maker_refresh_sec": 45,
+                    "reentry_taker_retry_cooldown_sec": 20,
                     "daily_reentry_max_full_clears": 2,
                     "drawdown_step_per_cycle_pct": 0.01,
                     "max_tokens_per_cycle": 2,
@@ -2790,6 +2793,9 @@ def test_stoploss_config_can_be_loaded_from_scheduler():
     assert cfg.stoploss_reentry_line_ticks == 2
     assert cfg.stoploss_reentry_zone_lower_pct == 0.02
     assert cfg.stoploss_probe_break_pct == 0.08
+    assert cfg.stoploss_reentry_maker_timeout_minutes == 30
+    assert cfg.stoploss_reentry_maker_refresh_sec == 45
+    assert cfg.stoploss_reentry_taker_retry_cooldown_sec == 20
     assert cfg.stoploss_daily_reentry_max_full_clears == 2
     assert cfg.stoploss_drawdown_step_per_cycle_pct == 0.01
     assert cfg.stoploss_max_tokens_per_cycle == 2
@@ -2824,6 +2830,9 @@ def _build_stoploss_manager(tmp_path, *, mode="classic", stoploss_overrides=None
         "reentry_line_ticks": 2,
         "reentry_zone_lower_pct": 0.02,
         "probe_break_pct": 0.08,
+        "reentry_maker_timeout_minutes": 30.0,
+        "reentry_maker_refresh_sec": 60.0,
+        "reentry_taker_retry_cooldown_sec": 60.0,
         "clear_confirm_timeout_sec": 180.0,
         "clear_confirm_retry_interval_sec": 1800.0,
         "clear_confirm_max_retries": 3,
@@ -3038,12 +3047,12 @@ def test_reentry_requires_probe_then_rebound_zone(tmp_path):
     )
     prices = iter([0.83, 0.83, 0.879, 0.879])
     manager._estimate_reentry_buyable_price = lambda token_id, position_row=None: next(prices)  # type: ignore[assignment]
-    manager._total_liquidation.reenter_single_token_taker = (  # type: ignore[attr-defined]
+    manager._total_liquidation.reenter_single_token_maker = (  # type: ignore[attr-defined]
         lambda *args, **kwargs: {
             "ok": True,
             "before_size": 0.0,
             "after_size": 5.0,
-            "executed_price": 0.879,
+            "placed_price": 0.879,
         }
     )
     old_fetch = autorun_mod._fetch_position_rows_from_data_api
@@ -3083,12 +3092,12 @@ def test_reentry_uses_frozen_profit_pct_when_available(tmp_path):
     )
     prices = iter([0.83, 0.83, 0.879, 0.879])
     manager._estimate_reentry_buyable_price = lambda token_id, position_row=None: next(prices)  # type: ignore[assignment]
-    manager._total_liquidation.reenter_single_token_taker = (  # type: ignore[attr-defined]
+    manager._total_liquidation.reenter_single_token_maker = (  # type: ignore[attr-defined]
         lambda *args, **kwargs: {
             "ok": True,
             "before_size": 0.0,
             "after_size": 5.0,
-            "executed_price": 0.879,
+            "placed_price": 0.879,
         }
     )
     old_fetch = autorun_mod._fetch_position_rows_from_data_api
@@ -3102,6 +3111,103 @@ def test_reentry_uses_frozen_profit_pct_when_available(tmp_path):
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
     resume = manager.topic_details["t1"].get("stoploss_reentry_resume") or {}
     assert abs(float(resume.get("hold_profit_pct") or 0.0) - 0.031) < 1e-9
+
+
+def test_reentry_maker_timeout_falls_back_to_taker(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_REENTRY_MAKER_WORKING",
+            "stop_exit_ts": now - 7200,
+            "last_stoploss_size": 5.0,
+            "reentry_target_size": 5.0,
+            "reentry_reference_price": 0.88,
+            "reentry_line_price": 0.88,
+            "reentry_zone_lower_price": 0.87,
+            "probe_line_price": 0.836,
+            "reentry_deadline_ts": now - 1.0,
+            "source_detached": False,
+        },
+    )
+    calls = []
+    manager._total_liquidation.reenter_single_token_taker = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: calls.append(kwargs) or {
+            "ok": True,
+            "before_size": 0.0,
+            "after_size": 5.0,
+            "filled_size": 5.0,
+            "executed_avg_price": 0.879,
+        }
+    )
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: ([], "ok")  # type: ignore[assignment]
+    try:
+        manager._run_stoploss_check(now)
+        manager._run_stoploss_check(now + 61.0)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "REENTRY_HOLD"
+    assert len(calls) == 1
+    assert abs(float(calls[0].get("target_size") or 0.0) - 5.0) < 1e-9
+
+
+def test_reentry_taker_missing_ask_enters_retry_cooldown(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    now = time.time()
+    manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
+        "t1",
+        {
+            "state": "STOPLOSS_REENTRY_TAKER_PENDING",
+            "stop_exit_ts": now - 7200,
+            "last_stoploss_size": 5.0,
+            "reentry_target_size": 5.0,
+            "reentry_reference_price": 0.88,
+            "reentry_line_price": 0.88,
+            "reentry_zone_lower_price": 0.87,
+            "probe_line_price": 0.836,
+            "reentry_next_action_ts": 0.0,
+            "source_detached": False,
+        },
+    )
+    call_count = {"n": 0}
+
+    def _fake_taker(*args, **kwargs):
+        call_count["n"] += 1
+        return {
+            "ok": False,
+            "before_size": 0.0,
+            "after_size": 0.0,
+            "filled_size": 0.0,
+            "error": "missing taker ask quote",
+        }
+
+    manager._total_liquidation.reenter_single_token_taker = _fake_taker  # type: ignore[attr-defined]
+    old_fetch = autorun_mod._fetch_position_rows_from_data_api
+    autorun_mod._fetch_position_rows_from_data_api = lambda address: ([], "ok")  # type: ignore[assignment]
+    try:
+        manager._run_stoploss_check(now)
+        manager._run_stoploss_check(now + 10.0)
+        manager._run_stoploss_check(now + 70.0)
+    finally:
+        autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
+    state = manager._stoploss_reentry_states["t1"]
+    assert state["state"] == "STOPLOSS_REENTRY_TAKER_PENDING"
+    assert "missing taker ask quote" in str(state.get("last_error") or "")
+    assert int(state.get("reentry_taker_attempts") or 0) == 2
+    assert call_count["n"] == 2
+
+
+def test_reentry_buyable_price_can_fallback_to_bid_when_ask_absent(tmp_path):
+    manager = _build_stoploss_manager(tmp_path)
+    manager._get_stoploss_cycle_quote = lambda token_id: {  # type: ignore[assignment]
+        "ok": True,
+        "bid": 0.44,
+        "ask": None,
+    }
+    assert abs(float(manager._estimate_reentry_buyable_price("t1") or 0.0) - 0.44) < 1e-9
 
 
 def test_detached_state_without_position_is_cleaned(tmp_path):
@@ -3215,7 +3321,7 @@ def test_reentry_missing_quote_does_not_advance_state_and_is_observable(tmp_path
     assert int(state.get("reentry_quote_missing_hits") or 0) >= 1
     assert int(state.get("probe_confirm_hits") or 0) == 0
     assert int(state.get("rebound_confirm_hits") or 0) == 0
-    assert "ask missing or stale" in str(state.get("last_error") or "")
+    assert "quote missing or stale" in str(state.get("last_error") or "")
     assert calls == []
 
 
@@ -4580,19 +4686,20 @@ def test_reentry_fill_above_line_is_recovered_into_reentry_hold(tmp_path):
     manager._stoploss_reentry_states["t1"] = manager._normalize_stoploss_reentry_state_record(
         "t1",
         {
-            "state": "STOPLOSS_EXITED_WAITING_REBOUND",
+            "state": "STOPLOSS_REENTRY_TAKER_PENDING",
             "stoploss_cycle_count": 1,
             "stop_exit_price": 0.90,
             "stop_exit_ts": now - 7200,
             "last_stoploss_size": 5.0,
+            "reentry_target_size": 5.0,
+            "reentry_reference_price": 0.88,
             "reentry_line_price": 0.88,
             "reentry_zone_lower_price": 0.87,
             "probe_line_price": 0.836,
-            "reentry_earliest_ts": now - 10,
+            "reentry_next_action_ts": 0.0,
             "source_detached": False,
         },
     )
-    manager._estimate_reentry_buyable_price = lambda token_id, position_row=None: 0.879  # type: ignore[assignment]
     manager._total_liquidation.reenter_single_token_taker = (  # type: ignore[attr-defined]
         lambda *args, **kwargs: {
             "ok": True,
@@ -4605,7 +4712,6 @@ def test_reentry_fill_above_line_is_recovered_into_reentry_hold(tmp_path):
     autorun_mod._fetch_position_rows_from_data_api = lambda address: ([], "ok")  # type: ignore[assignment]
     try:
         manager._run_stoploss_check(now)
-        manager._run_stoploss_check(now + 60.0)
     finally:
         autorun_mod._fetch_position_rows_from_data_api = old_fetch  # type: ignore[assignment]
     state = manager._stoploss_reentry_states["t1"]
