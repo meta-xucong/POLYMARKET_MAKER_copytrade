@@ -1,0 +1,30 @@
+name: Regression Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Test Dependencies
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Compile Python Sources
+        run: python -m compileall POLYMARKET_MAKER_copytrade_v3
+
+      - name: Run Regression Tests
+        working-directory: POLYMARKET_MAKER_copytrade_v3
+        run: pytest -q
