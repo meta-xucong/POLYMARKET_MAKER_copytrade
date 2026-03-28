@@ -4935,6 +4935,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     remote_empty_position_hits: int = 0
     skip_buy_guard_blocked_hits: int = 0
     skip_buy_guard_uncertain_hits: int = 0
+    skip_buy_guard_latched_hits: int = 0
 
     def _reconcile_empty_long_state(reason: str) -> None:
         nonlocal position_size
@@ -5704,17 +5705,34 @@ def main(run_config: Optional[Dict[str, Any]] = None):
     # ========== Slot Refill (回填) 恢复状态 ==========
     # 【修复BUG】将REFILL逻辑移动到 _execute_sell 定义之后，确保可以立即调用挂卖单
     skip_buy = False
+    skip_buy_hard_latched = bool(force_sell_only_on_startup)
+    skip_buy_latch_reason = force_sell_only_reason if force_sell_only_on_startup else ""
+    position_truth_context = run_cfg.get("position_truth_context")
+    if not isinstance(position_truth_context, dict):
+        position_truth_context = {}
     resume_state = run_cfg.get("resume_state")
     if resume_state and isinstance(resume_state, dict):
         has_position = resume_state.get("has_position", False)
         position_size = resume_state.get("position_size")
         entry_price = resume_state.get("entry_price")
         skip_buy = resume_state.get("skip_buy", False)
+        if has_position and skip_buy:
+            skip_buy_hard_latched = True
+            if not skip_buy_latch_reason:
+                skip_buy_latch_reason = "resume_state.has_position"
         refill_retry_count = run_cfg.get("refill_retry_count", 0)
 
         print(f"\n[REFILL] ========== 回填恢复状态 ==========")
         print(f"[REFILL] token_id: {token_id[:20]}...")
         print(f"[REFILL] 重试次数: {refill_retry_count}")
+        if position_truth_context:
+            print(
+                "[POSITION_TRUTH] startup context: "
+                f"source={position_truth_context.get('source') or '-'} "
+                f"queue_role={position_truth_context.get('queue_role') or '-'} "
+                f"expected_size={position_truth_context.get('expected_position_size')} "
+                f"skip_buy={position_truth_context.get('skip_buy')}"
+            )
 
         if has_position and position_size:
             # 有持仓：同步到策略，跳过买入阶段
@@ -6672,6 +6690,7 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                     _maybe_refresh_position_size("[BUY][GUARD][SKIP_BUY]", force=True)
                     if _has_actionable_position():
                         skip_buy_guard_blocked_hits += 1
+                        skip_buy_guard_latched_hits = 0
                         blocked_reason = "position_present"
                         if remote_empty_position_hits > 0:
                             skip_buy_guard_uncertain_hits += 1
@@ -6693,9 +6712,38 @@ def main(run_config: Optional[Dict[str, Any]] = None):
                         strategy.on_reject("skip_buy guard: existing position")
                         _push_buy_cooldown(short_buy_cooldown, reason="skip_buy_guard_existing_position")
                         continue
+                    if skip_buy_hard_latched:
+                        skip_buy_guard_latched_hits += 1
+                        blocked_reason = f"latched_resume_guard({skip_buy_latch_reason or 'position_resume'})"
+                        if remote_empty_position_hits > 0:
+                            blocked_reason += f", empty_hits={remote_empty_position_hits}"
+                        if (
+                            skip_buy_guard_latched_hits == 1
+                            or skip_buy_guard_latched_hits % 10 == 0
+                        ):
+                            print(
+                                "[BUY][GUARD][OBS] skip_buy 保持粘性拦截: "
+                                f"latched_hits={skip_buy_guard_latched_hits} "
+                                f"reason={blocked_reason}"
+                            )
+                            print(
+                                "[POSITION_TRUTH][DIVERGENCE] parent expected position "
+                                f"but local probe is empty: source={position_truth_context.get('source') or '-'} "
+                                f"queue_role={position_truth_context.get('queue_role') or '-'} "
+                                f"expected_size={position_truth_context.get('expected_position_size')} "
+                                f"remote_empty_hits={remote_empty_position_hits}"
+                            )
+                        print(
+                            "[BUY][GUARD] skip_buy remains latched; "
+                            "waiting for parent reconcile before any buy"
+                        )
+                        strategy.on_reject("skip_buy guard: latched resume path")
+                        _push_buy_cooldown(short_buy_cooldown, reason="skip_buy_guard_latched_resume")
+                        continue
                     skip_buy = False
                     skip_buy_guard_blocked_hits = 0
                     skip_buy_guard_uncertain_hits = 0
+                    skip_buy_guard_latched_hits = 0
                     print("[BUY][GUARD] skip_buy released (no actionable position)")
 
                 if awaiting_buy_passthrough:

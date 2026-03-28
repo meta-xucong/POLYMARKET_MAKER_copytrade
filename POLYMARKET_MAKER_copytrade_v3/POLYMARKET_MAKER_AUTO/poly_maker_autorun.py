@@ -306,6 +306,7 @@ EXIT_ORDERBOOK_MISSING_BACKOFF_SCHEDULE_SEC = (5 * 60.0, 15 * 60.0, 30 * 60.0)
 POSITION_TRUTH_FALLBACK_MIN_ORDER_SIZE = 0.5
 EXIT_CLEANUP_MAX_RETRIES = 3
 STOPLOSS_NOFILL_SELL_ONLY_MAX_REQUEUES = 3
+POSITION_RECONCILE_MAX_REQUEUES = 3
 SELL_SIGNAL_FORCE_CLEANUP_TIMEOUT_SEC = 45.0
 ALLOWED_IOC_EXIT_REASONS = {"COPYTRADE_SELL", "STOPLOSS_REENTRY"}
 ALLOWED_EXIT_SIGNAL_REASONS = ALLOWED_IOC_EXIT_REASONS | {"TOTAL_LIQUIDATION"}
@@ -330,10 +331,21 @@ class _TeeStream:
 
     def write(self, data: str) -> int:
         with self._lock:
-            written = self._primary.write(data)
-            self._secondary.write(data)
+            written = self._safe_write(self._primary, data)
+            self._safe_write(self._secondary, data)
             self._secondary.flush()
             return written
+
+    @staticmethod
+    def _safe_write(stream: Any, data: str) -> int:
+        try:
+            return stream.write(data)
+        except UnicodeEncodeError:
+            encoding = getattr(stream, "encoding", None) or "utf-8"
+            normalized = data.encode(encoding, errors="replace").decode(
+                encoding, errors="replace"
+            )
+            return stream.write(normalized)
 
     def flush(self) -> None:
         with self._lock:
@@ -4642,6 +4654,7 @@ class AutoRunManager:
             self._classify_position_truth(task.topic_id, snapshot.get(task.topic_id, 0.0))
         ):
             return False
+        detail.pop("startup_reconcile_requeue_count", None)
         self._append_exit_token_record(
             task.topic_id,
             "POSITION_RECONCILE_LATE_CLEANUP_SUCCESS",
@@ -4718,6 +4731,44 @@ class AutoRunManager:
         detail.pop("gap_hold_until_ts", None)
         detail.pop("gap_hold_streak", None)
         detail.pop("gap_hold_latest_exit_ts", None)
+        requeue_count = int(detail.get("startup_reconcile_requeue_count") or 0) + 1
+        detail["startup_reconcile_requeue_count"] = requeue_count
+        if requeue_count >= POSITION_RECONCILE_MAX_REQUEUES:
+            detail["queue_role"] = "manual_intervention"
+            detail["schedule_lane"] = "base"
+            detail["force_sell_only_on_startup"] = True
+            detail["force_sell_only_reason"] = "startup reconcile requeue exhausted"
+            self._remove_pending_topic(task.topic_id)
+            self._record_manual_intervention_token(
+                task.topic_id,
+                retry_count=requeue_count,
+                rc=rc,
+                reason="POSITION_RECONCILE_MAX_REQUEUES",
+            )
+            self._append_exit_token_record(
+                task.topic_id,
+                "POSITION_RECONCILE_MANUAL_INTERVENTION_REQUIRED",
+                exit_data={
+                    "source": "startup_reconcile_position",
+                    "rc": rc,
+                    "position_size": position_size,
+                    "action": "manual_intervention",
+                    "retry_count": requeue_count,
+                    "max_requeues": POSITION_RECONCILE_MAX_REQUEUES,
+                },
+                refillable=False,
+            )
+            task.status = "manual_intervention"
+            task.end_reason = "position reconcile manual intervention required"
+            task.heartbeat(
+                "position reconcile requeue exhausted; escalated to manual intervention"
+            )
+            print(
+                "[AUTO][MANUAL] startup_reconcile_position exhausted requeues, "
+                f"escalated to manual intervention: token={task.topic_id} "
+                f"size={position_size:.4f} retry={requeue_count}/{POSITION_RECONCILE_MAX_REQUEUES}"
+            )
+            return True
         detail["queue_role"] = "startup_reconcile_position"
         detail["schedule_lane"] = "base"
         if (
@@ -4744,6 +4795,7 @@ class AutoRunManager:
                 "position_size": position_size,
                 "action": "requeued_startup_reconcile_position",
                 "requeue_backoff_sec": backoff_sec,
+                "retry_count": requeue_count,
             },
             refillable=False,
         )
@@ -4753,7 +4805,8 @@ class AutoRunManager:
         )
         print(
             "[AUTO][REQUEUE] startup_reconcile_position clean exit but position remains, requeue: "
-            f"token={task.topic_id} size={position_size:.4f} backoff={backoff_sec:.1f}s"
+            f"token={task.topic_id} size={position_size:.4f} "
+            f"backoff={backoff_sec:.1f}s retry={requeue_count}/{POSITION_RECONCILE_MAX_REQUEUES}"
         )
         return True
 
@@ -8631,6 +8684,20 @@ class AutoRunManager:
             merged["resume_state"] = resume_state
             refill_retry_count = topic_info.get("refill_retry_count", 0)
             merged["refill_retry_count"] = refill_retry_count
+        if isinstance(resume_state, dict) and bool(resume_state.get("has_position")):
+            merged["position_truth_context"] = {
+                "source": "autorun_resume_state",
+                "queue_role": queue_role,
+                "expected_position_size": _coerce_float(resume_state.get("position_size")),
+                "skip_buy": bool(resume_state.get("skip_buy")),
+            }
+        if (
+            queue_role in {"startup_reconcile_position", "refill_with_position"}
+            and isinstance(resume_state, dict)
+            and bool(resume_state.get("has_position"))
+        ):
+            merged["force_sell_only_on_startup"] = True
+            merged.setdefault("force_sell_only_reason", "position resume")
         if topic_info.get("force_sell_only_on_startup"):
             merged["force_sell_only_on_startup"] = True
         if topic_info.get("force_sell_only_reason"):
@@ -9265,6 +9332,7 @@ class AutoRunManager:
         stale_resume = isinstance(resume_state, dict) and bool(resume_state.get("has_position"))
         if stale_resume:
             detail.pop("resume_state", None)
+        detail.pop("startup_reconcile_requeue_count", None)
         for stale_key in ("entry_price", "last_buy_price", "floor_price", "sell_trigger_price"):
             detail.pop(stale_key, None)
 
@@ -11300,6 +11368,7 @@ class AutoRunManager:
                 "resume_profit_pct",
                 "startup_orphan_profit_sweep",
                 "startup_skip_if_open_sell",
+                "startup_reconcile_requeue_count",
                 "stoploss_reentry_resume",
                 "orphaned",
                 "orphaned_at",
