@@ -1,0 +1,29 @@
+﻿# Python cache/test artifacts
+**/__pycache__/
+**/.pytest_cache/
+*.pyc
+*.pyo
+
+# Runtime state/logs
+**/POLYMARKET_MAKER_AUTO/logs/
+**/POLYMARKET_MAKER_AUTO/data/
+**/copytrade/logs/
+**/copytrade/copytrade_sell_signals.json
+**/copytrade/copytrade_state.json
+**/copytrade/tokens_from_copytrade.json
+**/*_systemd.log
+**/panel/run/
+**/run/
+
+# Local secrets
+POLYMARKET_MAKER_copytrade_v2/account.json
+release/**/app_root/POLYMARKET_MAKER_copytrade_v2/account.json
+
+# Build/temp
+**/dist_closed/
+**/*.tmp
+**/*.lock
+
+# OS/IDE
+.DS_Store
+Thumbs.db
