@@ -3666,6 +3666,40 @@ class AutoRunManager:
             f"state=REENTRY_HOLD next_stoploss_in={next_stoploss_cd:.0f}s"
         )
 
+    def _reset_stoploss_reentry_to_waiting_rebound(
+        self,
+        token_id: str,
+        state: Dict[str, Any],
+        *,
+        reason: str,
+    ) -> None:
+        liq = getattr(self, "_total_liquidation", None)
+        get_client = getattr(liq, "_get_cached_client", None)
+        clear_orders = getattr(liq, "_clear_open_orders_for_token", None)
+        if callable(get_client) and callable(clear_orders):
+            try:
+                client = get_client()
+                if client is not None:
+                    clear_orders(client, token_id)
+            except Exception as exc:
+                print(
+                    f"[REENTRY_EXEC] token={token_id[:20]}... cleanup open orders failed "
+                    f"error={exc}"
+                )
+        state["state"] = "STOPLOSS_EXITED_WAITING_REBOUND"
+        state["reentry_target_size"] = 0.0
+        state["reentry_started_ts"] = 0.0
+        state["reentry_deadline_ts"] = 0.0
+        state["reentry_next_action_ts"] = 0.0
+        state["reentry_reference_price"] = None
+        state["reentry_maker_order_id"] = ""
+        state["rebound_confirm_hits"] = 0
+        state["last_error"] = str(reason or "reentry reset to waiting rebound")
+        print(
+            f"[REENTRY_EXEC] token={token_id[:20]}... reset -> WAITING_REBOUND "
+            f"reason={state['last_error']}"
+        )
+
     def _advance_stoploss_reentry_execution(
         self,
         token_id: str,
@@ -3712,12 +3746,18 @@ class AutoRunManager:
         if state_name == "STOPLOSS_REENTRY_MAKER_WORKING":
             deadline_ts = float(state.get("reentry_deadline_ts") or 0.0)
             if deadline_ts > 0 and now >= deadline_ts:
+                taker_cooldown_sec = max(
+                    5.0, float(self.config.stoploss_reentry_taker_retry_cooldown_sec)
+                )
+                taker_window_sec = max(300.0, taker_cooldown_sec * 10.0)
                 state["state"] = "STOPLOSS_REENTRY_TAKER_PENDING"
                 state["reentry_next_action_ts"] = 0.0
+                state["reentry_deadline_ts"] = float(now + taker_window_sec)
                 state["last_error"] = "maker reentry timeout -> taker fallback"
                 print(
                     f"[REENTRY_EXEC] token={token_id[:20]}... maker timeout "
-                    f"remaining={remaining:.4f} -> taker fallback"
+                    f"remaining={remaining:.4f} -> taker fallback "
+                    f"window={taker_window_sec:.0f}s"
                 )
                 return True
 
@@ -3769,6 +3809,14 @@ class AutoRunManager:
             next_action_ts = float(state.get("reentry_next_action_ts") or 0.0)
             if now < next_action_ts:
                 return False
+            deadline_ts = float(state.get("reentry_deadline_ts") or 0.0)
+            if deadline_ts > 0 and now >= deadline_ts:
+                self._reset_stoploss_reentry_to_waiting_rebound(
+                    token_id,
+                    state,
+                    reason="taker reentry window expired",
+                )
+                return True
             reference_price = _coerce_float(state.get("reentry_reference_price"))
             taker_resp = self._total_liquidation.reenter_single_token_taker(
                 self,
@@ -3802,6 +3850,17 @@ class AutoRunManager:
                 5.0, float(self.config.stoploss_reentry_taker_retry_cooldown_sec)
             )
             state["reentry_next_action_ts"] = float(now + cooldown_sec)
+            error_text = str(state["last_error"] or "")
+            if (
+                "stale taker ask quote" in error_text
+                and int(state["reentry_taker_attempts"]) >= 10
+            ):
+                self._reset_stoploss_reentry_to_waiting_rebound(
+                    token_id,
+                    state,
+                    reason="taker stale quote retries exhausted",
+                )
+                return True
             print(
                 f"[REENTRY_EXEC] token={token_id[:20]}... taker pending "
                 f"attempt={int(state['reentry_taker_attempts'])} "

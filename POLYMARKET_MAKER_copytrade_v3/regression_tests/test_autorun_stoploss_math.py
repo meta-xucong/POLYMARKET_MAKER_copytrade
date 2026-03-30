@@ -127,3 +127,70 @@ def test_stoploss_market_closed_detection(manager_factory):
 
     assert manager._stoploss_is_market_closed("tok") is True
     assert manager._stoploss_is_market_closed("tok2") is False
+
+
+def test_taker_fallback_gets_independent_retry_window(manager_factory):
+    manager = manager_factory()
+    manager.config.stoploss_reentry_taker_retry_cooldown_sec = 60.0
+    manager._has_actionable_position = lambda token_id, size, row=None: size > 0
+    manager._total_liquidation = type(
+        "FakeLiquidation",
+        (),
+        {
+            "_get_cached_client": staticmethod(lambda: None),
+            "_clear_open_orders_for_token": staticmethod(lambda client, token_id: {"cleared": True}),
+            "reenter_single_token_taker": staticmethod(lambda *args, **kwargs: {"ok": False, "filled_size": 0.0, "after_size": 0.0, "error": "stale taker ask quote"}),
+        },
+    )()
+    state = manager._default_stoploss_reentry_state("tok")
+    state["state"] = "STOPLOSS_REENTRY_MAKER_WORKING"
+    state["reentry_target_size"] = 10.0
+    state["last_stoploss_size"] = 10.0
+    state["reentry_reference_price"] = 0.79
+    state["reentry_deadline_ts"] = 100.0
+
+    changed = manager._advance_stoploss_reentry_execution(
+        "tok",
+        state,
+        now=100.0,
+        position_row=None,
+    )
+
+    assert changed is True
+    assert state["state"] == "STOPLOSS_REENTRY_TAKER_PENDING"
+    assert state["reentry_deadline_ts"] == 700.0
+
+
+def test_taker_fallback_resets_to_waiting_rebound_after_window_expiry(manager_factory):
+    manager = manager_factory()
+    manager.config.stoploss_reentry_taker_retry_cooldown_sec = 60.0
+    manager._has_actionable_position = lambda token_id, size, row=None: size > 0
+    manager._total_liquidation = type(
+        "FakeLiquidation",
+        (),
+        {
+            "_get_cached_client": staticmethod(lambda: None),
+            "_clear_open_orders_for_token": staticmethod(lambda client, token_id: {"cleared": True}),
+            "reenter_single_token_taker": staticmethod(lambda *args, **kwargs: {"ok": False, "filled_size": 0.0, "after_size": 0.0, "error": "stale taker ask quote"}),
+        },
+    )()
+    state = manager._default_stoploss_reentry_state("tok")
+    state["state"] = "STOPLOSS_REENTRY_TAKER_PENDING"
+    state["reentry_target_size"] = 10.0
+    state["last_stoploss_size"] = 10.0
+    state["reentry_reference_price"] = 0.79
+    state["reentry_deadline_ts"] = 500.0
+    state["reentry_maker_order_id"] = "oid"
+
+    changed = manager._advance_stoploss_reentry_execution(
+        "tok",
+        state,
+        now=501.0,
+        position_row=None,
+    )
+
+    assert changed is True
+    assert state["state"] == "STOPLOSS_EXITED_WAITING_REBOUND"
+    assert state["reentry_deadline_ts"] == 0.0
+    assert state["reentry_maker_order_id"] == ""
+    assert "window expired" in state["last_error"]

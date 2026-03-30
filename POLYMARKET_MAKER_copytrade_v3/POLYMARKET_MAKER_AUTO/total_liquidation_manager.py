@@ -1271,6 +1271,71 @@ class TotalLiquidationManager:
             return bid > 0 or ask > 0
         return (time.time() - ts) <= max(1.0, float(max_age_sec))
 
+    def _resolve_reentry_taker_quote(
+        self,
+        autorun: Any,
+        token_id: str,
+        *,
+        max_age_sec: float = 30.0,
+    ) -> Dict[str, Any]:
+        def _safe_float(value: Any) -> float:
+            try:
+                return float(value or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        bid, ask = self._resolve_bid_ask(autorun, token_id)
+        if ask > 0 and self._is_quote_fresh(autorun, token_id, max_age_sec=max_age_sec):
+            return {
+                "bid": bid,
+                "ask": ask,
+                "fresh": True,
+                "source": "ws_cache",
+            }
+
+        fetch_book = getattr(autorun, "_fetch_clob_top_of_book", None)
+        if callable(fetch_book):
+            try:
+                fresh_quote = fetch_book(token_id) or {}
+            except Exception as exc:
+                fresh_quote = {
+                    "ok": False,
+                    "error": f"book_refresh_failed:{exc.__class__.__name__}",
+                }
+            if bool(fresh_quote.get("ok")):
+                fresh_bid = _safe_float(fresh_quote.get("bid"))
+                fresh_ask = _safe_float(fresh_quote.get("ask"))
+                if fresh_bid > 0 or fresh_ask > 0:
+                    now_ts = time.time()
+                    ws_lock = getattr(autorun, "_ws_cache_lock", None)
+                    ws_cache = getattr(autorun, "_ws_cache", None)
+                    if ws_lock is not None and ws_cache is not None:
+                        try:
+                            with ws_lock:
+                                prev = dict(ws_cache.get(token_id) or {})
+                                if fresh_bid > 0:
+                                    prev["best_bid"] = float(fresh_bid)
+                                if fresh_ask > 0:
+                                    prev["best_ask"] = float(fresh_ask)
+                                prev["updated_at"] = now_ts
+                                prev["source"] = "reentry_taker_book_refresh"
+                                ws_cache[token_id] = prev
+                        except Exception:
+                            pass
+                    return {
+                        "bid": float(fresh_bid),
+                        "ask": float(fresh_ask),
+                        "fresh": True,
+                        "source": str(fresh_quote.get("source") or "clob_book"),
+                    }
+
+        return {
+            "bid": bid,
+            "ask": ask,
+            "fresh": False,
+            "source": "stale_or_missing",
+        }
+
     def _compute_taker_price(self, bid: float, ask: float) -> float:
         base = bid if bid > 0 else ask if ask > 0 else 0.01
         bps = max(0.0, float(self.cfg.taker_slippage_bps))
@@ -1788,12 +1853,19 @@ class TotalLiquidationManager:
         while attempts < max(1, int(max_attempts)) and remain_to_buy > 1e-6:
             attempts += 1
             try:
-                bid, ask = self._resolve_bid_ask(autorun, token_id)
+                quote = self._resolve_reentry_taker_quote(
+                    autorun,
+                    token_id,
+                    max_age_sec=30.0,
+                )
+                bid = float(quote.get("bid") or 0.0)
+                ask = float(quote.get("ask") or 0.0)
+                quote_source = str(quote.get("source") or "unknown")
                 if ask <= 0:
-                    last_error = "missing taker ask quote"
+                    last_error = f"missing taker ask quote source={quote_source}"
                     break
-                if not self._is_quote_fresh(autorun, token_id, max_age_sec=30.0):
-                    last_error = "stale taker ask quote"
+                if not bool(quote.get("fresh")):
+                    last_error = f"stale taker ask quote source={quote_source}"
                     break
                 if (
                     reference_buy_price is not None
@@ -1833,6 +1905,9 @@ class TotalLiquidationManager:
             "reason": reason,
             "error": last_error,
             "executed_price": last_exec_price,
+            "quote_bid": bid if 'bid' in locals() else 0.0,
+            "quote_ask": ask if 'ask' in locals() else 0.0,
+            "quote_source": quote_source if 'quote_source' in locals() else "",
         }
 
     def _liquidate_positions(
