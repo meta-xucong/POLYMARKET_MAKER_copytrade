@@ -8,6 +8,8 @@ def test_default_stoploss_reentry_state_applies_min_threshold(manager_factory):
     assert state["version"] == 4
     assert state["state"] == "NORMAL_MAKER"
     assert state["next_stoploss_threshold_pct"] == 0.001
+    assert state["wide_spread_stoploss_confirm_hits"] == 0
+    assert state["wide_spread_stoploss_first_ts"] == 0.0
 
 
 def test_normalize_stoploss_state_clamps_values_and_cleans_release_fields(
@@ -103,6 +105,91 @@ def test_stoploss_spread_extra_ticks_applies_tiers(manager_factory):
     assert manager._stoploss_spread_extra_ticks(0.03) == 1
     assert manager._stoploss_spread_extra_ticks(0.06) == 2
     assert manager._stoploss_spread_extra_ticks(0.09) == 4
+
+
+def test_wide_spread_stoploss_confirmation_requires_window_and_rounds(manager_factory):
+    manager = manager_factory()
+    manager.config.stoploss_wide_spread_confirm_window_sec = 30.0
+    manager.config.stoploss_wide_spread_confirm_rounds = 3
+    state = manager._default_stoploss_reentry_state("tok")
+
+    hits, elapsed, ready = manager._advance_wide_spread_stoploss_confirmation(
+        state,
+        now=100.0,
+    )
+    assert (hits, elapsed, ready) == (1, 0.0, False)
+
+    hits, elapsed, ready = manager._advance_wide_spread_stoploss_confirmation(
+        state,
+        now=115.0,
+    )
+    assert (hits, elapsed, ready) == (2, 15.0, False)
+
+    hits, elapsed, ready = manager._advance_wide_spread_stoploss_confirmation(
+        state,
+        now=130.0,
+    )
+    assert (hits, elapsed, ready) == (3, 30.0, True)
+
+
+def test_reset_wide_spread_stoploss_confirmation_clears_state(manager_factory):
+    manager = manager_factory()
+    state = manager._default_stoploss_reentry_state("tok")
+    state["wide_spread_stoploss_confirm_hits"] = 2
+    state["wide_spread_stoploss_first_ts"] = 123.0
+
+    assert manager._reset_wide_spread_stoploss_confirmation(state) is True
+    assert state["wide_spread_stoploss_confirm_hits"] == 0
+    assert state["wide_spread_stoploss_first_ts"] == 0.0
+    assert manager._reset_wide_spread_stoploss_confirmation(state) is False
+
+
+def test_wide_spread_stoploss_confirmation_needs_full_30s_window(manager_factory):
+    manager = manager_factory()
+    manager.config.stoploss_wide_spread_confirm_window_sec = 30.0
+    manager.config.stoploss_wide_spread_confirm_rounds = 3
+    state = manager._default_stoploss_reentry_state("tok")
+
+    hits, elapsed, ready = manager._advance_wide_spread_stoploss_confirmation(
+        state,
+        now=100.0,
+    )
+    assert (hits, elapsed, ready) == (1, 0.0, False)
+
+    hits, elapsed, ready = manager._advance_wide_spread_stoploss_confirmation(
+        state,
+        now=110.0,
+    )
+    assert (hits, elapsed, ready) == (2, 10.0, False)
+
+    hits, elapsed, ready = manager._advance_wide_spread_stoploss_confirmation(
+        state,
+        now=120.0,
+    )
+    assert (hits, elapsed, ready) == (3, 20.0, False)
+
+    assert manager._reset_wide_spread_stoploss_confirmation(state) is True
+    assert state["wide_spread_stoploss_confirm_hits"] == 0
+    assert state["wide_spread_stoploss_first_ts"] == 0.0
+
+
+def test_wide_spread_stoploss_confirmation_allows_exit_after_persistent_weakness(
+    manager_factory,
+):
+    manager = manager_factory()
+    manager.config.stoploss_wide_spread_confirm_window_sec = 30.0
+    manager.config.stoploss_wide_spread_confirm_rounds = 3
+    state = manager._default_stoploss_reentry_state("tok")
+
+    sequence = [
+        manager._advance_wide_spread_stoploss_confirmation(state, now=200.0),
+        manager._advance_wide_spread_stoploss_confirmation(state, now=215.0),
+        manager._advance_wide_spread_stoploss_confirmation(state, now=230.0),
+    ]
+
+    assert sequence[0] == (1, 0.0, False)
+    assert sequence[1] == (2, 15.0, False)
+    assert sequence[2] == (3, 30.0, True)
 
 
 def test_build_stoploss_reentry_band_is_monotonic(manager_factory):
