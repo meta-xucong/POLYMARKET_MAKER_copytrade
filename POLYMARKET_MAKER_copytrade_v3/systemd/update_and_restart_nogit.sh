@@ -23,18 +23,18 @@ RUNTIME_EXCLUDES=(
 
 print_recent_logs() {
   local service="$1"
-  echo "[INFO] 最近日志: $service"
+  echo "[INFO] Recent logs: $service"
   journalctl -u "$service" -n 60 --no-pager || true
 }
 
 check_service_active() {
   local service="$1"
   if systemctl is-active --quiet "$service"; then
-    echo "[OK] 服务运行中: $service"
+    echo "[OK] Service active: $service"
     return 0
   fi
 
-  echo "[ERROR] 服务未处于 active 状态: $service" >&2
+  echo "[ERROR] Service is not active: $service" >&2
   systemctl --no-pager --full status "$service" || true
   print_recent_logs "$service"
   return 1
@@ -45,8 +45,64 @@ require_cmd() {
   if command -v "$cmd" >/dev/null 2>&1; then
     return 0
   fi
-  echo "[ERROR] 缺少命令: $cmd" >&2
+  echo "[ERROR] Missing command: $cmd" >&2
   exit 1
+}
+
+has_cmd() {
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1
+}
+
+backup_runtime_state() {
+  local app_root="$1"
+  local backup_root="$2"
+
+  mkdir -p "$backup_root"
+  for rel_path in "${RUNTIME_EXCLUDES[@]}"; do
+    local abs_path="$app_root/$rel_path"
+    if compgen -G "$abs_path" >/dev/null 2>&1; then
+      while IFS= read -r matched; do
+        [[ -e "$matched" ]] || continue
+        local rel_matched="${matched#"$app_root"/}"
+        local target_dir
+        target_dir="$(dirname "$backup_root/$rel_matched")"
+        mkdir -p "$target_dir"
+        cp -a "$matched" "$target_dir/"
+      done < <(compgen -G "$abs_path")
+    fi
+  done
+}
+
+restore_runtime_state() {
+  local backup_root="$1"
+  local app_root="$2"
+
+  if [[ -d "$backup_root" ]]; then
+    cp -a "$backup_root"/. "$app_root"/
+  fi
+}
+
+sync_with_tar_fallback() {
+  local src_dir="$1"
+  local app_root="$2"
+  local runtime_backup=""
+
+  if [[ "$KEEP_RUNTIME_STATE" == "1" ]]; then
+    runtime_backup="$TMP_DIR/runtime_backup"
+    backup_runtime_state "$app_root" "$runtime_backup"
+  fi
+
+  find "$app_root" -mindepth 1 -maxdepth 1 \
+    ! -name '.git' \
+    ! -name 'case' \
+    -exec rm -rf {} +
+
+  cp -a "$src_dir"/. "$app_root"/
+
+  if [[ "$KEEP_RUNTIME_STATE" == "1" ]]; then
+    restore_runtime_state "$runtime_backup" "$app_root"
+  fi
 }
 
 echo "[INFO] APP_ROOT=$APP_ROOT"
@@ -59,11 +115,10 @@ fi
 
 require_cmd curl
 require_cmd tar
-require_cmd rsync
 require_cmd systemctl
 
 if [[ ! -d "$APP_ROOT" ]]; then
-  echo "[ERROR] 安装目录不存在: $APP_ROOT" >&2
+  echo "[ERROR] Install directory does not exist: $APP_ROOT" >&2
   exit 1
 fi
 
@@ -73,56 +128,61 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 ARCHIVE_PATH="$TMP_DIR/app.tar.gz"
 EXTRACT_DIR="$TMP_DIR/extract"
 
-echo "[INFO] 下载最新代码压缩包..."
+echo "[INFO] Downloading latest archive..."
 curl -L --fail "$ARCHIVE_URL" -o "$ARCHIVE_PATH"
 
 mkdir -p "$EXTRACT_DIR"
-echo "[INFO] 解压代码..."
+echo "[INFO] Extracting archive..."
 tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
 
 SRC_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 if [[ -z "${SRC_DIR:-}" || ! -d "$SRC_DIR" ]]; then
-  echo "[ERROR] 解压后未找到源码目录" >&2
+  echo "[ERROR] Failed to find extracted source directory" >&2
   exit 1
 fi
 
-echo "[INFO] 同步最新文件到安装目录..."
-RSYNC_ARGS=(
-  -a
-  --delete
-  --exclude ".git/"
-  --exclude "case/"
-)
+echo "[INFO] Syncing files into install directory..."
+if has_cmd rsync; then
+  RSYNC_ARGS=(
+    -a
+    --delete
+    --exclude ".git/"
+    --exclude "case/"
+  )
 
-if [[ "$KEEP_RUNTIME_STATE" == "1" ]]; then
-  for pattern in "${RUNTIME_EXCLUDES[@]}"; do
-    RSYNC_ARGS+=(--exclude "$pattern")
-  done
+  if [[ "$KEEP_RUNTIME_STATE" == "1" ]]; then
+    for pattern in "${RUNTIME_EXCLUDES[@]}"; do
+      RSYNC_ARGS+=(--exclude "$pattern")
+    done
+  fi
+
+  rsync "${RSYNC_ARGS[@]}" \
+    "$SRC_DIR"/ "$APP_ROOT"/
+else
+  echo "[WARN] rsync not found, using fallback sync mode"
+  sync_with_tar_fallback "$SRC_DIR" "$APP_ROOT"
 fi
 
-rsync "${RSYNC_ARGS[@]}" \
-  "$SRC_DIR"/ "$APP_ROOT"/
-
-echo "[INFO] 重新安装并重启 systemd 服务..."
+echo "[INFO] Reinstalling and refreshing systemd services..."
 sudo bash "$APP_ROOT/POLYMARKET_MAKER_copytrade_v3/systemd/install_services.sh" \
   "$APP_ROOT" \
   "$RUN_USER" \
   "$PYTHON_BIN" \
   "$ENV_FILE"
 
-echo "[INFO] 显式重启目标服务..."
+echo "[INFO] Restarting target services..."
 sudo systemctl restart "${SERVICES[@]}"
 
-echo "[INFO] 等待服务稳定..."
+echo "[INFO] Waiting for services to stabilize..."
 sleep 5
 
 for service in "${SERVICES[@]}"; do
   check_service_active "$service"
 done
 
-echo "[INFO] 当前服务状态："
+echo "[INFO] Current service status:"
 for service in "${SERVICES[@]}"; do
   systemctl --no-pager --full status "$service" || true
 done
 
-echo "[OK] 更新并重启完成"
+echo "[OK] Update and restart completed"
