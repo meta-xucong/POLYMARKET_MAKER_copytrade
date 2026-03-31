@@ -11621,6 +11621,7 @@ class AutoRunManager:
             return []
         topics: List[Dict[str, Any]] = []
         skipped_not_buy = 0
+        skipped_seeded_only = 0
         skipped_follow_cooldown = 0
         follow_cooldown_map = self._load_active_follow_cooldown_map()
         for item in raw_tokens:
@@ -11630,6 +11631,9 @@ class AutoRunManager:
                 continue
             if not bool(item.get("introduced_by_buy", False)):
                 skipped_not_buy += 1
+                continue
+            if bool(item.get("seeded_on_init", False)):
+                skipped_seeded_only += 1
                 continue
             token_id = item.get("token_id") or item.get("tokenId")
             if not token_id:
@@ -11658,6 +11662,8 @@ class AutoRunManager:
         print(f"[COPYTRADE] 已读取 token {len(topics)} 条 | {path}")
         if skipped_not_buy:
             print(f"[COPYTRADE] 已跳过非BUY引入 token {skipped_not_buy} 条")
+        if skipped_seeded_only:
+            print(f"[COPYTRADE] 已跳过启动前持仓 token {skipped_seeded_only} 条")
         if skipped_follow_cooldown:
             print(f"[COPYTRADE] 已跳过冷却中 token {skipped_follow_cooldown} 条")
         return topics
