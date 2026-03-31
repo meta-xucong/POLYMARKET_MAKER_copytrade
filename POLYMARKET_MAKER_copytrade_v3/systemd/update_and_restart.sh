@@ -34,8 +34,8 @@ check_service_active() {
 echo "[INFO] APP_ROOT=$APP_ROOT"
 echo "[INFO] REMOTE=$REMOTE_NAME BRANCH=$BRANCH_NAME"
 
-if [[ ! -d "$APP_ROOT/.git" ]]; then
-  echo "[ERROR] Git 仓库不存在: $APP_ROOT" >&2
+if ! git -C "$APP_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "[ERROR] Git 仓库不存在或目录不可用: $APP_ROOT" >&2
   exit 1
 fi
 
