@@ -7,6 +7,29 @@ PYTHON_BIN="${PYTHON_BIN:-/root/.pyenv/versions/poly312/bin/python}"
 ENV_FILE="${ENV_FILE:-/root/.polymarket.env}"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 BRANCH_NAME="${BRANCH_NAME:-main}"
+SERVICES=(
+  "polymaker-copytrade.service"
+  "polymaker-autorun.service"
+)
+
+print_recent_logs() {
+  local service="$1"
+  echo "[INFO] 最近日志: $service"
+  journalctl -u "$service" -n 60 --no-pager || true
+}
+
+check_service_active() {
+  local service="$1"
+  if systemctl is-active --quiet "$service"; then
+    echo "[OK] 服务运行中: $service"
+    return 0
+  fi
+
+  echo "[ERROR] 服务未处于 active 状态: $service" >&2
+  systemctl --no-pager --full status "$service" || true
+  print_recent_logs "$service"
+  return 1
+}
 
 echo "[INFO] APP_ROOT=$APP_ROOT"
 echo "[INFO] REMOTE=$REMOTE_NAME BRANCH=$BRANCH_NAME"
@@ -45,8 +68,19 @@ sudo bash "$APP_ROOT/POLYMARKET_MAKER_copytrade_v3/systemd/install_services.sh" 
   "$PYTHON_BIN" \
   "$ENV_FILE"
 
+echo "[INFO] 显式重启目标服务..."
+sudo systemctl restart "${SERVICES[@]}"
+
+echo "[INFO] 等待服务稳定..."
+sleep 5
+
+for service in "${SERVICES[@]}"; do
+  check_service_active "$service"
+done
+
 echo "[INFO] 当前服务状态："
-systemctl --no-pager --full status polymaker-copytrade.service || true
-systemctl --no-pager --full status polymaker-autorun.service || true
+for service in "${SERVICES[@]}"; do
+  systemctl --no-pager --full status "$service" || true
+done
 
 echo "[OK] 更新并重启完成"
