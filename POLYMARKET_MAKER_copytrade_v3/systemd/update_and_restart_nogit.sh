@@ -6,9 +6,19 @@ RUN_USER="${RUN_USER:-root}"
 PYTHON_BIN="${PYTHON_BIN:-/root/.pyenv/versions/poly312/bin/python}"
 ENV_FILE="${ENV_FILE:-/root/.polymarket.env}"
 ARCHIVE_URL="${ARCHIVE_URL:-https://github.com/meta-xucong/POLYMARKET_MAKER_copytrade/archive/refs/heads/main.tar.gz}"
+KEEP_RUNTIME_STATE="${KEEP_RUNTIME_STATE:-1}"
 SERVICES=(
   "polymaker-copytrade.service"
   "polymaker-autorun.service"
+)
+RUNTIME_EXCLUDES=(
+  "POLYMARKET_MAKER_copytrade_v3/copytrade/tokens_from_copytrade.json"
+  "POLYMARKET_MAKER_copytrade_v3/copytrade/copytrade_state.json"
+  "POLYMARKET_MAKER_copytrade_v3/copytrade/copytrade_sell_signals.json"
+  "POLYMARKET_MAKER_copytrade_v3/copytrade/copytrade_blacklist.json"
+  "POLYMARKET_MAKER_copytrade_v3/copytrade/*.log"
+  "POLYMARKET_MAKER_copytrade_v3/POLYMARKET_MAKER_AUTO/*.log"
+  "POLYMARKET_MAKER_copytrade_v3/POLYMARKET_MAKER_AUTO/data/"
 )
 
 print_recent_logs() {
@@ -41,6 +51,11 @@ require_cmd() {
 
 echo "[INFO] APP_ROOT=$APP_ROOT"
 echo "[INFO] ARCHIVE_URL=$ARCHIVE_URL"
+if [[ "$KEEP_RUNTIME_STATE" == "1" ]]; then
+  echo "[INFO] UPDATE_MODE=preserve_runtime_state"
+else
+  echo "[INFO] UPDATE_MODE=reset_runtime_state"
+fi
 
 require_cmd curl
 require_cmd tar
@@ -72,9 +87,20 @@ if [[ -z "${SRC_DIR:-}" || ! -d "$SRC_DIR" ]]; then
 fi
 
 echo "[INFO] 同步最新文件到安装目录..."
-rsync -a --delete \
-  --exclude ".git/" \
-  --exclude "case/" \
+RSYNC_ARGS=(
+  -a
+  --delete
+  --exclude ".git/"
+  --exclude "case/"
+)
+
+if [[ "$KEEP_RUNTIME_STATE" == "1" ]]; then
+  for pattern in "${RUNTIME_EXCLUDES[@]}"; do
+    RSYNC_ARGS+=(--exclude "$pattern")
+  done
+fi
+
+rsync "${RSYNC_ARGS[@]}" \
   "$SRC_DIR"/ "$APP_ROOT"/
 
 echo "[INFO] 重新安装并重启 systemd 服务..."
