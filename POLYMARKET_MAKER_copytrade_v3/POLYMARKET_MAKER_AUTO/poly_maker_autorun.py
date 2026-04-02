@@ -321,6 +321,9 @@ CLOB_BOOK_PROBE_TIMEOUT_SEC = 5.0
 CLOB_BOOK_PROBE_CACHE_TTL_SEC = 300.0
 GAMMA_MARKET_PROBE_TIMEOUT_SEC = 10.0
 GAMMA_MARKET_CACHE_TTL_SEC = 300.0
+WS_BOOTSTRAP_RECOVERY_COOLDOWN_SEC = 15.0
+WS_STALE_RESUBSCRIBE_COOLDOWN_SEC = 45.0
+WS_STALE_RESUBSCRIBE_AFTER_SEC = 180.0
 
 
 class _TeeStream:
@@ -2483,6 +2486,8 @@ class AutoRunManager:
         self._active_unmanaged_rearm_block_reasons: Dict[str, str] = {}
         self._shared_ws_pending_since: Dict[str, float] = {}
         self._clob_book_probe_cache: Dict[str, Dict[str, Any]] = {}
+        self._ws_book_bootstrap_retry_after: Dict[str, float] = {}
+        self._ws_resubscribe_retry_after: Dict[str, float] = {}
         self._gamma_market_probe_cache: Dict[str, Dict[str, Any]] = {}
         self._next_pending_eviction: float = 0.0
         self._last_sell_fill_poll_at: float = 0.0
@@ -7598,6 +7603,9 @@ class AutoRunManager:
                 elif age > THRESHOLD_WARNING:
                     warning_tokens.append((token_id, age))
 
+                if token_id in self._ws_token_ids and age >= WS_STALE_RESUBSCRIBE_AFTER_SEC:
+                    self._recover_shared_ws_token(token_id, reason=f"stale_age:{int(age)}s")
+
             # 清理过期/关闭的token
             if cleanup_tokens:
                 for token_id, age, reason in cleanup_tokens:
@@ -8137,6 +8145,74 @@ class AutoRunManager:
         }
         return ok, reason
 
+    def _bootstrap_ws_cache_from_clob_book(self, token_id: str) -> bool:
+        quote = self._fetch_clob_top_of_book(token_id)
+        if not bool(quote.get("ok", False)):
+            return False
+        bid = _coerce_float(quote.get("bid"))
+        ask = _coerce_float(quote.get("ask"))
+        if bid is None and ask is None:
+            return False
+        mid = ((bid + ask) / 2.0) if bid is not None and ask is not None else (bid or ask or 0.0)
+        with self._ws_cache_lock:
+            prev = dict(self._ws_cache.get(token_id) or {})
+            seq = int(prev.get("seq", 0) or 0) + 1
+            self._ws_cache[token_id] = {
+                **prev,
+                "seq": seq,
+                "updated_at": time.time(),
+                "source": "clob_book_bootstrap",
+                "best_bid": bid,
+                "best_ask": ask,
+                "mid_price": mid,
+                "last_trade_price": _coerce_float(prev.get("last_trade_price")) or mid,
+            }
+            self._ws_cache_dirty = True
+        self._shared_ws_wait_failures[token_id] = 0
+        self._shared_ws_paused_until.pop(token_id, None)
+        self._shared_ws_wait_timeout_events[token_id] = []
+        return True
+
+    def _recover_shared_ws_token(self, token_id: str, *, reason: str) -> bool:
+        token_id = str(token_id or "").strip()
+        if not token_id:
+            return False
+
+        now = time.time()
+        bootstrap_retry_after = float(self._ws_book_bootstrap_retry_after.get(token_id, 0.0) or 0.0)
+        if now >= bootstrap_retry_after and self._bootstrap_ws_cache_from_clob_book(token_id):
+            self._ws_book_bootstrap_retry_after[token_id] = now + WS_BOOTSTRAP_RECOVERY_COOLDOWN_SEC
+            self._ws_resubscribe_retry_after.pop(token_id, None)
+            print(
+                f"[WS][RECOVER] token={token_id[:8]}... source=clob_book_bootstrap reason={reason}"
+            )
+            return True
+
+        self._ws_book_bootstrap_retry_after[token_id] = now + WS_BOOTSTRAP_RECOVERY_COOLDOWN_SEC
+        resub_retry_after = float(self._ws_resubscribe_retry_after.get(token_id, 0.0) or 0.0)
+        if now < resub_retry_after:
+            return False
+
+        with self._ws_client_lock:
+            client = self._ws_client
+        if client is None:
+            return False
+        resubscribe = getattr(client, "resubscribe", None)
+        if not callable(resubscribe):
+            return False
+        try:
+            resubscribe([token_id])
+        except Exception as exc:
+            print(
+                f"[WS][RECOVER][WARN] token={token_id[:8]}... resubscribe_failed={exc.__class__.__name__}"
+            )
+            self._ws_resubscribe_retry_after[token_id] = now + WS_STALE_RESUBSCRIBE_COOLDOWN_SEC
+            return False
+
+        self._ws_resubscribe_retry_after[token_id] = now + WS_STALE_RESUBSCRIBE_COOLDOWN_SEC
+        print(f"[WS][RECOVER] token={token_id[:8]}... action=resubscribe reason={reason}")
+        return False
+
     def _schedule_pending_topics(self) -> None:
         if self._is_buy_paused_by_balance():
             # 低余额时：只defer无持仓的token，保留有持仓的可卖出
@@ -8267,6 +8343,7 @@ class AutoRunManager:
                     waited = now - pending_since
                     max_wait = max(1.0, float(self.config.shared_ws_max_pending_wait_sec))
                     if waited >= max_wait:
+                        self._recover_shared_ws_token(topic_id, reason="pending_wait_timeout")
                         failures = self._shared_ws_wait_failures.get(topic_id, 0) + 1
                         self._shared_ws_wait_failures[topic_id] = failures
                         self._shared_ws_pending_since[topic_id] = now
@@ -13311,6 +13388,8 @@ class AutoRunManager:
         self._shared_ws_wait_timeout_events.clear()
         self._active_unmanaged_rearm_last_ts.clear()
         self._clob_book_probe_cache.clear()
+        self._ws_book_bootstrap_retry_after.clear()
+        self._ws_resubscribe_retry_after.clear()
         self._gamma_market_probe_cache.clear()
         self._shared_ws_pending_since.clear()
         self._price_cap_stuck_since.clear()

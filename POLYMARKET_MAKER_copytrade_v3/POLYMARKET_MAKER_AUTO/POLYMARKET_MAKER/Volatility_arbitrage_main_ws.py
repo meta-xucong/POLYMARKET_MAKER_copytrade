@@ -105,6 +105,7 @@ class WSAggregatorClient:
         self._pending_unsubscribe: Set[str] = set()  # 待取消订阅
         self._desired_ids: Set[str] = set()  # 期望订阅（业务层）
         self._confirmed_ids: Set[str] = set()  # 已收到事件确认的token
+        self._force_initial_dump_ids: Set[str] = set()  # force fresh initial dump on resubscribe
 
         # WS连接状态
         self._ws: Optional[websocket.WebSocketApp] = None
@@ -208,6 +209,32 @@ class WSAggregatorClient:
             print(f"[{_now()}][WS][AGGREGATOR] 待订阅队列 +{added} (总待订阅: {len(self._pending_subscribe)})")
 
         return added
+
+    def resubscribe(self, token_ids: List[str]) -> int:
+        """Force a fresh subscribe cycle for specific tokens."""
+        if not token_ids:
+            return 0
+
+        changed = 0
+        with self._lock:
+            for tid in token_ids:
+                tid = str(tid).strip()
+                if not tid:
+                    continue
+                self._desired_ids.add(tid)
+                self._confirmed_ids.discard(tid)
+                self._force_initial_dump_ids.add(tid)
+                if tid in self._subscribed_ids:
+                    self._pending_unsubscribe.add(tid)
+                self._pending_subscribe.add(tid)
+                changed += 1
+
+        if changed > 0 and self._verbose:
+            print(
+                f"[{_now()}][WS][AGGREGATOR] ?????? +{changed} "
+                f"(????: {len(self._pending_subscribe)})"
+            )
+        return changed
 
     def unsubscribe(self, token_ids: List[str]) -> int:
         """
@@ -349,6 +376,7 @@ class WSAggregatorClient:
             "type": CHANNEL,
             "assets_ids": first_chunk,
             "custom_feature_enabled": self._custom_feature_enabled,
+            "initial_dump": True,
         }
         if self._auth:
             initial_msg["auth"] = self._auth
@@ -449,6 +477,7 @@ class WSAggregatorClient:
                         for tid in chunk:
                             self._subscribed_ids.discard(tid)
                             self._confirmed_ids.discard(tid)
+                            self._force_initial_dump_ids.discard(tid)
                     if self._verbose:
                         print(
                             f"[{_now()}][WS][AGGREGATOR] ✗ 取消订阅分片 {chunk_idx}/{len(chunks)} "
@@ -480,8 +509,7 @@ class WSAggregatorClient:
             for chunk_idx, chunk in enumerate(chunks, start=1):
                 msg = {"operation": "subscribe", "assets_ids": chunk}
                 msg["custom_feature_enabled"] = self._custom_feature_enabled
-                # Dynamic subscribe does not need a full initial dump every time.
-                msg["initial_dump"] = False
+                msg["initial_dump"] = True
                 if self._auth:
                     msg["auth"] = self._auth
                 try:
@@ -490,6 +518,9 @@ class WSAggregatorClient:
                     self._subscribe_count += len(chunk)
                     with self._lock:
                         self._subscribed_ids.update(chunk)
+                        self._confirmed_ids.difference_update(chunk)
+                        for tid in chunk:
+                            self._force_initial_dump_ids.discard(tid)
                     if self._verbose:
                         print(
                             f"[{_now()}][WS][AGGREGATOR] ✓ 订阅分片 {chunk_idx}/{len(chunks)} "
@@ -594,6 +625,10 @@ class WSAggregatorClient:
     def _on_close(self, ws, status_code, msg) -> None:
         """WS关闭回调"""
         self._ws_connected = False
+        with self._lock:
+            self._subscribed_ids.clear()
+            self._confirmed_ids.clear()
+            self._force_initial_dump_ids.clear()
         if self._verbose:
             print(f"[{_now()}][WS][AGGREGATOR][CLOSED] {status_code} {msg}")
         now = time.monotonic()
