@@ -144,6 +144,33 @@ def test_reset_wide_spread_stoploss_confirmation_clears_state(manager_factory):
     assert manager._reset_wide_spread_stoploss_confirmation(state) is False
 
 
+def test_force_stoploss_on_wide_spread_uses_current_threshold_multiplier(manager_factory):
+    manager = manager_factory()
+    manager.config.stoploss_wide_spread_force_trigger_multiplier = 2.0
+
+    assert (
+        manager._should_force_stoploss_on_wide_spread(
+            drawdown_pct=-0.099,
+            threshold_pct=0.05,
+        )
+        is False
+    )
+    assert (
+        manager._should_force_stoploss_on_wide_spread(
+            drawdown_pct=-0.10,
+            threshold_pct=0.05,
+        )
+        is True
+    )
+    assert (
+        manager._should_force_stoploss_on_wide_spread(
+            drawdown_pct=-0.08,
+            threshold_pct=0.04,
+        )
+        is True
+    )
+
+
 def test_wide_spread_stoploss_confirmation_needs_full_30s_window(manager_factory):
     manager = manager_factory()
     manager.config.stoploss_wide_spread_confirm_window_sec = 30.0
