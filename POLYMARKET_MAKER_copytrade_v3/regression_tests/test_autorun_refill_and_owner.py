@@ -152,6 +152,20 @@ def test_runtime_owner_resolution_priority(manager_factory):
     assert manager._resolve_runtime_owner("unknown", orphan_states=orphan_states) == "none"
 
 
+def test_pending_wide_spread_stoploss_confirmation_claims_runtime_owner(manager_factory):
+    manager = manager_factory()
+    manager._stoploss_reentry_states = {
+        "tok": {
+            "state": "NORMAL_MAKER",
+            "wide_spread_stoploss_confirm_hits": 1,
+            "wide_spread_stoploss_first_ts": 123.0,
+        }
+    }
+
+    assert manager._has_stoploss_runtime_owner("tok") is True
+    assert manager._resolve_runtime_owner("tok") == "stoploss"
+
+
 def test_has_higher_priority_runtime_owner(manager_factory):
     manager = manager_factory()
     manager.topic_details = {"tok": {"queue_role": "startup_reconcile_position"}}
